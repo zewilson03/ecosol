@@ -1,0 +1,17 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Ecosol: iniciar site",
+      "type": "shell",
+      "command": ".\\iniciar.cmd",
+      "problemMatcher": []
+    },
+    {
+      "label": "Ecosol: exportar dados legíveis",
+      "type": "shell",
+      "command": ".\\ver-dados.cmd",
+      "problemMatcher": []
+    }
+  ]
+}

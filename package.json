@@ -1,0 +1,30 @@
+{
+  "name": "ecosol",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:permissoes": "node backend/testes/permissoesAdministrativas.test.mjs && node backend/testes/primeiroAdministrador.test.mjs && node backend/testes/hashesExportados.test.mjs",
+    "dev": "node backend/servidor/iniciar.mjs",
+    "build": "node node_modules/typescript/bin/tsc --project frontend/tsconfig.json --noEmit && node node_modules/vite/bin/vite.js build --config frontend/vite.config.ts --configLoader runner",
+    "start": "node backend/servidor/iniciar.mjs",
+    "format": "prettier --write frontend/src frontend/index.html frontend/vite.config.ts backend/servidor backend/scripts README.md"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "nodemailer": "^7.0.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-router-dom": "^7.9.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "prettier": "^3.6.0",
+    "typescript": "^5.9.0",
+    "vite": "^7.1.0"
+  }
+}
