@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { CSSProperties, useEffect, useState } from "react";
 import {
   Link,
   NavLink,
@@ -28,6 +28,26 @@ export default function EstruturaAdministrativa() {
     atualizar,
   } = usarConsulta<Sessao>("/api/sessao");
   const [menuAberto, definirMenuAberto] = useState(false);
+  const [progresso, definirProgresso] = useState(0);
+  useEffect(() => {
+    let quadro = 0;
+    const atualizarProgresso = () => {
+      cancelAnimationFrame(quadro);
+      quadro = requestAnimationFrame(() => {
+        const limite =
+          document.documentElement.scrollHeight - window.innerHeight;
+        definirProgresso(limite > 0 ? Math.min(1, window.scrollY / limite) : 0);
+      });
+    };
+    atualizarProgresso();
+    window.addEventListener("scroll", atualizarProgresso, { passive: true });
+    window.addEventListener("resize", atualizarProgresso);
+    return () => {
+      cancelAnimationFrame(quadro);
+      window.removeEventListener("scroll", atualizarProgresso);
+      window.removeEventListener("resize", atualizarProgresso);
+    };
+  }, []);
   if (carregando)
     return (
       <main className="admin-carregando" role="status">
@@ -106,6 +126,12 @@ export default function EstruturaAdministrativa() {
         <main className="admin-conteudo">
           <Outlet context={administrador} />
         </main>
+      </div>
+      <div className="admin-orbita-scroll" aria-hidden="true">
+        <span
+          className="admin-sol-scroll"
+          style={{ "--progresso-scroll": progresso } as CSSProperties}
+        />
       </div>
     </div>
   );

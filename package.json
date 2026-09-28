@@ -4,6 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test:planilhas": "node backend/testes/planilhas.test.mjs",
+    "test:faturamento": "node backend/testes/faturamento.test.mjs",
     "test:permissoes": "node backend/testes/permissoesAdministrativas.test.mjs && node backend/testes/primeiroAdministrador.test.mjs && node backend/testes/hashesExportados.test.mjs",
     "dev": "node backend/servidor/iniciar.mjs",
     "build": "node node_modules/typescript/bin/tsc --project frontend/tsconfig.json --noEmit && node node_modules/vite/bin/vite.js build --config frontend/vite.config.ts --configLoader runner",
@@ -11,8 +13,11 @@
     "format": "prettier --write frontend/src frontend/index.html frontend/vite.config.ts backend/servidor backend/scripts README.md"
   },
   "dependencies": {
+    "decimal.js": "^10.6.0",
+    "exceljs": "^4.4.0",
     "express": "^5.1.0",
     "nodemailer": "^7.0.0",
+    "pdfjs-dist": "^6.3.289",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-router-dom": "^7.9.0"

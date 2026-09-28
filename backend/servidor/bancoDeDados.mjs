@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import { prepararFaturamento } from "./faturamento/esquema.mjs";
 
 let banco;
 
@@ -130,5 +131,6 @@ export function obterBanco() {
     ON staff_users(cpf) WHERE cpf IS NOT NULL
   `);
 
+  prepararFaturamento(banco);
   return banco;
 }

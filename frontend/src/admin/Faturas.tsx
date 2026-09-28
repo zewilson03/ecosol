@@ -1,4 +1,5 @@
 import { useState } from "react";
+import PreparacaoFaturas from "./PreparacaoFaturas";
 import {
   CabecalhoDoModulo,
   EstadoDaConsulta,
@@ -31,9 +32,10 @@ export default function Faturas() {
   );
   return (
     <>
+      <PreparacaoFaturas />
       <CabecalhoDoModulo
-        titulo="Faturas"
-        descricao="Consulte as cobranças dos clientes e acompanhe sua situação."
+        titulo="Histórico anterior"
+        descricao="Registros de cobranças anteriores à preparação de faturas."
       />
       <section className="admin-cartao">
         <div className="admin-barra">

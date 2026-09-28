@@ -6,6 +6,7 @@ import { build as compilarInterface } from "vite";
 import { obterBanco } from "./bancoDeDados.mjs";
 import { rotas } from "./rotasDaAplicacao.mjs";
 import { rotasAdministrativas } from "./rotasAdministrativas.mjs";
+import { rotasFaturamento } from "./faturamento/rotas.mjs";
 
 const pastaDoBackend = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const pastaDoProjeto = resolve(pastaDoBackend, "..");
@@ -21,6 +22,10 @@ const porta = Number(process.env.PORT ?? 3000);
 
 aplicacao.disable("x-powered-by");
 aplicacao.use(express.urlencoded({ extended: false, limit: "20kb" }));
+aplicacao.use(
+  "/api/admin/faturamento/planilhas",
+  express.json({ limit: "2mb" }),
+);
 aplicacao.use(express.json({ limit: "20kb" }));
 
 // Formulários só podem ser enviados pela própria origem do site.
@@ -42,6 +47,7 @@ aplicacao.use((requisicao, resposta, proximo) => {
 
 aplicacao.use(rotas);
 aplicacao.use(rotasAdministrativas);
+aplicacao.use(rotasFaturamento);
 obterBanco();
 
 if (process.env.NODE_ENV !== "production") {
