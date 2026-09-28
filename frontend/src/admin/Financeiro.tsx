@@ -153,7 +153,13 @@ function FormularioDeConta({
 }
 
 function PainelFinanceiro({ podeEditar }: { podeEditar: boolean }) {
-  const consulta = usarConsulta<DadosFinanceiros>("/api/admin/financeiro");
+  const [historicoAberto, definirHistoricoAberto] = useState(false);
+  const consulta = usarConsulta<Pick<DadosFinanceiros, "contas">>(
+    "/api/admin/financeiro?visao=contas",
+  );
+  const consultaHistorico = usarConsulta<Pick<DadosFinanceiros, "historico">>(
+    historicoAberto ? "/api/admin/financeiro?visao=historico" : null,
+  );
   const [busca, definirBusca] = useState("");
   const [status, definirStatus] = useState("");
   const [editando, definirEditando] = useState<Conta | null | undefined>(
@@ -174,6 +180,7 @@ function PainelFinanceiro({ podeEditar }: { podeEditar: boolean }) {
   function atualizarAposSalvar() {
     definirMensagem("Conta salva. O histórico foi atualizado.");
     consulta.atualizar();
+    if (historicoAberto) consultaHistorico.atualizar();
   }
 
   return (
@@ -333,15 +340,25 @@ function PainelFinanceiro({ podeEditar }: { podeEditar: boolean }) {
             </div>
           ))}
       </section>
-      <section className="admin-cartao">
-        <h2>Histórico de alterações</h2>
-        <p>
-          Últimos 100 registros. Datas exibidas no horário deste computador.
-        </p>
-        {consulta.dados?.historico.length === 0 && (
+      <details
+        className="admin-cartao financeiro-historico"
+        onToggle={(evento) => definirHistoricoAberto(evento.currentTarget.open)}
+      >
+        <summary>
+          <span>
+            <strong>Histórico de alterações</strong>
+            <small>Auditoria dos últimos 100 registros</small>
+          </span>
+          <span aria-hidden="true">⌄</span>
+        </summary>
+        <EstadoDaConsulta
+          {...consultaHistorico}
+          repetir={consultaHistorico.atualizar}
+        />
+        {consultaHistorico.dados?.historico.length === 0 && (
           <p>Nenhuma alteração registrada.</p>
         )}
-        {consulta.dados?.historico.map((registro) => (
+        {consultaHistorico.dados?.historico.map((registro) => (
           <details className="admin-historico" key={registro.id}>
             <summary>
               <strong>
@@ -363,16 +380,14 @@ function PainelFinanceiro({ podeEditar }: { podeEditar: boolean }) {
             <DetalhesDoHistorico registro={registro} />
           </details>
         ))}
-      </section>
+      </details>
     </>
   );
 }
 
 function DetalhesDoHistorico({ registro }: { registro: Historico }) {
-  const antes = registro.dados_anteriores
-    ? JSON.parse(registro.dados_anteriores)
-    : {};
-  const depois = JSON.parse(registro.dados_novos);
+  const antes = lerDadosDoHistorico(registro.dados_anteriores);
+  const depois = lerDadosDoHistorico(registro.dados_novos);
   return (
     <dl className="admin-detalhes">
       {["descricao", "favorecido", "vencimento", "status"].map((campo) => (
@@ -394,4 +409,13 @@ function DetalhesDoHistorico({ registro }: { registro: Historico }) {
       ))}
     </dl>
   );
+}
+
+function lerDadosDoHistorico(texto: string | null) {
+  if (!texto) return {};
+  try {
+    return JSON.parse(texto) as Record<string, string>;
+  } catch {
+    return {};
+  }
 }

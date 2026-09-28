@@ -67,7 +67,7 @@ export default function EstruturaAdministrativa() {
   const itens = [
     { rota: "usinas", nome: "Usinas", simbolo: "☀" },
     { rota: "faturas", nome: "Faturas", simbolo: "▤" },
-    { rota: "clientes", nome: "Clientes", simbolo: "◎" },
+    { rota: "clientes", nome: "Cadastros", simbolo: "◎" },
     ...(administrador.nivel >= 2
       ? [{ rota: "financeiro", nome: "Financeiro", simbolo: "↗" }]
       : []),

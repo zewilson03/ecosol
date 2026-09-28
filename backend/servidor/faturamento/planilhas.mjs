@@ -69,17 +69,158 @@ const normal = (s) =>
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
 
+const meses = new Set([
+  "janeiro",
+  "fevereiro",
+  "marco",
+  "abril",
+  "maio",
+  "junho",
+  "julho",
+  "agosto",
+  "setembro",
+  "outubro",
+  "novembro",
+  "dezembro",
+  "jan",
+  "fev",
+  "mar",
+  "abr",
+  "mai",
+  "jun",
+  "jul",
+  "ago",
+  "set",
+  "out",
+  "nov",
+  "dez",
+]);
+
+function abaMensal(nome) {
+  const valor = normal(nome);
+  const partes = valor.split(" ");
+  return (
+    meses.has(partes[0]) &&
+    (partes.length === 1 ||
+      (partes.length <= 3 && partes.slice(1).some((p) => /^\d{1,4}$/.test(p))))
+  );
+}
+
+function linhaCabecalho(aba) {
+  let encontrada = null;
+  for (let i = 0; i < aba.linhas.length; i++) {
+    const rotulos = aba.linhas[i].map((c) => normal(c.valor));
+    const novaUc = rotulos.some((r) =>
+      ["nova uc", "uc2", "uc nova"].includes(r),
+    );
+    const boleto = rotulos.some((r) => r.includes("boleto"));
+    if (novaUc && boleto) encontrada = i + 1;
+  }
+  if (encontrada) return encontrada;
+  return /^(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)\s+-\s+\d{2,4}/.test(
+    normal(aba.nome),
+  )
+    ? 1
+    : null;
+}
+
+export function analisarEstruturaMensal(abas) {
+  const candidatas = [...abas]
+    .reverse()
+    .map((aba) => ({ aba, cabecalho: linhaCabecalho(aba) }))
+    .filter((item) => abaMensal(item.aba.nome) && item.cabecalho);
+  if (!candidatas.length)
+    return {
+      compativel: false,
+      motivo:
+        "Não foi encontrada uma aba mensal com Nova UC e Valor do boleto.",
+      problemas: [],
+    };
+  const { aba, cabecalho } = candidatas[0];
+  const rotulos = aba.linhas[cabecalho - 1].map((c) => normal(c.valor));
+  const classica =
+    rotulos.includes("energia injetada") &&
+    rotulos.some((r) => r.includes("energia consumida"));
+  const esperados = classica
+    ? new Map([
+        [0, ["usina"]],
+        [1, ["client"]],
+        [2, ["uc"]],
+        [3, ["uc"]],
+        [4, ["energia", "injet"]],
+        [5, ["energia", "consum"]],
+        [16, ["boleto"]],
+      ])
+    : new Map([
+        [0, ["usina"]],
+        [1, ["client"]],
+        [2, ["uc"]],
+        [3, ["uc"]],
+        [4, ["energia", "injet"]],
+        [5, ["valor", "kwh"]],
+        [6, ["desconto"]],
+        [7, ["total", "pagar"]],
+        [8, ["juros"]],
+        [9, ["multa"]],
+        [10, ["desconto", "gd"]],
+        [11, ["valor", "boleto"]],
+      ]);
+  const problemas = [];
+  for (const [indice, termos] of esperados) {
+    const encontrado = rotulos[indice] ?? "";
+    if (!termos.every((termo) => encontrado.includes(termo)))
+      problemas.push(
+        `Coluna ${indice + 1}: esperado ${termos.join("/")}; encontrado “${aba.linhas[cabecalho - 1][indice]?.valor ?? "vazio"}”.`,
+      );
+  }
+  const dados = aba.linhas
+    .slice(cabecalho)
+    .filter((linha) =>
+      [linha[2], linha[3]].some(
+        (c) => (c?.valor ?? "").replace(/\D/g, "").length >= 5,
+      ),
+    );
+  const colunasEntrada = classica ? [4, 5, 7] : [4, 5, 7, 8, 9, 10];
+  const pendentes = dados.filter((linha) => {
+    const valores = colunasEntrada.map(
+      (indice) => linha[indice]?.valor?.trim() ?? "",
+    );
+    const energia = (linha[4]?.valor ?? "").replace(",", ".");
+    return (
+      valores.every((valor) => !valor) || !energia || Number(energia) === 0
+    );
+  }).length;
+  const ucs = dados
+    .map((linha) =>
+      (linha[3]?.valor || linha[2]?.valor || "")
+        .replace(/\D/g, "")
+        .replace(/^0+(?=\d)/, ""),
+    )
+    .filter(Boolean);
+  const repetidas = [...new Set(ucs.filter((uc, i) => ucs.indexOf(uc) !== i))];
+  return {
+    compativel: problemas.length === 0,
+    motivo: problemas.length
+      ? "A estrutura mensal foi alterada e precisa de revisão."
+      : "Estrutura mensal reconhecida automaticamente.",
+    aba: aba.nome,
+    cabecalho,
+    modelo: classica ? "Clássico de rateio" : "Fórmula fixa Ecosol",
+    mapa: { nome: 1, uc: 3, desconto: classica ? 12 : 6 },
+    linhas: dados.length,
+    linhas_pendentes: pendentes,
+    linhas_preenchidas: dados.length - pendentes,
+    ucs,
+    ucs_repetidas: repetidas,
+    problemas,
+  };
+}
+
 export function lerExcel(buffer) {
   return new Promise((resolve, reject) => {
     const worker = new Worker(
       new URL("./leitorExcel.worker.mjs", import.meta.url),
-      {
-        workerData: buffer,
-        resourceLimits: {
-          maxOldGenerationSizeMb: 192,
-          maxYoungGenerationSizeMb: 32,
-        },
-      },
+      { workerData: buffer },
     );
     let concluido = false;
     const finalizar = (erro, dados) => {
@@ -99,10 +240,11 @@ export function lerExcel(buffer) {
     worker.once("message", (m) =>
       finalizar(m.erro ? new Error(m.erro) : null, m.abas),
     );
-    worker.once("error", () =>
+    worker.once("error", (erro) =>
       finalizar(
         new Error(
-          "Não foi possível ler a planilha dentro dos limites de memória.",
+          "Não foi possível ler a planilha dentro dos limites de memória. " +
+            erro.message,
         ),
       ),
     );

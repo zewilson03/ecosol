@@ -2,6 +2,18 @@ import { useState } from "react";
 import { consultarServidor, usarConsulta } from "./comunicacaoComServidor";
 
 type Fonte = { arquivo: string; usina: string };
+type Estrutura = {
+  compativel: boolean;
+  motivo: string;
+  aba?: string;
+  cabecalho?: number;
+  modelo?: string;
+  linhas?: number;
+  linhas_pendentes?: number;
+  linhas_preenchidas?: number;
+  problemas: string[];
+  ucs_repetidas?: string[];
+};
 type Consulta = Fonte & {
   hash: string;
   abas: {
@@ -9,6 +21,14 @@ type Consulta = Fonte & {
     total_linhas: number;
     amostra: { valor: string; tipo: string }[][];
   }[];
+  estrutura: Estrutura;
+};
+type Diagnostico = {
+  total: number;
+  prontas: number;
+  problemas: number;
+  duplicadas: { uc: string; usinas: string[] }[];
+  itens: (Fonte & Estrutura)[];
 };
 const base = "/api/admin/faturamento/planilhas";
 
@@ -26,6 +46,7 @@ export default function PlanilhasPorUsina({
   const [aba, setAba] = useState("");
   const [ocupado, setOcupado] = useState(false);
   const [erro, setErro] = useState("");
+  const [diagnostico, setDiagnostico] = useState<Diagnostico | null>(null);
   const fontes = catalogo.dados ?? [];
   const fonteSelecionada = fontes.find((f) => f.arquivo === arquivo);
   const fontesFiltradas = fontes
@@ -46,7 +67,20 @@ export default function PlanilhasPorUsina({
         },
       );
       setConsulta(resultado);
-      setAba("");
+      setAba(resultado.estrutura.aba ?? "");
+    } catch (e) {
+      setErro((e as Error).message);
+    } finally {
+      setOcupado(false);
+    }
+  }
+  async function validarPasta() {
+    setOcupado(true);
+    setErro("");
+    try {
+      setDiagnostico(
+        await consultarServidor<Diagnostico>(base + "/pasta/diagnostico"),
+      );
     } catch (e) {
       setErro((e as Error).message);
     } finally {
@@ -68,6 +102,73 @@ export default function PlanilhasPorUsina({
         Os nomes abaixo vêm dos arquivos da pasta 00 - Planilhas Atualizadas. A
         consulta não altera a planilha nem cadastra clientes.
       </p>
+      <div className="planilhas-validacao-geral">
+        <div>
+          <strong>Validação prévia da pasta</strong>
+          <span>
+            Confere estrutura, abas mensais e UCs repetidas antes de importar.
+          </span>
+        </div>
+        <button
+          type="button"
+          className="admin-botao secundario"
+          disabled={ocupado}
+          onClick={validarPasta}
+        >
+          {ocupado ? "Validando…" : "Validar todas as planilhas"}
+        </button>
+      </div>
+      {diagnostico && (
+        <div className="planilhas-diagnostico">
+          <div className="planilhas-diagnostico-resumo">
+            <span>
+              <strong>{diagnostico.total}</strong> planilhas
+            </span>
+            <span className="correto">
+              <strong>{diagnostico.prontas}</strong> prontas
+            </span>
+            <span className={diagnostico.problemas ? "erro" : "correto"}>
+              <strong>{diagnostico.problemas}</strong> com problema
+            </span>
+            <span
+              className={diagnostico.duplicadas.length ? "atencao" : "correto"}
+            >
+              <strong>{diagnostico.duplicadas.length}</strong> UCs em mais de
+              uma usina
+            </span>
+          </div>
+          <div className="planilhas-diagnostico-lista">
+            {diagnostico.itens.map((item) => (
+              <article
+                className={item.compativel ? "correto" : "erro"}
+                key={item.arquivo}
+              >
+                <span>{item.compativel ? "✓" : "!"}</span>
+                <div>
+                  <strong>{item.usina}</strong>
+                  <small>
+                    {item.aba
+                      ? `${item.aba} · ${item.modelo} · ${item.linhas} linhas (${item.linhas_pendentes} pendentes)`
+                      : item.arquivo}
+                  </small>
+                  <p>{item.motivo}</p>
+                  {!!item.problemas.length && <p>{item.problemas[0]}</p>}
+                </div>
+              </article>
+            ))}
+          </div>
+          {!!diagnostico.duplicadas.length && (
+            <details>
+              <summary>Ver UCs encontradas em mais de uma usina</summary>
+              {diagnostico.duplicadas.map((item) => (
+                <p key={item.uc}>
+                  UC {item.uc}: {item.usinas.join(" e ")}
+                </p>
+              ))}
+            </details>
+          )}
+        </div>
+      )}
       {(erro || catalogo.erro) && (
         <p role="alert" className="admin-aviso erro">
           {erro || catalogo.erro}
@@ -161,8 +262,22 @@ export default function PlanilhasPorUsina({
             <span>Arquivo conectado</span>
             <strong>{consulta.arquivo}</strong>
           </div>
+          <div
+            className={`planilhas-estrutura ${consulta.estrutura.compativel ? "correto" : "erro"}`}
+          >
+            <span>{consulta.estrutura.compativel ? "✓" : "!"}</span>
+            <div>
+              <strong>{consulta.estrutura.motivo}</strong>
+              {consulta.estrutura.aba && (
+                <small>
+                  {consulta.estrutura.aba} · {consulta.estrutura.modelo} ·
+                  cabeçalho na linha {consulta.estrutura.cabecalho}
+                </small>
+              )}
+            </div>
+          </div>
           <label className="planilhas-aba">
-            Escolha o mês
+            Aba mensal identificada
             <select value={aba} onChange={(e) => setAba(e.target.value)}>
               <option value="">Escolha a aba que deseja conferir</option>
               {consulta.abas.map((a) => (

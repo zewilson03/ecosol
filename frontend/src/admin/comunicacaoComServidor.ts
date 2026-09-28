@@ -9,21 +9,44 @@ export async function consultarServidor<T>(
     ...opcoes,
     headers: { Accept: "application/json", ...opcoes?.headers },
   });
-  const dados = await resposta.json();
+  const tipo = resposta.headers.get("content-type") ?? "";
+  if (!tipo.includes("application/json")) {
+    if (resposta.status === 401 || resposta.redirected)
+      throw new Error("Sua sessão expirou. Entre novamente no sistema.");
+    throw new Error(
+      "O servidor precisa ser atualizado. Recarregue a página; se o problema continuar, reinicie o sistema Ecosol.",
+    );
+  }
+  let dados: { erro?: string } & T;
+  try {
+    dados = (await resposta.json()) as { erro?: string } & T;
+  } catch {
+    throw new Error(
+      "O servidor enviou uma resposta incompleta. Recarregue a página e tente novamente.",
+    );
+  }
   if (!resposta.ok)
     throw new Error(dados.erro || "Não foi possível concluir a operação.");
-  return dados;
+  return dados as T;
 }
 
-export function usarConsulta<T>(endereco: string) {
+export function usarConsulta<T>(endereco: string | null) {
   const [dados, definirDados] = useState<T | null>(null);
   const [erro, definirErro] = useState("");
-  const [carregando, definirCarregando] = useState(true);
+  const [carregando, definirCarregando] = useState(Boolean(endereco));
   const [revisao, definirRevisao] = useState(0);
   const atualizar = useCallback(() => definirRevisao((valor) => valor + 1), []);
 
   useEffect(() => {
+    if (!endereco) {
+      definirDados(null);
+      definirErro("");
+      definirCarregando(false);
+      return;
+    }
+
     const controle = new AbortController();
+    definirDados(null);
     definirCarregando(true);
     definirErro("");
     consultarServidor<T>(endereco, { signal: controle.signal })

@@ -36,6 +36,11 @@ export default function UnidadesDeCobranca() {
   const [ocupado, setOcupado] = useState(false);
   const [busca, setBusca] = useState("");
   const atual = edicao && edicao !== "nova" ? edicao : null;
+  const unidadesFiltradas = (consulta.dados ?? []).filter((u) =>
+    `${u.nome} ${u.documento} ${u.uc} ${u.usina_nome ?? ""}`
+      .toLowerCase()
+      .includes(busca.toLowerCase()),
+  );
 
   async function salvar(
     evento: FormEvent<HTMLFormElement>,
@@ -121,13 +126,24 @@ export default function UnidadesDeCobranca() {
       )}
       <section className="admin-cartao">
         <div className="admin-barra">
-          <h2>Unidades e contratos</h2>
+          <div>
+            <h2>Unidades e contratos</h2>
+            <small>{unidadesFiltradas.length} unidade(s) encontrada(s)</small>
+          </div>
           <input
             aria-label="Buscar unidade"
             placeholder="Nome, documento ou UC"
             value={busca}
             onChange={(e) => setBusca(e.target.value)}
           />
+          {busca && (
+            <button
+              className="admin-botao secundario"
+              onClick={() => setBusca("")}
+            >
+              Limpar
+            </button>
+          )}
           {nivel >= 2 && (
             <button
               className="admin-botao"
@@ -153,69 +169,63 @@ export default function UnidadesDeCobranca() {
               </tr>
             </thead>
             <tbody>
-              {consulta.dados
-                ?.filter((u) =>
-                  `${u.nome} ${u.documento} ${u.uc} ${u.usina_nome ?? ""}`
-                    .toLowerCase()
-                    .includes(busca.toLowerCase()),
-                )
-                .map((u) => (
-                  <tr key={u.id}>
-                    <td>
-                      <strong>{u.nome}</strong>
-                      <small>UC {u.uc}</small>
-                      <small>
-                        Usina: {u.usina_nome ?? "Alocação a definir"}
+              {unidadesFiltradas.map((u) => (
+                <tr key={u.id}>
+                  <td>
+                    <strong>{u.nome}</strong>
+                    <small>UC {u.uc}</small>
+                    <small>Usina: {u.usina_nome ?? "Alocação a definir"}</small>
+                  </td>
+                  <td>{u.documento}</td>
+                  <td>
+                    {u.email}
+                    <small>Dia preferido: {u.dia_vencimento}</small>
+                  </td>
+                  <td>
+                    {u.contratos.map((c) => (
+                      <small key={c.id}>
+                        {c.inicio}: {c.modalidade} · {c.desconto}%
                       </small>
-                    </td>
-                    <td>{u.documento}</td>
-                    <td>
-                      {u.email}
-                      <small>Dia preferido: {u.dia_vencimento}</small>
-                    </td>
-                    <td>
-                      {u.contratos.map((c) => (
-                        <small key={c.id}>
-                          {c.inicio}: {c.modalidade} · {c.desconto}%
-                        </small>
-                      ))}
-                    </td>
-                    <td>
-                      <div className="admin-acoes">
-                        {nivel >= 2 && (
-                          <button
-                            className="admin-botao secundario"
-                            disabled={ocupado}
-                            onClick={() => {
-                              setEdicao(u);
-                              setContrato(null);
-                            }}
-                          >
-                            Editar cadastro
-                          </button>
-                        )}
-                        {nivel >= 3 && (
-                          <button
-                            className="admin-botao secundario"
-                            disabled={ocupado}
-                            onClick={() => {
-                              setContrato(u);
-                              setEdicao(null);
-                            }}
-                          >
-                            Nova vigência
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                    ))}
+                  </td>
+                  <td>
+                    <div className="admin-acoes">
+                      {nivel >= 2 && (
+                        <button
+                          className="admin-botao secundario"
+                          disabled={ocupado}
+                          onClick={() => {
+                            setEdicao(u);
+                            setContrato(null);
+                          }}
+                        >
+                          Editar cadastro
+                        </button>
+                      )}
+                      {nivel >= 3 && (
+                        <button
+                          className="admin-botao secundario"
+                          disabled={ocupado}
+                          onClick={() => {
+                            setContrato(u);
+                            setEdicao(null);
+                          }}
+                        >
+                          Nova vigência
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
-        {consulta.dados?.length === 0 && (
+        {unidadesFiltradas.length === 0 && (
           <p>
-            Cadastre a primeira unidade para vincular e calcular suas faturas.
+            {busca
+              ? "Nenhuma unidade corresponde à busca."
+              : "Cadastre a primeira unidade para vincular e calcular suas faturas."}
           </p>
         )}
       </section>

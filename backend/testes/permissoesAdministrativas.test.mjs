@@ -159,9 +159,21 @@ try {
       200,
     );
   }
+  const dadosDeClientes = await (
+    await chamar("/api/equipe/dados?secao=clientes", cookies[2])
+  ).json();
+  assert.ok(Array.isArray(dadosDeClientes.clientes));
+  assert.equal("contatos" in dadosDeClientes, false);
+  assert.equal("administradores" in dadosDeClientes, false);
+
   assert.equal((await chamar("/api/admin/financeiro")).status, 401);
   assert.equal((await chamar("/api/admin/financeiro", cookies[1])).status, 403);
   assert.equal((await chamar("/api/admin/financeiro", cookies[2])).status, 200);
+  const somenteContas = await (
+    await chamar("/api/admin/financeiro?visao=contas", cookies[2])
+  ).json();
+  assert.ok(Array.isArray(somenteContas.contas));
+  assert.equal("historico" in somenteContas, false);
 
   const conta = {
     descricao: "Manutenção",

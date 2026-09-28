@@ -25,6 +25,24 @@ import {
 export const rotas = express.Router();
 const formatoDeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const emDesenvolvimento = process.env.NODE_ENV !== "production";
+let transporteDeEmail;
+
+function obterTransporteDeEmail() {
+  if (transporteDeEmail) return transporteDeEmail;
+
+  const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD } = process.env;
+  if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASSWORD) {
+    throw new Error("SMTP não configurado");
+  }
+
+  transporteDeEmail = nodemailer.createTransport({
+    host: SMTP_HOST,
+    port: Number(SMTP_PORT),
+    secure: Number(SMTP_PORT) === 465,
+    auth: { user: SMTP_USER, pass: SMTP_PASSWORD },
+  });
+  return transporteDeEmail;
+}
 
 function campo(requisicao, nome, tamanho = 1500) {
   return String(requisicao.body?.[nome] ?? "")
@@ -105,22 +123,34 @@ rotas.get("/api/sessao", (requisicao, resposta) => {
 
 rotas.get("/api/equipe/dados", exigirEquipe, (_requisicao, resposta) => {
   const banco = obterBanco();
-  resposta.json({
-    contatos: banco.prepare("SELECT * FROM leads ORDER BY id DESC").all(),
-    clientes: banco
+  const secao = String(_requisicao.query.secao ?? "");
+  const todasAsSecoes = !["clientes", "contatos", "acessos"].includes(secao);
+  const dados = {};
+
+  if (todasAsSecoes || secao === "contatos") {
+    dados.contatos = banco
+      .prepare("SELECT * FROM leads ORDER BY id DESC")
+      .all();
+  }
+  if (todasAsSecoes || secao === "clientes") {
+    dados.clientes = banco
       .prepare(
         "SELECT id, name, cpf, email, (password_hash IS NOT NULL) AS ready FROM customers ORDER BY id DESC",
       )
-      .all(),
-    administradores:
+      .all();
+  }
+  if (todasAsSecoes || secao === "acessos") {
+    dados.administradores =
       identificarAdministrador(_requisicao)?.nivel === 3
         ? banco
             .prepare(
               "SELECT id, name, cpf, email, access_level FROM staff_users ORDER BY id DESC",
             )
             .all()
-        : [],
-  });
+        : [];
+  }
+
+  resposta.json(dados);
 });
 
 rotas.get("/api/dev/links", (_requisicao, resposta) => {
@@ -289,25 +319,9 @@ rotas.post("/api/acesso/solicitar", async (requisicao, resposta) => {
           )
           .run(email, assunto, endereco);
       } else {
-        const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM } =
-          process.env;
-        if (
-          !SMTP_HOST ||
-          !SMTP_PORT ||
-          !SMTP_USER ||
-          !SMTP_PASSWORD ||
-          !SMTP_FROM
-        ) {
-          throw new Error("SMTP não configurado");
-        }
-        const transporte = nodemailer.createTransport({
-          host: SMTP_HOST,
-          port: Number(SMTP_PORT),
-          secure: Number(SMTP_PORT) === 465,
-          auth: { user: SMTP_USER, pass: SMTP_PASSWORD },
-        });
-        await transporte.sendMail({
-          from: SMTP_FROM,
+        if (!process.env.SMTP_FROM) throw new Error("SMTP não configurado");
+        await obterTransporteDeEmail().sendMail({
+          from: process.env.SMTP_FROM,
           to: email,
           subject: assunto,
           text: `Acesse o link para continuar: ${endereco}`,

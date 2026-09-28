@@ -12,6 +12,15 @@ type Analise = {
   usina: string;
   abas: { nome: string; total_linhas: number; amostra: Celula[][] }[];
   campos: Campo[];
+  estrutura?: {
+    compativel: boolean;
+    aba?: string;
+    cabecalho?: number;
+    mapa?: Record<string, number>;
+    modelo?: string;
+    motivo: string;
+    problemas: string[];
+  };
 };
 type Previa = {
   previa_id: string;
@@ -91,6 +100,14 @@ export default function ImportacaoExcel({
     setPrevia(null);
     setConfirma(false);
   }
+  function escolherAutomaticamente(a: Analise, abaPreferida?: string) {
+    const estrutura = a.estrutura;
+    const nome = estrutura?.aba ?? abaPreferida ?? a.abas[0].nome;
+    const linha = estrutura?.cabecalho ?? 1;
+    escolher(a, nome, linha);
+    if (estrutura?.compativel && estrutura.mapa)
+      setMapa((anterior) => ({ ...anterior, ...estrutura.mapa }));
+  }
   async function analisar(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setOcupado(true);
@@ -112,7 +129,7 @@ export default function ImportacaoExcel({
           }),
         });
         setAnalise(a);
-        escolher(a, fonteLocal.aba, 1);
+        escolherAutomaticamente(a, fonteLocal.aba);
         return;
       }
       if (!arquivo?.size || arquivo.size > 5 * 1024 * 1024)
@@ -130,7 +147,7 @@ export default function ImportacaoExcel({
         body: arquivo,
       });
       setAnalise(a);
-      escolher(a, a.abas[0].nome, 1);
+      escolherAutomaticamente(a);
     } catch (e) {
       setErro((e as Error).message);
     } finally {
@@ -206,7 +223,7 @@ export default function ImportacaoExcel({
         Somente leitura do arquivo de origem. Novos cadastros são gravados no
         sistema após sua conferência; registros existentes não são sobrescritos.
       </p>
-      {nivel >= 2 && (
+      {aberto && nivel >= 2 && (
         <PlanilhasPorUsina
           bloqueado={ocupado}
           aoPreparar={(fonte) => {
@@ -313,6 +330,18 @@ export default function ImportacaoExcel({
               <h3>
                 {analise.nome} · {analise.usina}
               </h3>
+              {analise.estrutura?.compativel ? (
+                <p className="admin-aviso sucesso">
+                  Estrutura {analise.estrutura.modelo} reconhecida. A aba, o
+                  cabeçalho, o cliente, a UC nova e o desconto foram associados
+                  automaticamente como no processo da Central Faturas.
+                </p>
+              ) : (
+                <p className="admin-aviso">
+                  Estrutura mensal não reconhecida automaticamente. Confira a
+                  aba e associe as colunas abaixo.
+                </p>
+              )}
               <fieldset className="admin-campos" disabled={ocupado}>
                 <label>
                   Aba

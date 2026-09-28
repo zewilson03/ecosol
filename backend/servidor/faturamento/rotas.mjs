@@ -40,6 +40,21 @@ function documento(numero) {
     memoria: d.memoria ? JSON.parse(d.memoria) : null,
   };
 }
+function documentoCompleto(numero) {
+  const d = documento(numero);
+  const banco = obterBanco();
+  return {
+    ...d,
+    texto: banco
+      .prepare("SELECT texto FROM faturamento_documentos WHERE id=?")
+      .get(d.id).texto,
+    historico: banco
+      .prepare(
+        "SELECT acao,responsavel,criado_em FROM faturamento_historico WHERE documento_id=? ORDER BY id DESC",
+      )
+      .all(d.id),
+  };
+}
 function conferirVersao(d, body) {
   if (d.versao !== Number(body.versao))
     falhar("Este registro foi alterado. Reabra-o antes de continuar.", 409);
@@ -61,6 +76,24 @@ function historico(req, acao, dados, documentoId = null, unidadeId = null) {
       req.administrador.id,
       acao,
       JSON.stringify(dados),
+    );
+}
+function registrarRecebimento(req, dados) {
+  obterBanco()
+    .prepare(
+      `INSERT INTO faturamento_recebimentos_pdf
+       (hash,nome,lote,resultado,codigo,motivo,documento_id,responsavel)
+       VALUES (?,?,?,?,?,?,?,?)`,
+    )
+    .run(
+      dados.hash ?? null,
+      dados.nome,
+      dados.lote,
+      dados.resultado,
+      dados.codigo,
+      dados.motivo,
+      dados.documento_id ?? null,
+      req.administrador.nome,
     );
 }
 function transacao(fn) {
@@ -224,20 +257,25 @@ router.get("/documentos", (_req, res) => {
       .map((r) => documento(r.id)),
   );
 });
-router.get("/documentos/:id", (req, res) => {
-  const d = documento(req.params.id);
-  const banco = obterBanco();
-  res.json({
-    ...d,
-    texto: banco
-      .prepare("SELECT texto FROM faturamento_documentos WHERE id=?")
-      .get(d.id).texto,
-    historico: banco
+router.get("/recebimentos", (_req, res) => {
+  res.json(
+    obterBanco()
       .prepare(
-        "SELECT acao,responsavel,criado_em FROM faturamento_historico WHERE documento_id=? ORDER BY id DESC",
+        `SELECT r.*,d.status AS estado_documento,d.dados,d.memoria
+         FROM faturamento_recebimentos_pdf r
+         LEFT JOIN faturamento_documentos d ON d.id=r.documento_id
+         ORDER BY r.id DESC`,
       )
-      .all(d.id),
-  });
+      .all()
+      .map((r) => ({
+        ...r,
+        dados: r.dados ? JSON.parse(r.dados) : null,
+        memoria: r.memoria ? JSON.parse(r.memoria) : null,
+      })),
+  );
+});
+router.get("/documentos/:id", (req, res) => {
+  res.json(documentoCompleto(req.params.id));
 });
 router.get("/documentos/:id/pdf", (req, res) => {
   const d = documento(req.params.id);
@@ -265,20 +303,46 @@ router.post(
       !Buffer.isBuffer(req.body) ||
       req.body.length < 8 ||
       req.body.subarray(0, 5).toString() !== "%PDF-"
-    )
+    ) {
+      registrarRecebimento(req, {
+        nome,
+        lote,
+        resultado: "Erro",
+        codigo: "invalida",
+        motivo: "O arquivo não é um PDF válido ou está incompleto.",
+      });
       falhar("Envie um arquivo PDF válido, com até 10 MB.");
+    }
     const hash = createHash("sha256").update(req.body).digest("hex");
     const banco = obterBanco();
-    if (
-      banco
-        .prepare("SELECT id FROM faturamento_documentos WHERE hash=?")
-        .get(hash)
-    )
+    const duplicada = banco
+      .prepare("SELECT id FROM faturamento_documentos WHERE hash=?")
+      .get(hash);
+    if (duplicada) {
+      registrarRecebimento(req, {
+        hash,
+        nome,
+        lote,
+        resultado: "Erro",
+        codigo: "duplicada",
+        motivo: `Esta mesma fatura já foi recebida como #${duplicada.id}. Nenhuma cópia foi criada.`,
+        documento_id: duplicada.id,
+      });
       falhar("Este PDF já foi importado. Consulte a lista de faturas.", 409);
+    }
     let extracao;
     try {
       extracao = await lerPdf(req.body);
     } catch {
+      registrarRecebimento(req, {
+        hash,
+        nome,
+        lote,
+        resultado: "Erro",
+        codigo: "ilegivel",
+        motivo:
+          "Não foi possível abrir o PDF. Ele pode estar com senha, danificado ou ter mais de 10 páginas.",
+      });
       falhar(
         "Não foi possível ler o PDF. Verifique se está íntegro, sem senha e com até 10 páginas.",
       );
@@ -300,6 +364,18 @@ router.post(
           ).lastInsertRowid,
       );
       historico(req, "Importação de PDF", { nome, lote, hash }, numero);
+      const manual = extracao.qualidade?.modo === "manual";
+      registrarRecebimento(req, {
+        hash,
+        nome,
+        lote,
+        resultado: manual ? "Requer atenção" : "Recebida",
+        codigo: manual ? "ilegivel" : "ok",
+        motivo: manual
+          ? "O PDF parece ser uma imagem. Preencha e confira os campos manualmente."
+          : "PDF recebido e lido. Confira os dados antes de calcular.",
+        documento_id: numero,
+      });
       return numero;
     });
     res.status(201).json(documento(numero));
@@ -341,7 +417,7 @@ router.patch("/documentos/:id", exigirNivel(2), (req, res) => {
       numero,
     );
   });
-  res.json(documento(numero));
+  res.json(documentoCompleto(numero));
 });
 
 function montarCalculo(d) {
@@ -426,7 +502,7 @@ router.post("/documentos/:id/calcular", exigirNivel(2), (req, res) => {
       );
     historico(req, "Cálculo conferido", memoria, numero, memoria.unidade.id);
   });
-  res.json(documento(numero));
+  res.json(documentoCompleto(numero));
 });
 
 router.post("/documentos/:id/aprovar", exigirNivel(3), (req, res) => {
@@ -455,7 +531,7 @@ router.post("/documentos/:id/aprovar", exigirNivel(3), (req, res) => {
       d.unidade_id,
     );
   });
-  res.json(documento(numero));
+  res.json(documentoCompleto(numero));
 });
 
 router.use("/planilhas", rotasPlanilhas);
@@ -465,11 +541,9 @@ router.use((erro, _req, res, _next) => {
       erro: "Registro duplicado: verifique o PDF, a UC, a vigência ou a cobrança da mesma unidade e competência.",
     });
   if (erro.type === "entity.too.large")
-    return res
-      .status(413)
-      .json({
-        erro: "O arquivo excede o tamanho permitido (PDF: 10 MB; Excel: 5 MB).",
-      });
+    return res.status(413).json({
+      erro: "O arquivo excede o tamanho permitido (PDF: 10 MB; Excel: 5 MB).",
+    });
   if (erro.status && erro.status < 500)
     return res.status(erro.status).json({ erro: erro.message });
   console.error(

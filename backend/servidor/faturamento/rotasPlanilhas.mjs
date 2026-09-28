@@ -11,6 +11,7 @@ import {
   prepararImportacao,
   criarModelo,
   exportarCalculos,
+  analisarEstruturaMensal,
 } from "./planilhas.mjs";
 
 export const rotasPlanilhas = Router();
@@ -32,9 +33,54 @@ rotasPlanilhas.post("/consultar-local", exigirNivel(2), async (req, res) => {
       usina: fonte.usina,
       hash: fonte.hash,
       abas: resumirAbas(abas),
+      estrutura: analisarEstruturaMensal(abas),
     });
   } catch (e) {
     falhar("Não foi possível consultar a planilha. " + e.message);
+  }
+});
+rotasPlanilhas.get("/pasta/diagnostico", exigirNivel(2), async (_req, res) => {
+  try {
+    const arquivos = await listarPlanilhas();
+    const itens = [];
+    const ocorrencias = new Map();
+    for (const item of arquivos) {
+      try {
+        const fonte = await lerPlanilhaLocal(item.arquivo);
+        const estrutura = analisarEstruturaMensal(await lerExcel(fonte.buffer));
+        const resumo = {
+          arquivo: item.arquivo,
+          usina: item.usina,
+          ...estrutura,
+        };
+        itens.push(resumo);
+        for (const uc of estrutura.ucs ?? []) {
+          if (!ocorrencias.has(uc)) ocorrencias.set(uc, []);
+          ocorrencias.get(uc).push(item.usina);
+        }
+      } catch (e) {
+        itens.push({
+          arquivo: item.arquivo,
+          usina: item.usina,
+          compativel: false,
+          motivo: "Não foi possível ler esta planilha.",
+          problemas: [e.message],
+          ucs: [],
+        });
+      }
+    }
+    const duplicadas = [...ocorrencias.entries()]
+      .filter(([, usinas]) => new Set(usinas).size > 1)
+      .map(([uc, usinas]) => ({ uc, usinas: [...new Set(usinas)] }));
+    res.set("Cache-Control", "no-store").json({
+      total: itens.length,
+      prontas: itens.filter((i) => i.compativel).length,
+      problemas: itens.filter((i) => !i.compativel).length,
+      duplicadas,
+      itens: itens.map(({ ucs: _ucs, ...item }) => item),
+    });
+  } catch (e) {
+    falhar("Não foi possível validar a pasta de planilhas. " + e.message);
   }
 });
 const mime =
@@ -113,6 +159,7 @@ function guardarAnalise(req, u, nome, buffer, abas) {
     usina: u.nome,
     abas: resumirAbas(abas),
     campos: camposImportacao,
+    estrutura: analisarEstruturaMensal(abas),
   };
 }
 rotasPlanilhas.post("/analisar-local", exigirNivel(2), async (req, res) => {

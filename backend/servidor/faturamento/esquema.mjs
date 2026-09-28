@@ -30,6 +30,12 @@ export function prepararFaturamento(banco) {
       responsavel TEXT NOT NULL, administrador_id INTEGER, acao TEXT NOT NULL,
       dados TEXT NOT NULL, criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS faturamento_recebimentos_pdf (
+      id INTEGER PRIMARY KEY, hash TEXT, nome TEXT NOT NULL, lote TEXT NOT NULL,
+      resultado TEXT NOT NULL, codigo TEXT NOT NULL, motivo TEXT NOT NULL,
+      documento_id INTEGER, responsavel TEXT NOT NULL,
+      criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
   `);
   if (
     !banco
@@ -45,4 +51,15 @@ export function prepararFaturamento(banco) {
     status TEXT NOT NULL DEFAULT 'Pendente', quantidade INTEGER NOT NULL DEFAULT 0,
     expira_em INTEGER NOT NULL, criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`);
+  banco.exec(`
+    INSERT INTO faturamento_recebimentos_pdf
+      (hash,nome,lote,resultado,codigo,motivo,documento_id,responsavel,criado_em)
+    SELECT d.hash,d.nome,d.lote,'Recebida','ok',
+      'PDF recebido. Confira os dados extraídos antes de calcular.',d.id,
+      'Importação anterior',d.criado_em
+    FROM faturamento_documentos d
+    WHERE NOT EXISTS (
+      SELECT 1 FROM faturamento_recebimentos_pdf r WHERE r.documento_id=d.id
+    );
+  `);
 }

@@ -93,11 +93,33 @@ export function extrairCampos(texto) {
     avisos.push(
       "Há múltiplas linhas de energia ou ajustes: revise a composição manualmente.",
     );
-  if (!texto.trim())
+  if (texto.trim().length < 80)
     avisos.push(
       "PDF sem texto legível: preencha os campos manualmente. Reconhecimento de imagens ficará para uma próxima etapa.",
     );
-  return { dados, evidencias, avisos };
+  const camposEsperados = [
+    ["uc", "Unidade consumidora"],
+    ["competencia", "Competência"],
+    ["injecao", "Injeção SCEE"],
+    ["total_equatorial", "Total Equatorial"],
+    ["vencimento_equatorial", "Vencimento Equatorial"],
+    ["unitario", "Preço unitário"],
+    ["bandeira", "Bandeira"],
+  ];
+  const identificados = camposEsperados.filter(([campo]) => dados[campo]);
+  const pendencias = camposEsperados
+    .filter(([campo]) => !dados[campo])
+    .map(([, rotulo]) => rotulo);
+  const qualidade = {
+    modo: texto.trim().length < 80 ? "manual" : "texto",
+    campos_identificados: identificados.length,
+    campos_esperados: camposEsperados.length,
+    percentual: Math.round(
+      (identificados.length / camposEsperados.length) * 100,
+    ),
+    pendencias,
+  };
+  return { dados, evidencias, avisos, qualidade };
 }
 
 export async function lerPdf(buffer) {
@@ -136,7 +158,7 @@ export async function lerPdf(buffer) {
       );
     }
     const texto = paginas.join("\n\n").slice(0, 200000);
-    return { texto, ...extrairCampos(texto) };
+    return { texto, paginas: documento.numPages, ...extrairCampos(texto) };
   } finally {
     await tarefa.destroy();
   }

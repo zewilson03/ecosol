@@ -154,18 +154,25 @@ rotasAdministrativas.delete(
 rotasAdministrativas.get(
   "/api/admin/financeiro",
   exigirNivel(2),
-  (_requisicao, resposta) => {
+  (requisicao, resposta) => {
     const banco = obterBanco();
-    resposta.json({
-      contas: banco
+    const visao = String(requisicao.query.visao ?? "completa");
+    const dados = {};
+
+    if (visao !== "historico") {
+      dados.contas = banco
         .prepare("SELECT * FROM contas_a_pagar ORDER BY vencimento, id DESC")
-        .all(),
-      historico: banco
+        .all();
+    }
+    if (visao !== "contas") {
+      dados.historico = banco
         .prepare(
           "SELECT * FROM historico_financeiro ORDER BY id DESC LIMIT 100",
         )
-        .all(),
-    });
+        .all();
+    }
+
+    resposta.json(dados);
   },
 );
 

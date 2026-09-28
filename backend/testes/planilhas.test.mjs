@@ -12,6 +12,7 @@ import {
   sugerirMapeamento,
   criarModelo,
   exportarCalculos,
+  analisarEstruturaMensal,
 } from "../servidor/faturamento/planilhas.mjs";
 import { calcularCobranca } from "../servidor/faturamento/regras.mjs";
 import { nomeUsinaDoArquivo } from "../servidor/faturamento/catalogoPlanilhas.mjs";
@@ -285,6 +286,64 @@ try {
   assert.equal(
     prepararImportacao(data, configuracao, banco).linhas[0].contrato.inicio,
     "2026-09",
+  );
+  const modeloReferencia = new ExcelJS.Workbook(),
+    abaReferencia = modeloReferencia.addWorksheet("Set - 26");
+  abaReferencia.addRow([
+    "USINA",
+    "CLIENTE",
+    "UC",
+    "NOVA UC",
+    "ENERGIA INJETADA",
+    "VALOR KWH",
+    "DESCONTO",
+    "TOTAL A PAGAR",
+    "JUROS",
+    "MULTA",
+    "DESCONTO GDII",
+    "VALOR DO BOLETO",
+  ]);
+  abaReferencia.addRow([
+    "Usina A",
+    "Cliente referência",
+    "123456",
+    "400000001111",
+    1000,
+    1.17,
+    0.25,
+    300,
+    0,
+    0,
+    25,
+    1152.5,
+  ]);
+  const estruturaReferencia = analisarEstruturaMensal(
+    await lerExcel(Buffer.from(await modeloReferencia.xlsx.writeBuffer())),
+  );
+  assert.equal(estruturaReferencia.compativel, true);
+  assert.equal(estruturaReferencia.aba, "Set - 26");
+  assert.equal(estruturaReferencia.cabecalho, 1);
+  assert.equal(estruturaReferencia.linhas_preenchidas, 1);
+  assert.equal(estruturaReferencia.linhas_pendentes, 0);
+  assert.deepEqual(estruturaReferencia.mapa, {
+    nome: 1,
+    uc: 3,
+    desconto: 6,
+  });
+  writeFileSync(
+    join(
+      process.env.ECOSOL_PLANILHAS_DIR,
+      "51 - Venda de Energia - Usina Referência 2026.xlsx",
+    ),
+    Buffer.from(await modeloReferencia.xlsx.writeBuffer()),
+  );
+  const diagnostico = await ok("/planilhas/pasta/diagnostico");
+  assert.equal(diagnostico.total >= 2, true);
+  assert.equal(
+    diagnostico.itens.some(
+      (item) => item.usina === "Referência" && item.compativel,
+    ),
+    true,
   );
   const antes = banco.prepare("SELECT * FROM faturamento_unidades").get();
   const valido2 = await arquivo([

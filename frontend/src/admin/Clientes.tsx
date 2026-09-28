@@ -15,11 +15,49 @@ import {
   FormularioAutomatico,
 } from "./ComponentesDoPainel";
 
+type SecaoDosCadastros = "unidades" | "clientes" | "contatos" | "acessos";
+
+const secoesDosCadastros: {
+  id: SecaoDosCadastros;
+  numero: string;
+  titulo: string;
+  descricao: string;
+  nivelMinimo?: number;
+}[] = [
+  {
+    id: "unidades",
+    numero: "01",
+    titulo: "Unidades e contratos",
+    descricao: "Dados usados no cálculo",
+  },
+  {
+    id: "clientes",
+    numero: "02",
+    titulo: "Clientes",
+    descricao: "Acesso ao portal",
+  },
+  {
+    id: "contatos",
+    numero: "03",
+    titulo: "Contatos recebidos",
+    descricao: "Atendimento comercial",
+  },
+  {
+    id: "acessos",
+    numero: "04",
+    titulo: "Acessos da equipe",
+    descricao: "Permissões internas",
+    nivelMinimo: 3,
+  },
+];
+
 export default function Clientes() {
   const administrador = usarAdministrador();
-  const consulta = usarConsulta<DadosDaEquipe>("/api/equipe/dados");
+  const [secao, definirSecao] = useState<SecaoDosCadastros>("unidades");
+  const consulta = usarConsulta<DadosDaEquipe>(
+    secao === "unidades" ? null : `/api/equipe/dados?secao=${secao}`,
+  );
   const [busca, definirBusca] = useState("");
-  const [secao, definirSecao] = useState("clientes");
   const [formulario, definirFormulario] = useState(false);
   const [novoAcesso, definirNovoAcesso] = useState(false);
   const [clienteParaExcluir, definirClienteParaExcluir] = useState<
@@ -31,11 +69,23 @@ export default function Clientes() {
   const [erro, definirErro] = useState("");
   const [mensagem, definirMensagem] = useState("");
   const [ocupado, definirOcupado] = useState(false);
-  const clientes = (consulta.dados?.clientes ?? []).filter((cliente) =>
+  const todosClientes = consulta.dados?.clientes ?? [];
+  const administradores = consulta.dados?.administradores ?? [];
+  const contatos = consulta.dados?.contatos ?? [];
+  const clientes = todosClientes.filter((cliente) =>
     (cliente.name + cliente.cpf + cliente.email)
       .toLowerCase()
       .includes(busca.toLowerCase()),
   );
+
+  function abrirSecao(novaSecao: SecaoDosCadastros) {
+    definirSecao(novaSecao);
+    definirFormulario(false);
+    definirNovoAcesso(false);
+    definirBusca("");
+    definirErro("");
+    definirMensagem("");
+  }
 
   async function mudarNivel(id: number, nivel: string) {
     definirOcupado(true);
@@ -115,8 +165,8 @@ export default function Clientes() {
   return (
     <>
       <CabecalhoDoModulo
-        titulo="Clientes"
-        descricao="Relacionamentos, cadastros e acessos em um só lugar."
+        titulo="Cadastros"
+        descricao="Organize unidades de cobrança, clientes, contatos e acessos da equipe."
       >
         {secao === "clientes" && (
           <button
@@ -127,34 +177,27 @@ export default function Clientes() {
           </button>
         )}
       </CabecalhoDoModulo>
-      <div className="admin-abas" aria-label="Seções de clientes">
-        <button
-          className={secao === "unidades" ? "selecionada" : ""}
-          onClick={() => definirSecao("unidades")}
-        >
-          Unidades e contratos
-        </button>
-        <button
-          className={secao === "clientes" ? "selecionada" : ""}
-          onClick={() => definirSecao("clientes")}
-        >
-          Clientes ({consulta.dados?.clientes.length ?? 0})
-        </button>
-        <button
-          className={secao === "contatos" ? "selecionada" : ""}
-          onClick={() => definirSecao("contatos")}
-        >
-          Contatos recebidos
-        </button>
-        {administrador.nivel === 3 && (
-          <button
-            className={secao === "acessos" ? "selecionada" : ""}
-            onClick={() => definirSecao("acessos")}
-          >
-            Acessos da equipe
-          </button>
-        )}
-      </div>
+      <nav
+        className="admin-abas admin-abas-destaque clientes-navegacao"
+        aria-label="Seções de clientes"
+      >
+        {secoesDosCadastros
+          .filter(
+            (item) =>
+              !item.nivelMinimo || administrador.nivel >= item.nivelMinimo,
+          )
+          .map((item) => (
+            <button
+              className={secao === item.id ? "selecionada" : ""}
+              onClick={() => abrirSecao(item.id)}
+              key={item.id}
+            >
+              <span>{item.numero}</span>
+              <strong>{item.titulo}</strong>
+              <small>{item.descricao}</small>
+            </button>
+          ))}
+      </nav>
       {formulario && secao === "clientes" && (
         <div className="admin-grade">
           <FormularioAutomatico
@@ -203,13 +246,24 @@ export default function Clientes() {
           {secao === "clientes" && (
             <>
               <div className="admin-barra">
-                <h2>Lista de clientes</h2>
+                <div>
+                  <h2>Lista de clientes</h2>
+                  <small>{clientes.length} resultado(s)</small>
+                </div>
                 <input
                   aria-label="Buscar clientes"
                   placeholder="Nome, CPF ou email"
                   value={busca}
                   onChange={(evento) => definirBusca(evento.target.value)}
                 />
+                {busca && (
+                  <button
+                    className="admin-botao secundario"
+                    onClick={() => definirBusca("")}
+                  >
+                    Limpar busca
+                  </button>
+                )}
               </div>
               <div className="admin-tabela">
                 <table>
@@ -349,7 +403,7 @@ export default function Clientes() {
                     </tr>
                   </thead>
                   <tbody>
-                    {consulta.dados?.administradores.map((pessoa) => (
+                    {administradores.map((pessoa) => (
                       <tr key={pessoa.id}>
                         <td>{pessoa.name}</td>
                         <td>{pessoa.email}</td>
@@ -409,7 +463,7 @@ export default function Clientes() {
                   </tbody>
                 </table>
               </div>
-              {consulta.dados?.administradores.length === 0 && (
+              {administradores.length === 0 && (
                 <p>Crie o primeiro acesso usando “Novo acesso”.</p>
               )}
             </>
@@ -417,10 +471,8 @@ export default function Clientes() {
           {secao === "contatos" && (
             <>
               <h2>Contatos recebidos</h2>
-              {consulta.dados?.contatos.length === 0 && (
-                <p>Nenhum contato recebido ainda.</p>
-              )}
-              {consulta.dados?.contatos.map((contato) => (
+              {contatos.length === 0 && <p>Nenhum contato recebido ainda.</p>}
+              {contatos.map((contato) => (
                 <article className="admin-contato" key={contato.id}>
                   <div>
                     <h3>{contato.name}</h3>

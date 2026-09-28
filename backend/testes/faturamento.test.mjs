@@ -198,6 +198,13 @@ try {
   );
   let d = await ok("/documentos?lote=teste&nome=a.pdf", "POST", arquivo, 201);
   await ok("/documentos?lote=teste&nome=a.pdf", "POST", arquivo, 409);
+  const recebimentos = await ok("/recebimentos");
+  assert.deepEqual(
+    recebimentos.slice(0, 3).map((r) => r.codigo),
+    ["duplicada", "ok", "invalida"],
+  );
+  assert.match(recebimentos[0].motivo, /já foi recebida/);
+  assert.equal(recebimentos[1].documento_id, d.id);
   assert.equal((await chamar(`/documentos/${d.id}/pdf`, null)).status, 401);
   const download = await chamar(`/documentos/${d.id}/pdf`, 1);
   assert.equal(download.status, 200);
