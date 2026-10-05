@@ -4,7 +4,18 @@ import { obterBanco } from "./bancoDeDados.mjs";
 import { exigirNivel } from "./permissoesDaEquipe.mjs";
 
 export const rotasAdministrativas = Router();
-rotasAdministrativas.use("/api/admin", exigirNivel(1));
+const exigirAdministrador = exigirNivel(1);
+rotasAdministrativas.use("/api/admin", (requisicao, resposta, proximo) => {
+  // O retorno OAuth faz a própria validação de sessão e precisa tratar
+  // sessões encerradas com um redirecionamento, não com uma resposta JSON.
+  if (
+    requisicao.method === "GET" &&
+    requisicao.originalUrl.split("?", 1)[0] ===
+      "/api/admin/gmail/oauth/retorno"
+  )
+    return proximo();
+  return exigirAdministrador(requisicao, resposta, proximo);
+});
 
 rotasAdministrativas.get("/api/admin/usinas", (_requisicao, resposta) => {
   resposta.json(

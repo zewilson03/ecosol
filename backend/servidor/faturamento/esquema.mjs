@@ -34,9 +34,21 @@ export function prepararFaturamento(banco) {
       id INTEGER PRIMARY KEY, hash TEXT, nome TEXT NOT NULL, lote TEXT NOT NULL,
       resultado TEXT NOT NULL, codigo TEXT NOT NULL, motivo TEXT NOT NULL,
       documento_id INTEGER, responsavel TEXT NOT NULL,
+      origem TEXT NOT NULL DEFAULT 'legado'
+        CHECK(origem IN ('legado','manual','gmail')),
       criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
   `);
+  if (
+    !banco
+      .prepare("PRAGMA table_info(faturamento_recebimentos_pdf)")
+      .all()
+      .some((c) => c.name === "origem")
+  ) {
+    banco.exec(
+      "ALTER TABLE faturamento_recebimentos_pdf ADD COLUMN origem TEXT NOT NULL DEFAULT 'legado' CHECK(origem IN ('legado','manual','gmail'))",
+    );
+  }
   if (
     !banco
       .prepare("PRAGMA table_info(faturamento_unidades)")

@@ -3,6 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { prepararFaturamento } from "./faturamento/esquema.mjs";
+import { prepararGmail } from "./gmail/esquema.mjs";
 
 let banco;
 
@@ -13,9 +14,11 @@ export function obterBanco() {
   const pasta = process.env.ECOSOL_DATA_DIR || join(pastaDoBackend, "data");
   mkdirSync(pasta, { recursive: true });
   banco = new DatabaseSync(join(pasta, "ecosol.db"));
+  try {
+    banco.exec("PRAGMA busy_timeout=5000");
 
-  // A criação é segura para um banco já existente: as tabelas são preservadas.
-  banco.exec(`
+    // A criação é segura para um banco já existente: as tabelas são preservadas.
+    banco.exec(`
     PRAGMA journal_mode=WAL;
     CREATE TABLE IF NOT EXISTS customers (
       id INTEGER PRIMARY KEY,
@@ -73,13 +76,15 @@ export function obterBanco() {
     );
   `);
 
-  const colunasDaEquipe = banco.prepare("PRAGMA table_info(staff_users)").all();
-  if (!colunasDaEquipe.some((coluna) => coluna.name === "access_level")) {
-    banco.exec(
-      "ALTER TABLE staff_users ADD COLUMN access_level INTEGER NOT NULL DEFAULT 1 CHECK(access_level BETWEEN 1 AND 3)",
-    );
-  }
-  banco.exec(`
+    const colunasDaEquipe = banco
+      .prepare("PRAGMA table_info(staff_users)")
+      .all();
+    if (!colunasDaEquipe.some((coluna) => coluna.name === "access_level")) {
+      banco.exec(
+        "ALTER TABLE staff_users ADD COLUMN access_level INTEGER NOT NULL DEFAULT 1 CHECK(access_level BETWEEN 1 AND 3)",
+      );
+    }
+    banco.exec(`
     CREATE TABLE IF NOT EXISTS contas_a_pagar (
       id INTEGER PRIMARY KEY,
       descricao TEXT NOT NULL,
@@ -117,20 +122,31 @@ export function obterBanco() {
       status TEXT NOT NULL DEFAULT 'Pendente'
     );
   `);
-  if (!colunasDaEquipe.some((coluna) => coluna.name === "cpf")) {
-    banco.exec("ALTER TABLE staff_users ADD COLUMN cpf TEXT");
-  }
+    if (!colunasDaEquipe.some((coluna) => coluna.name === "cpf")) {
+      banco.exec("ALTER TABLE staff_users ADD COLUMN cpf TEXT");
+    }
 
-  const colunasDasFaturas = banco.prepare("PRAGMA table_info(faturas)").all();
-  if (!colunasDasFaturas.some((coluna) => coluna.name === "cliente_nome")) {
-    banco.exec("ALTER TABLE faturas ADD COLUMN cliente_nome TEXT");
-  }
+    const colunasDasFaturas = banco.prepare("PRAGMA table_info(faturas)").all();
+    if (!colunasDasFaturas.some((coluna) => coluna.name === "cliente_nome")) {
+      banco.exec("ALTER TABLE faturas ADD COLUMN cliente_nome TEXT");
+    }
 
-  banco.exec(`
+    banco.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS staff_users_cpf_unique
     ON staff_users(cpf) WHERE cpf IS NOT NULL
   `);
 
-  prepararFaturamento(banco);
-  return banco;
+    prepararFaturamento(banco);
+    prepararGmail(banco);
+    return banco;
+  } catch (erro) {
+    const conexaoIncompleta = banco;
+    banco = undefined;
+    try {
+      conexaoIncompleta.close();
+    } catch {
+      // Preserve a causa da falha de inicialização.
+    }
+    throw erro;
+  }
 }

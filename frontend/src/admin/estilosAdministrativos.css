@@ -818,6 +818,65 @@
   color: #1b634b;
   background: #e8f5ed;
 }
+.gmail-configuracao > p {
+  max-width: 700px;
+}
+.gmail-formulario {
+  margin: 20px 0 0;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.gmail-formulario fieldset {
+  max-width: 680px;
+}
+.gmail-contas {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  gap: 16px;
+}
+.gmail-conta {
+  border: 1px solid #e0e8ef;
+  border-radius: 18px;
+  background: #fafdff;
+  padding: 20px;
+}
+.gmail-conta-cabecalho {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+.gmail-conta h3 {
+  margin: 5px 0 0;
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+.gmail-conta-dados {
+  display: grid;
+  gap: 12px;
+  margin: 22px 0;
+}
+.gmail-conta-dados div {
+  display: grid;
+  gap: 4px;
+}
+.gmail-conta-dados dt {
+  color: #688095;
+  font-size: 12px;
+}
+.gmail-conta-dados dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  font-weight: 700;
+}
+.gmail-conta-acoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
 .admin-contato {
   display: flex;
   gap: 20px;

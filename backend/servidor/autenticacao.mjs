@@ -62,7 +62,7 @@ export function sessaoAtual(requisicao) {
   return (
     obterBanco()
       .prepare(
-        "SELECT customer_id, staff_id, role FROM sessions WHERE token_hash = ? AND expires_at > ?",
+        "SELECT id, customer_id, staff_id, role FROM sessions WHERE token_hash = ? AND expires_at > ?",
       )
       .get(resumoCriptografico(token), Date.now()) ?? null
   );

@@ -6,6 +6,7 @@
   "scripts": {
     "test:planilhas": "node backend/testes/planilhas.test.mjs",
     "test:faturamento": "node backend/testes/faturamento.test.mjs",
+    "test:gmail": "node backend/testes/gmailPersistencia.test.mjs && node backend/testes/gmailAceiteProcessos.test.mjs && node backend/testes/gmailGoogle.test.mjs && node backend/testes/gmailOAuth.test.mjs",
     "test:permissoes": "node backend/testes/permissoesAdministrativas.test.mjs && node backend/testes/primeiroAdministrador.test.mjs && node backend/testes/hashesExportados.test.mjs",
     "dev": "node backend/servidor/iniciar.mjs",
     "build": "node node_modules/typescript/bin/tsc --project frontend/tsconfig.json --noEmit && node node_modules/vite/bin/vite.js build --config frontend/vite.config.ts --configLoader runner",

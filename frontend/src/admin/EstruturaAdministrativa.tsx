@@ -71,6 +71,9 @@ export default function EstruturaAdministrativa() {
     ...(administrador.nivel >= 2
       ? [{ rota: "financeiro", nome: "Financeiro", simbolo: "↗" }]
       : []),
+    ...(administrador.nivel >= 3
+      ? [{ rota: "gmail", nome: "Integração Gmail", simbolo: "✉" }]
+      : []),
   ];
 
   return (

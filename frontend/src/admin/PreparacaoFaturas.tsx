@@ -48,7 +48,8 @@ type Recebimento = {
   id: number;
   nome: string;
   lote: string;
-  resultado: "Recebida" | "Requer atenção" | "Erro";
+  origem: "legado" | "manual" | "gmail";
+  resultado: "Recebida" | "Requer atenção" | "Erro" | "Duplicada";
   codigo: "ok" | "duplicada" | "ilegivel" | "invalida";
   motivo: string;
   documento_id: number | null;
@@ -241,7 +242,11 @@ export default function PreparacaoFaturas() {
   const totalRecebidas =
     recebimentos.dados?.filter((r) => r.resultado === "Recebida").length ?? 0;
   const totalAtencao =
-    recebimentos.dados?.filter((r) => r.resultado !== "Recebida").length ?? 0;
+    recebimentos.dados?.filter(
+      (r) => r.resultado === "Requer atenção" || r.resultado === "Erro",
+    ).length ?? 0;
+  const totalDuplicadas =
+    recebimentos.dados?.filter((r) => r.resultado === "Duplicada").length ?? 0;
   const totalAprovadas =
     consulta.dados?.filter((d) => d.status === aprovada).length ?? 0;
 
@@ -278,13 +283,16 @@ export default function PreparacaoFaturas() {
       </ol>
       <div className="faturamento-indicadores" aria-label="Resumo das faturas">
         <span>
-          <strong>{recebimentos.dados?.length ?? 0}</strong> recebidas
+          <strong>{recebimentos.dados?.length ?? 0}</strong> ocorrências
         </span>
         <span className="correto">
           <strong>{totalRecebidas}</strong> prontas
         </span>
         <span className={totalAtencao ? "atencao" : ""}>
           <strong>{totalAtencao}</strong> com atenção
+        </span>
+        <span>
+          <strong>{totalDuplicadas}</strong> duplicadas
         </span>
         <span className="solar">
           <strong>{totalAprovadas}</strong> aprovadas
@@ -363,28 +371,38 @@ export default function PreparacaoFaturas() {
               <option value="Recebida">Prontas para revisar</option>
               <option value="Requer atenção">Requerem atenção</option>
               <option value="Erro">Com erro</option>
+              <option value="Duplicada">Duplicadas</option>
             </select>
           </div>
           <div className="faturamento-lista" role="list">
             {lista.map((r) => (
               <article
-                className={`faturamento-item ${r.resultado === "Recebida" ? "correto" : r.resultado === "Erro" ? "erro" : "atencao"} ${selecionado?.id === r.documento_id ? "selecionado" : ""}`}
+                className={`faturamento-item ${r.resultado === "Recebida" || r.resultado === "Duplicada" ? "correto" : r.resultado === "Erro" ? "erro" : "atencao"} ${selecionado?.id === r.documento_id ? "selecionado" : ""}`}
                 key={r.id}
                 role="listitem"
               >
                 <span className="faturamento-estado-icone" aria-hidden="true">
                   {r.resultado === "Recebida"
                     ? "✓"
-                    : r.resultado === "Erro"
-                      ? "!"
-                      : "i"}
+                    : r.resultado === "Duplicada"
+                      ? "↺"
+                      : r.resultado === "Erro"
+                        ? "!"
+                        : "i"}
                 </span>
                 <div className="faturamento-item-arquivo">
                   <strong title={r.nome}>{r.nome}</strong>
-                  <span>{r.lote}</span>
+                  <span>
+                    {r.lote} ·{" "}
+                    {r.origem === "gmail"
+                      ? "Gmail"
+                      : r.origem === "manual"
+                        ? "Envio manual"
+                        : "Origem anterior"}
+                  </span>
                 </div>
                 <span
-                  className={`faturamento-situacao ${r.resultado === "Recebida" ? "correto" : r.resultado === "Erro" ? "erro" : "atencao"}`}
+                  className={`faturamento-situacao ${r.resultado === "Recebida" || r.resultado === "Duplicada" ? "correto" : r.resultado === "Erro" ? "erro" : "atencao"}`}
                 >
                   {r.resultado === "Recebida" ? "Pronta" : r.resultado}
                 </span>

@@ -7,6 +7,7 @@ import { obterBanco } from "./bancoDeDados.mjs";
 import { rotas } from "./rotasDaAplicacao.mjs";
 import { rotasAdministrativas } from "./rotasAdministrativas.mjs";
 import { rotasFaturamento } from "./faturamento/rotas.mjs";
+import { rotasGmail } from "./gmail/rotas.mjs";
 
 const pastaDoBackend = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const pastaDoProjeto = resolve(pastaDoBackend, "..");
@@ -48,6 +49,7 @@ aplicacao.use((requisicao, resposta, proximo) => {
 aplicacao.use(rotas);
 aplicacao.use(rotasAdministrativas);
 aplicacao.use(rotasFaturamento);
+aplicacao.use(rotasGmail);
 obterBanco();
 
 if (process.env.NODE_ENV !== "production") {

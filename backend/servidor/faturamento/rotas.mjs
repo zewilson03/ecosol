@@ -1,8 +1,8 @@
 import express, { Router } from "express";
-import { createHash } from "node:crypto";
 import { obterBanco } from "../bancoDeDados.mjs";
 import { exigirNivel } from "../permissoesDaEquipe.mjs";
-import { lerPdf } from "./extracao.mjs";
+import { receberPdf } from "./receberPdf.mjs";
+import { registrarHistorico } from "./registros.mjs";
 import { rotasPlanilhas } from "./rotasPlanilhas.mjs";
 import {
   calcularCobranca,
@@ -57,7 +57,7 @@ function documentoCompleto(numero) {
 }
 function conferirVersao(d, body) {
   if (d.versao !== Number(body.versao))
-    falhar("Este registro foi alterado. Reabra-o antes de continuar.", 409);
+    falhar("Este registro foi alterado. Abra-o novamente antes de continuar.", 409);
   if (d.status === APROVADA)
     falhar(
       "Cobrança aprovada: o histórico está protegido contra alterações.",
@@ -65,36 +65,14 @@ function conferirVersao(d, body) {
     );
 }
 function historico(req, acao, dados, documentoId = null, unidadeId = null) {
-  obterBanco()
-    .prepare(
-      "INSERT INTO faturamento_historico (documento_id, unidade_id, responsavel, administrador_id, acao, dados) VALUES (?,?,?,?,?,?)",
-    )
-    .run(
-      documentoId,
-      unidadeId,
-      req.administrador.nome,
-      req.administrador.id,
-      acao,
-      JSON.stringify(dados),
-    );
-}
-function registrarRecebimento(req, dados) {
-  obterBanco()
-    .prepare(
-      `INSERT INTO faturamento_recebimentos_pdf
-       (hash,nome,lote,resultado,codigo,motivo,documento_id,responsavel)
-       VALUES (?,?,?,?,?,?,?,?)`,
-    )
-    .run(
-      dados.hash ?? null,
-      dados.nome,
-      dados.lote,
-      dados.resultado,
-      dados.codigo,
-      dados.motivo,
-      dados.documento_id ?? null,
-      req.administrador.nome,
-    );
+  registrarHistorico({
+    responsavel: req.administrador.nome,
+    administradorId: req.administrador.id,
+    acao,
+    dados,
+    documentoId,
+    unidadeId,
+  });
 }
 function transacao(fn) {
   const banco = obterBanco();
@@ -297,88 +275,16 @@ router.post(
   exigirNivel(2),
   express.raw({ type: "application/pdf", limit: "10mb" }),
   async (req, res) => {
-    const lote = texto(req.query.lote, "o lote", 80);
-    const nome = texto(req.query.nome, "o nome do arquivo", 200);
-    if (
-      !Buffer.isBuffer(req.body) ||
-      req.body.length < 8 ||
-      req.body.subarray(0, 5).toString() !== "%PDF-"
-    ) {
-      registrarRecebimento(req, {
-        nome,
-        lote,
-        resultado: "Erro",
-        codigo: "invalida",
-        motivo: "O arquivo não é um PDF válido ou está incompleto.",
-      });
-      falhar("Envie um arquivo PDF válido, com até 10 MB.");
-    }
-    const hash = createHash("sha256").update(req.body).digest("hex");
-    const banco = obterBanco();
-    const duplicada = banco
-      .prepare("SELECT id FROM faturamento_documentos WHERE hash=?")
-      .get(hash);
-    if (duplicada) {
-      registrarRecebimento(req, {
-        hash,
-        nome,
-        lote,
-        resultado: "Erro",
-        codigo: "duplicada",
-        motivo: `Esta mesma fatura já foi recebida como #${duplicada.id}. Nenhuma cópia foi criada.`,
-        documento_id: duplicada.id,
-      });
-      falhar("Este PDF já foi importado. Consulte a lista de faturas.", 409);
-    }
-    let extracao;
-    try {
-      extracao = await lerPdf(req.body);
-    } catch {
-      registrarRecebimento(req, {
-        hash,
-        nome,
-        lote,
-        resultado: "Erro",
-        codigo: "ilegivel",
-        motivo:
-          "Não foi possível abrir o PDF. Ele pode estar com senha, danificado ou ter mais de 10 páginas.",
-      });
-      falhar(
-        "Não foi possível ler o PDF. Verifique se está íntegro, sem senha e com até 10 páginas.",
-      );
-    }
-    const numero = transacao(() => {
-      const numero = Number(
-        banco
-          .prepare(
-            "INSERT INTO faturamento_documentos (hash,nome,pdf,lote,texto,extracao,dados) VALUES (?,?,?,?,?,?,?)",
-          )
-          .run(
-            hash,
-            nome,
-            req.body,
-            lote,
-            extracao.texto,
-            JSON.stringify(extracao),
-            JSON.stringify({ ...extracao.dados, origem_tarifa: "propria" }),
-          ).lastInsertRowid,
-      );
-      historico(req, "Importação de PDF", { nome, lote, hash }, numero);
-      const manual = extracao.qualidade?.modo === "manual";
-      registrarRecebimento(req, {
-        hash,
-        nome,
-        lote,
-        resultado: manual ? "Requer atenção" : "Recebida",
-        codigo: manual ? "ilegivel" : "ok",
-        motivo: manual
-          ? "O PDF parece ser uma imagem. Preencha e confira os campos manualmente."
-          : "PDF recebido e lido. Confira os dados antes de calcular.",
-        documento_id: numero,
-      });
-      return numero;
+    const resultado = await receberPdf({
+      arquivo: req.body,
+      nome: req.query.nome,
+      lote: req.query.lote,
+      ator: req.administrador,
+      origem: "manual",
     });
-    res.status(201).json(documento(numero));
+    if (resultado.tipo === "duplicado")
+      falhar("Este PDF já foi importado. Consulte a lista de faturas.", 409);
+    res.status(201).json(documento(resultado.documentoId));
   },
 );
 

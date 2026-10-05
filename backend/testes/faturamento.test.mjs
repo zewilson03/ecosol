@@ -3,6 +3,7 @@ import { randomBytes, createHash } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import express from "express";
 import {
   calcularCobranca,
@@ -10,12 +11,40 @@ import {
   dataValida,
 } from "../servidor/faturamento/regras.mjs";
 import { extrairCampos, lerPdf } from "../servidor/faturamento/extracao.mjs";
+import { prepararFaturamento } from "../servidor/faturamento/esquema.mjs";
+
+const bancoAntigo = new DatabaseSync(":memory:");
+try {
+  bancoAntigo.exec(`CREATE TABLE faturamento_recebimentos_pdf (
+    id INTEGER PRIMARY KEY, hash TEXT, nome TEXT NOT NULL, lote TEXT NOT NULL,
+    resultado TEXT NOT NULL, codigo TEXT NOT NULL, motivo TEXT NOT NULL,
+    documento_id INTEGER, responsavel TEXT NOT NULL,
+    criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+  bancoAntigo
+    .prepare(
+      "INSERT INTO faturamento_recebimentos_pdf (nome,lote,resultado,codigo,motivo,responsavel) VALUES (?,?,?,?,?,?)",
+    )
+    .run("antigo.pdf", "antigo", "Recebida", "ok", "Anterior", "Equipe");
+  prepararFaturamento(bancoAntigo);
+  prepararFaturamento(bancoAntigo);
+  assert.deepEqual(
+    bancoAntigo
+      .prepare("SELECT nome,origem FROM faturamento_recebimentos_pdf")
+      .all()
+      .map((r) => ({ ...r })),
+    [{ nome: "antigo.pdf", origem: "legado" }],
+  );
+} finally {
+  bancoAntigo.close();
+}
 
 process.env.ECOSOL_DATA_DIR = mkdtempSync(
   join(tmpdir(), "ecosol-faturamento-"),
 );
 const { obterBanco } = await import("../servidor/bancoDeDados.mjs");
 const { rotasFaturamento } = await import("../servidor/faturamento/rotas.mjs");
+const { receberPdf } = await import("../servidor/faturamento/receberPdf.mjs");
 const banco = obterBanco();
 
 // Valores sintéticos dos componentes somam a tarifa confirmada pelo usuário.
@@ -204,7 +233,150 @@ try {
     ["duplicada", "ok", "invalida"],
   );
   assert.match(recebimentos[0].motivo, /já foi recebida/);
+  assert.equal(recebimentos[0].resultado, "Erro");
   assert.equal(recebimentos[1].documento_id, d.id);
+  assert.ok(recebimentos.slice(0, 3).every((r) => r.origem === "manual"));
+
+  const atorGmail = { id: null, nome: "Integração Gmail" };
+  const entradaGmail = (arquivo, nome) => ({
+    arquivo,
+    nome,
+    lote: "gmail-teste",
+    ator: atorGmail,
+    origem: "gmail",
+  });
+  const duplicataGmail = await receberPdf(
+    entradaGmail(arquivo, "repetida.pdf"),
+  );
+  assert.deepEqual(duplicataGmail, {
+    tipo: "duplicado",
+    documentoId: d.id,
+  });
+  const duplicataRegistrada = banco
+    .prepare(
+      "SELECT origem,resultado,codigo,documento_id FROM faturamento_recebimentos_pdf ORDER BY id DESC LIMIT 1",
+    )
+    .get();
+  assert.deepEqual(
+    { ...duplicataRegistrada },
+    {
+      origem: "gmail",
+      resultado: "Duplicada",
+      codigo: "duplicada",
+      documento_id: d.id,
+    },
+  );
+
+  const pdfGmail = pdf([...linhas, "ARQUIVO DA INTEGRACAO"]);
+  const novoGmail = await receberPdf(entradaGmail(pdfGmail, "gmail.pdf"));
+  assert.equal(novoGmail.tipo, "novo");
+  assert.equal(
+    banco
+      .prepare("SELECT status FROM faturamento_documentos WHERE id=?")
+      .get(novoGmail.documentoId).status,
+    "Pendente de revisão",
+  );
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT origem,responsavel FROM faturamento_recebimentos_pdf WHERE documento_id=?",
+      )
+      .get(novoGmail.documentoId).origem,
+    "gmail",
+  );
+
+  const acessoInicial = await receberPdf({
+    arquivo: pdf([...linhas, "ACESSO INICIAL"]),
+    nome: "inicial.pdf",
+    lote: "teste",
+    ator: { id: null, nome: "Acesso inicial" },
+    origem: "manual",
+  });
+  assert.equal(acessoInicial.tipo, "novo");
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT administrador_id,responsavel FROM faturamento_historico WHERE documento_id=?",
+      )
+      .get(acessoInicial.documentoId).administrador_id,
+    null,
+  );
+
+  const pdfConcorrente = pdf([...linhas, "DUAS ENTRADAS CONCORRENTES"]);
+  const concorrentes = await Promise.all([
+    receberPdf(entradaGmail(pdfConcorrente, "concorrente-gmail.pdf")),
+    receberPdf({
+      arquivo: pdfConcorrente,
+      nome: "concorrente-manual.pdf",
+      lote: "teste",
+      ator: { id: 1, nome: "Teste 1" },
+      origem: "manual",
+    }),
+  ]);
+  assert.deepEqual(concorrentes.map((r) => r.tipo).sort(), [
+    "duplicado",
+    "novo",
+  ]);
+  assert.equal(concorrentes[0].documentoId, concorrentes[1].documentoId);
+  const hashConcorrente = createHash("sha256")
+    .update(pdfConcorrente)
+    .digest("hex");
+  assert.equal(
+    banco
+      .prepare("SELECT COUNT(*) AS n FROM faturamento_documentos WHERE hash=?")
+      .get(hashConcorrente).n,
+    1,
+  );
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT COUNT(*) AS n FROM faturamento_recebimentos_pdf WHERE hash=?",
+      )
+      .get(hashConcorrente).n,
+    2,
+  );
+
+  const grande = Buffer.alloc(10 * 1024 * 1024 + 1);
+  grande.write("%PDF-");
+  await assert.rejects(
+    receberPdf(entradaGmail(grande, "grande.pdf")),
+    (erro) => erro.status === 400,
+  );
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT codigo FROM faturamento_recebimentos_pdf ORDER BY id DESC LIMIT 1",
+      )
+      .get().codigo,
+    "invalida",
+  );
+
+  const pdfFalha = pdf([...linhas, "FALHA DE AUDITORIA"]);
+  const hashFalha = createHash("sha256").update(pdfFalha).digest("hex");
+  banco.exec(`CREATE TRIGGER rejeitar_historico_pdf
+    BEFORE INSERT ON faturamento_historico
+    WHEN NEW.acao='Importação de PDF'
+    BEGIN SELECT RAISE(ABORT, 'falha de auditoria'); END`);
+  try {
+    await assert.rejects(receberPdf(entradaGmail(pdfFalha, "falha.pdf")));
+  } finally {
+    banco.exec("DROP TRIGGER rejeitar_historico_pdf");
+  }
+  assert.equal(
+    banco
+      .prepare("SELECT COUNT(*) AS n FROM faturamento_documentos WHERE hash=?")
+      .get(hashFalha).n,
+    0,
+  );
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT COUNT(*) AS n FROM faturamento_recebimentos_pdf WHERE hash=?",
+      )
+      .get(hashFalha).n,
+    0,
+  );
+
   assert.equal((await chamar(`/documentos/${d.id}/pdf`, null)).status, 401);
   const download = await chamar(`/documentos/${d.id}/pdf`, 1);
   assert.equal(download.status, 200);
