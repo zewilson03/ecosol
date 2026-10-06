@@ -1,14 +1,14 @@
-# Captura Gmail (entregas 2 e 3)
+# Captura Gmail (entregas 2 a 4)
 
-Este módulo prepara o estado durável da captura e a conexão OAuth administrativa.
-Ele ainda **não** consulta e-mails nem emite cobranças. Só o backend deve chamar o repositório;
+Este módulo mantém o estado durável, a conexão OAuth e a captura de PDFs anexados.
+Ele **não** aprova valores nem emite cobranças. Só o backend deve chamar o repositório;
 nenhuma estrutura retornada aqui é uma resposta HTTP pronta, pois as reservas
 contêm `lease_token` e os metadados podem ser sensíveis.
 
 ## Contrato de sincronização
 
 - A data inicial da conta é inclusiva a partir de 00:00 em
-  `America/Sao_Paulo`. O futuro cliente Gmail deve converter esse instante
+  `America/Sao_Paulo`. O cliente Gmail converte esse instante
   para UTC ao montar a consulta; não deve interpretar a data no fuso padrão
   do servidor ou da API.
 - Antes da varredura completa, capture um `historyId` como marco. Cada página
@@ -16,7 +16,7 @@ contêm `lease_token` e os metadados podem ser sensíveis.
   `registrarPagina`. IDs e cursor são confirmados na mesma transação. Somente
   após a última página o marco passa a ser o checkpoint histórico.
 - `messages.list` não fornece os detalhes dos anexos. Cada ID entra na fila
-  `gmail_mensagens`; `messages.get` deverá detalhá-lo separadamente. Uma
+  `gmail_mensagens`; `messages.get` o detalha separadamente. Uma
   mensagem sem PDF também termina como `detalhada`. Falhas de uma mensagem
   mantêm seu ID e não impedem o processamento das outras.
 - O checkpoint pode avançar antes do download dos PDFs porque **os IDs das
@@ -42,18 +42,17 @@ contêm `lease_token` e os metadados podem ser sensíveis.
   reagendamento explícito.
 - O SQLite espera até cinco segundos por um lock de escrita de outra conexão.
   Se retornar `SQLITE_BUSY` depois disso, a operação não avançou o estado e o
-  futuro coletor deverá tentar novamente com espera controlada.
+  coletor tenta novamente com espera controlada.
 - Pausar ou marcar a conta para reconexão invalida reservas ativas. Só uma
   conta conectada e não pausada pode iniciar trabalho ou concluir uma captura.
 - `capturado` e `duplicado` exigem um documento já salvo no faturamento e o
   mesmo SHA-256. Uma pendência não aponta para documento; a razão da pendência
   fica em `erro_codigo`.
 
-O futuro coletor ainda precisará de tratamento de limites e falhas da API,
-expiração/revogação do refresh token, e idempotência do **registro de
-recebimento** entre `receberPdf` e a conclusão da fila. O hash já impede um
-segundo documento com o mesmo PDF, mas não basta para impedir dois registros
-de recebimento após uma falha entre essas operações.
+O recebimento automático usa uma transação curta que confere conta e lease,
+insere ou reutiliza o documento pelo hash, registra o recebimento pelo ID único
+do anexo Gmail e conclui a fila. O hash sozinho não substitui a identidade da
+origem: o mesmo PDF em duas mensagens tem um documento e dois recebimentos.
 
 ## Aceite desta entrega
 
@@ -109,7 +108,7 @@ callback redireciona apenas para a página local, sem código/token na URL.
    a data inicial, autorize no Google e confira a identidade exibida. Teste
    também Cancelar no Google, retorno repetido e sessão encerrada durante a
    autorização. Depois da validação, retome a conta se desejar habilitar a
-   futura busca; a entrega 3 ainda não realiza a busca.
+  busca da entrega 4; a entrega 3, isoladamente, não realizava a busca.
 
 O escopo `gmail.readonly` é classificado pelo Google como **restrito**. Um
 projeto externo em modo _Testing_ emite refresh tokens que expiram após sete
@@ -124,7 +123,89 @@ e [uso de escopos restritos](https://developers.google.com/identity/protocols/oa
 `npm run test:gmail` verifica autorização administrativa, parâmetros OAuth,
 PKCE, escopo, identidade, token cifrado, recusa, sessão expirada, callback
 repetido, reconexão concorrente, pausa, rollback e integridade em bancos
-temporários. `npm run build` verifica a interface. Falta a prova manual com
-uma conta real: consentir, conferir a identidade, pausar, retomar, reconectar,
-recusar e testar retorno após encerrar a sessão. Até essa prova, a entrega 3
-não deve ser marcada como concluída integralmente nem a entrega 4 iniciada.
+temporários. `npm run build` verifica a interface. A prova manual com uma conta
+real cobriu consentimento, identidade, pausa, retomada, reconexão, recusa e
+retorno após encerrar a sessão administrativa.
+
+## Captura e conferência (entrega 4)
+
+- A conta conectada inicia **pausada**. Reativá-la permite a busca automática
+  aproximadamente a cada cinco minutos; `Sincronizar agora` solicita uma
+  execução adicional. O servidor executa a captura, mesmo sem navegador aberto.
+- A busca inicial começa na data escolhida, às 00:00 de São Paulo, inclusive.
+  A consulta usa segundos Unix porque datas textuais do Gmail usam PST.
+  Mensagens lidas e arquivadas entram; spam, lixeira, enviados e rascunhos não.
+  Não há filtro de remetente: use a caixa destinada a faturas. PDFs novos
+  ficam primeiro em triagem, acessível apenas a administradores avançados;
+  só depois de confirmados como fatura ficam disponíveis à equipe de Faturas.
+  PDFs são mantidos sem exclusão automática.
+- Cada página registra IDs e cursor na mesma transação. O histórico incremental
+  recupera mensagens chegadas durante a busca. Histórico expirado provoca
+  revarredura completa; páginas inválidas reiniciam a paginação sem descartar
+  IDs já persistidos. Cada execução limita páginas, mensagens e anexos, e a
+  seguinte continua do checkpoint.
+- Cada parte PDF da mensagem entra na fila separadamente. São aceitos PDFs de
+  até 10 MB e 10 páginas; assinatura e leitura são verificadas no servidor.
+  Arquivo com senha, danificado, excessivo ou MIME anormal fica pendente com
+  código de erro. Um anexo problemático não bloqueia os demais. Não há OCR.
+- PDFs válidos entram primeiro na triagem restrita. O administrador pode abrir
+  o PDF, marcar que não é fatura ou enviá-lo a Faturas, onde ficará como
+  `Pendente de revisão`. A origem Gmail e o recebimento ficam rastreáveis;
+  duplicatas por conteúdo vinculam-se ao documento existente. Nenhuma
+  cobrança, cálculo ou aprovação é automática.
+- Falhas de rede, timeout e limite da API recebem espera crescente. Um token
+  de acesso expirado é renovado automaticamente; perda real de autorização
+  suspende a conta e exige reconexão. O painel mostra a última
+  execução, contagens, falhas e pendências, com reagendamento manual.
+
+### Verificação e implantação
+
+`npm run test:gmail` cobre o cliente Google simulado, paginação, histórico,
+anexos múltiplos, duplicidade, rollback de gravação, pausa e retomada de
+checkpoint. Antes do piloto real, faça backup do banco **e** preserve a chave
+de criptografia separadamente. Reinicie o servidor para aplicar as migrações
+aditivas; confira o estado da conta antes de reativar. O teste real deve usar
+um intervalo inicial pequeno e comparar os PDFs elegíveis da caixa com as
+contagens de capturados, duplicados e pendentes. Não marcar esta entrega como
+aceita até a conferência real e os testes de recuperação estarem concluídos.
+
+### Piloto local de 06/10/2026
+
+Com a caixa exclusiva de faturas autorizada, a busca desde 02/10/2026
+encontrou 50 mensagens elegíveis, das quais 49 continham um PDF. A API do
+Google devolveu IDs de download diferentes para a mesma parte em leituras
+sucessivas; a comparação rígida deixou 49 anexos pendentes. Após corrigir a
+comparação e reiniciar o servidor, essas 49 pendências foram reagendadas e
+capturadas. A conferência independente da caixa encontrou 49 PDFs elegíveis,
+todos registrados como `capturado` e `Recebida`, sem pendências. Seus hashes,
+assinaturas, vínculos de recebimento e estado `Pendente de revisão` foram
+verificados; `PRAGMA integrity_check` retornou `ok` e não houve violação de
+chaves estrangeiras. Uma nova sincronização não criou documentos nem
+recebimentos adicionais. O backup anterior ao piloto está em
+`backend/data/ecosol-pre-gmail4-20261006.db` (não versionado).
+
+**Classificação:** 47 dos 49 PDFs têm nome iniciado por `Termo` e não parecem
+contas de energia. Após backup em
+`backend/data/ecosol-pre-triagem-20261006.db` (não versionado), os 47 foram
+movidos em uma única transação auditada para a triagem restrita. Os dois PDFs
+restantes continuaram em Faturas. Novos PDFs entram em triagem manual antes de
+serem disponibilizados à equipe de Faturas. Não houve exclusão de arquivos.
+
+### Verificação local de recuperação em 06/10/2026
+
+Depois da classificação humana, os 47 Termos ficaram como `nao_fatura`; nenhum
+Termo permanece em Faturas. A sincronização automática continuou a terminar
+sem erro, com 50 mensagens detalhadas, 49 anexos `capturado` e zero pendências.
+Uma cópia consistente do banco foi gerada em
+`backend/data/ecosol-entrega4-homologacao-20261006.db` (não versionada) e
+aberta separadamente: `integrity_check=ok`, nenhuma violação de chave
+estrangeira, 49 anexos preservados e credencial Gmail decifrável com a chave
+atual. O token e a chave não foram exibidos. Passaram `test:gmail`,
+`test:faturamento`, `test:permissoes`, `test:planilhas` e `build`.
+
+Isto comprova recuperação **local** com a chave ainda disponível neste
+computador. Para recuperação após perda do equipamento, mantenha cópias
+protegidas do banco e de `GMAIL_TOKEN_ENCRYPTION_KEY` em local externo seguro;
+não inclua a chave no Git nem a envie por mensagem. A homologação operacional
+contínua também depende de conferir o status de publicação do cliente OAuth
+no projeto Google Cloud proprietário da credencial.

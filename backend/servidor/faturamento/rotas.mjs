@@ -20,7 +20,7 @@ const router = Router();
 rotasFaturamento.use("/api/admin/faturamento", exigirNivel(1), router);
 const APROVADA = "Aprovada — aguardando emissão";
 const colunas =
-  "id, hash, nome, lote, extracao, dados, memoria, unidade_id, competencia, status, versao, criado_em, atualizado_em";
+  "id, hash, nome, lote, extracao, dados, memoria, unidade_id, competencia, status, classificacao, versao, criado_em, atualizado_em";
 
 function id(valor) {
   const numero = Number(valor);
@@ -30,7 +30,9 @@ function id(valor) {
 }
 function documento(numero) {
   const d = obterBanco()
-    .prepare(`SELECT ${colunas} FROM faturamento_documentos WHERE id=?`)
+    .prepare(
+      `SELECT ${colunas} FROM faturamento_documentos WHERE id=? AND classificacao='fatura'`,
+    )
     .get(id(numero));
   if (!d) falhar("Fatura não encontrada.", 404);
   return {
@@ -57,7 +59,10 @@ function documentoCompleto(numero) {
 }
 function conferirVersao(d, body) {
   if (d.versao !== Number(body.versao))
-    falhar("Este registro foi alterado. Abra-o novamente antes de continuar.", 409);
+    falhar(
+      "Este registro foi alterado. Abra-o novamente antes de continuar.",
+      409,
+    );
   if (d.status === APROVADA)
     falhar(
       "Cobrança aprovada: o histórico está protegido contra alterações.",
@@ -230,7 +235,9 @@ router.post("/unidades/:id/contratos", exigirNivel(3), (req, res) => {
 router.get("/documentos", (_req, res) => {
   res.json(
     obterBanco()
-      .prepare("SELECT id FROM faturamento_documentos ORDER BY id DESC")
+      .prepare(
+        "SELECT id FROM faturamento_documentos WHERE classificacao='fatura' ORDER BY id DESC",
+      )
       .all()
       .map((r) => documento(r.id)),
   );
@@ -242,6 +249,7 @@ router.get("/recebimentos", (_req, res) => {
         `SELECT r.*,d.status AS estado_documento,d.dados,d.memoria
          FROM faturamento_recebimentos_pdf r
          LEFT JOIN faturamento_documentos d ON d.id=r.documento_id
+         WHERE r.documento_id IS NULL OR d.classificacao='fatura'
          ORDER BY r.id DESC`,
       )
       .all()

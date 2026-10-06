@@ -36,6 +36,8 @@ export function prepararGmail(banco) {
         ultimo_lote_hash TEXT CHECK(ultimo_lote_hash IS NULL OR length(ultimo_lote_hash) = 64),
         ultima_pagina_em INTEGER,
         ultima_conclusao_em INTEGER,
+        ultima_execucao_em INTEGER,
+        ultimo_erro_codigo TEXT CHECK(ultimo_erro_codigo IS NULL OR length(ultimo_erro_codigo) <= 80),
         CHECK((ultimo_lote_versao IS NULL) = (ultimo_lote_hash IS NULL))
       );
 
@@ -135,6 +137,20 @@ export function prepararGmail(banco) {
       INSERT OR IGNORE INTO gmail_mensagens(conta_id,message_id,estado)
         SELECT DISTINCT conta_id,message_id,'detalhada' FROM gmail_anexos;
     `);
+    const colunas = new Set(
+      banco
+        .prepare("PRAGMA table_info(gmail_sincronizacoes)")
+        .all()
+        .map((c) => c.name),
+    );
+    if (!colunas.has("ultima_execucao_em"))
+      banco.exec(
+        "ALTER TABLE gmail_sincronizacoes ADD COLUMN ultima_execucao_em INTEGER",
+      );
+    if (!colunas.has("ultimo_erro_codigo"))
+      banco.exec(
+        "ALTER TABLE gmail_sincronizacoes ADD COLUMN ultimo_erro_codigo TEXT",
+      );
     banco.exec("COMMIT");
   } catch (erro) {
     banco.exec("ROLLBACK");

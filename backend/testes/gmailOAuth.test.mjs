@@ -79,6 +79,13 @@ function criarSessao(staffId, token) {
 const admin = criarSessao(1, "a".repeat(64));
 const adminOutraSessao = criarSessao(1, "c".repeat(64));
 const basico = criarSessao(2, "b".repeat(64));
+let sincronizacoesSolicitadas = 0;
+const sincronizador = {
+  emAndamento: () => false,
+  async sincronizar() {
+    sincronizacoesSolicitadas++;
+  },
+};
 const app = express();
 app.use(
   express.json(),
@@ -88,6 +95,7 @@ app.use(
     configuracao: () => cfg,
     clienteGoogle: () => google,
     agora: () => agora,
+    sincronizador,
   }),
 );
 const servidor = app.listen(0, "127.0.0.1");
@@ -176,6 +184,24 @@ try {
   const publico = await (await chamar("/api/admin/gmail/contas", admin)).json();
   assert.equal(publico.contas[0].identidade_verificada, "faturas@gmail.com");
   assert.ok(!JSON.stringify(publico).includes("refresh-primeiro"));
+  assert.equal(
+    (await chamar("/api/admin/gmail/contas/1/progresso", null)).status,
+    401,
+  );
+  assert.equal(
+    (await chamar("/api/admin/gmail/contas/1/progresso", basico)).status,
+    403,
+  );
+  const progresso = await (
+    await chamar("/api/admin/gmail/contas/1/progresso", admin)
+  ).json();
+  assert.equal(progresso.fase, "inicial");
+  assert.ok(!JSON.stringify(progresso).includes("refresh-primeiro"));
+  assert.equal(
+    (await chamar("/api/admin/gmail/contas/1/sincronizar", admin, "POST", {}))
+      .status,
+    409,
+  );
 
   assert.equal(
     (
@@ -185,6 +211,17 @@ try {
     ).status,
     200,
   );
+  assert.equal(
+    (await chamar("/api/admin/gmail/contas/1/sincronizar", basico, "POST", {}))
+      .status,
+    403,
+  );
+  assert.equal(
+    (await chamar("/api/admin/gmail/contas/1/sincronizar", admin, "POST", {}))
+      .status,
+    202,
+  );
+  assert.equal(sincronizacoesSolicitadas, 1);
   banco
     .prepare(
       `INSERT INTO gmail_mensagens

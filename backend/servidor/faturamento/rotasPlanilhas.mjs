@@ -123,7 +123,7 @@ rotasPlanilhas.get("/calculos", async (req, res) => {
   const usinaId = req.query.usina_id ? usina(req.query.usina_id).id : null;
   const todos = obterBanco()
     .prepare(
-      "SELECT id,lote,status,memoria FROM faturamento_documentos WHERE memoria IS NOT NULL ORDER BY competencia,id",
+      "SELECT id,lote,status,memoria FROM faturamento_documentos WHERE classificacao='fatura' AND memoria IS NOT NULL ORDER BY competencia,id",
     )
     .all();
   const filtrados =

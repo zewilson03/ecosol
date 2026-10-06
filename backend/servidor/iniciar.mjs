@@ -7,7 +7,8 @@ import { obterBanco } from "./bancoDeDados.mjs";
 import { rotas } from "./rotasDaAplicacao.mjs";
 import { rotasAdministrativas } from "./rotasAdministrativas.mjs";
 import { rotasFaturamento } from "./faturamento/rotas.mjs";
-import { rotasGmail } from "./gmail/rotas.mjs";
+import { rotasGmail, sincronizadorGmail } from "./gmail/rotas.mjs";
+import { criarRepositorioGmail } from "./gmail/repositorio.mjs";
 
 const pastaDoBackend = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const pastaDoProjeto = resolve(pastaDoBackend, "..");
@@ -75,3 +76,16 @@ aplicacao.use((erro, _requisicao, resposta, _proximo) => {
 aplicacao.listen(porta, "127.0.0.1", () => {
   console.log(`Ecosol disponível em http://localhost:${porta}`);
 });
+
+function consultarGmail() {
+  for (const conta of criarRepositorioGmail(obterBanco()).listarContas()) {
+    if (conta.status_autorizacao !== "conectada" || conta.pausada) continue;
+    if (sincronizadorGmail.emAndamento(conta.id)) continue;
+    void sincronizadorGmail.sincronizar(conta.id).catch(() => {
+      // A falha categorizada fica no progresso; nunca registrar tokens ou e-mails.
+    });
+  }
+}
+
+consultarGmail();
+setInterval(consultarGmail, 5 * 60_000).unref();

@@ -7,6 +7,12 @@ import { chaveDeCriptografia, cifrarRefreshToken } from "./credenciais.mjs";
 import { criarClienteGoogle, ESCOPO_GMAIL } from "./google.mjs";
 import { criarRepositorioGmail } from "./repositorio.mjs";
 import { criarRepositorioOAuthGmail } from "./oauthRepositorio.mjs";
+import { criarSincronizadorGmail } from "./sincronizar.mjs";
+import {
+  classificarDocumentoGmail,
+  listarTriagemGmail,
+  obterPdfTriagemGmail,
+} from "./triagem.mjs";
 
 function configuracaoDoAmbiente() {
   return {
@@ -46,6 +52,7 @@ export function criarRotasGmail({
   configuracao = configuracaoDoAmbiente,
   clienteGoogle = criarClienteGoogle,
   agora = Date.now,
+  sincronizador = criarSincronizadorGmail(),
 } = {}) {
   const rotas = Router();
   rotas.use("/api/admin/gmail", (requisicao, resposta, proximo) => {
@@ -79,6 +86,226 @@ export function criarRotasGmail({
       configurado,
     });
   });
+
+  rotas.get("/api/admin/gmail/contas/:id/progresso", (requisicao, resposta) => {
+    const contaId = idValido(requisicao.params.id);
+    if (!contaId) return resposta.status(400).json({ erro: "Conta inválida." });
+    try {
+      const repo = criarRepositorioGmail(banco());
+      const progresso = repo.obterProgresso(contaId);
+      resposta.set("Cache-Control", "no-store");
+      return resposta.json({
+        fase: progresso.fase,
+        ultimaPaginaEm: progresso.ultima_pagina_em,
+        ultimaConclusaoEm: progresso.ultima_conclusao_em,
+        ultimaExecucaoEm: progresso.ultima_execucao_em,
+        ultimoErroCodigo: progresso.ultimo_erro_codigo,
+        emAndamento: sincronizador.emAndamento(contaId),
+        mensagens: repo.contarEstadosMensagens(contaId),
+        anexos: repo.contarEstados(contaId),
+      });
+    } catch {
+      return resposta.status(404).json({ erro: "Conta inexistente." });
+    }
+  });
+
+  rotas.post(
+    "/api/admin/gmail/contas/:id/sincronizar",
+    (requisicao, resposta) => {
+      const contaId = idValido(requisicao.params.id);
+      if (!contaId)
+        return resposta.status(400).json({ erro: "Conta inválida." });
+      let conta;
+      try {
+        conta = criarRepositorioGmail(banco()).obterConta(contaId);
+      } catch {
+        return resposta.status(404).json({ erro: "Conta inexistente." });
+      }
+      if (conta.status_autorizacao !== "conectada" || conta.pausada)
+        return resposta
+          .status(409)
+          .json({ erro: "Reative a conta antes de sincronizar." });
+      if (sincronizador.emAndamento(contaId))
+        return resposta
+          .status(409)
+          .json({ erro: "Sincronização já em andamento." });
+      void sincronizador.sincronizar(contaId).catch(() => {
+        // O código sanitizado da falha é gravado no progresso para consulta.
+      });
+      return resposta.status(202).json({ iniciada: true });
+    },
+  );
+
+  rotas.get(
+    "/api/admin/gmail/contas/:id/pendencias",
+    (requisicao, resposta) => {
+      const contaId = idValido(requisicao.params.id);
+      if (!contaId)
+        return resposta.status(400).json({ erro: "Conta inválida." });
+      try {
+        const repo = criarRepositorioGmail(banco());
+        repo.obterConta(contaId);
+        const carregar = (tabela, aposParam, incluirParam) => {
+          if (incluirParam === "0") return { itens: [], proximo: null };
+          if (incluirParam !== undefined && incluirParam !== "1")
+            throw new Error("Consulta inválida.");
+          const apos = aposParam === undefined ? 0 : Number(aposParam);
+          if (!Number.isSafeInteger(apos) || apos < 0)
+            throw new Error("Consulta inválida.");
+          const itens = banco()
+            .prepare(
+              `SELECT id,estado,erro_codigo${tabela === "gmail_anexos" ? ",nome" : ""}
+               FROM ${tabela} WHERE conta_id=? AND id>?
+                 AND estado IN ('pendente_manual','falha_temporaria')
+               ORDER BY id LIMIT 51`,
+            )
+            .all(contaId, apos);
+          const mais = itens.length > 50;
+          const pagina = itens.slice(0, 50);
+          return { itens: pagina, proximo: mais ? pagina.at(-1).id : null };
+        };
+        const mensagens = carregar(
+          "gmail_mensagens",
+          requisicao.query.aposMensagem,
+          requisicao.query.incluirMensagem,
+        );
+        const anexos = carregar(
+          "gmail_anexos",
+          requisicao.query.aposAnexo,
+          requisicao.query.incluirAnexo,
+        );
+        resposta.set("Cache-Control", "no-store");
+        return resposta.json({
+          mensagens: mensagens.itens.map((item) => ({
+            id: item.id,
+            estado: item.estado,
+            erroCodigo: item.erro_codigo,
+          })),
+          anexos: anexos.itens.map((item) => ({
+            id: item.id,
+            nome: item.nome,
+            estado: item.estado,
+            erroCodigo: item.erro_codigo,
+          })),
+          proximaMensagem: mensagens.proximo,
+          proximoAnexo: anexos.proximo,
+        });
+      } catch (erro) {
+        return resposta
+          .status(erro.message === "Consulta inválida." ? 400 : 404)
+          .json({
+            erro:
+              erro.message === "Consulta inválida."
+                ? erro.message
+                : "Conta inexistente.",
+          });
+      }
+    },
+  );
+
+  rotas.get("/api/admin/gmail/contas/:id/triagem", (requisicao, resposta) => {
+    const contaId = idValido(requisicao.params.id);
+    const antes = requisicao.query.antes;
+    const antesId = antes === undefined ? null : idValido(antes);
+    if (!contaId || (antes !== undefined && !antesId))
+      return resposta.status(400).json({ erro: "Consulta inválida." });
+    try {
+      criarRepositorioGmail(banco()).obterConta(contaId);
+      resposta.set("Cache-Control", "no-store");
+      return resposta.json(listarTriagemGmail(banco(), contaId, antesId));
+    } catch {
+      return resposta.status(404).json({ erro: "Conta inexistente." });
+    }
+  });
+
+  rotas.get(
+    "/api/admin/gmail/contas/:id/triagem/:documentoId/pdf",
+    (requisicao, resposta) => {
+      const contaId = idValido(requisicao.params.id);
+      const documentoId = idValido(requisicao.params.documentoId);
+      if (!contaId || !documentoId)
+        return resposta.status(400).json({ erro: "Documento inválido." });
+      const pdf = obterPdfTriagemGmail(banco(), contaId, documentoId);
+      if (!pdf)
+        return resposta.status(404).json({ erro: "Documento inexistente." });
+      return resposta
+        .set({
+          "Content-Type": "application/pdf",
+          "Content-Disposition": `attachment; filename="triagem-${documentoId}.pdf"`,
+          "Cache-Control": "no-store",
+          "X-Content-Type-Options": "nosniff",
+        })
+        .send(Buffer.from(pdf));
+    },
+  );
+
+  rotas.post(
+    "/api/admin/gmail/contas/:id/triagem/:documentoId/classificacao",
+    (requisicao, resposta) => {
+      const contaId = idValido(requisicao.params.id);
+      const documentoId = idValido(requisicao.params.documentoId);
+      if (!contaId || !documentoId)
+        return resposta.status(400).json({ erro: "Documento inválido." });
+      try {
+        const resultado = classificarDocumentoGmail({
+          banco: banco(),
+          contaId,
+          documentoId,
+          versao: requisicao.body?.versao,
+          destino: requisicao.body?.destino,
+          administrador: requisicao.acessoGmail.administrador,
+        });
+        resposta.set("Cache-Control", "no-store");
+        return resposta.json(resultado);
+      } catch (erro) {
+        if (["versao_invalida", "destino_invalido"].includes(erro.message))
+          return resposta.status(400).json({ erro: "Classificação inválida." });
+        if (erro.message === "documento_indisponivel")
+          return resposta.status(404).json({ erro: "Documento inexistente." });
+        if (
+          [
+            "versao_obsoleta",
+            "classificacao_inalterada",
+            "estado_financeiro_incompativel",
+          ].includes(erro.message)
+        )
+          return resposta
+            .status(409)
+            .json({ erro: "Documento alterado; atualize a triagem." });
+        return resposta.status(500).json({ erro: "Falha na classificação." });
+      }
+    },
+  );
+
+  for (const tipo of ["mensagens", "anexos"]) {
+    rotas.post(
+      `/api/admin/gmail/contas/:id/${tipo}/:itemId/tentar-novamente`,
+      (requisicao, resposta) => {
+        const contaId = idValido(requisicao.params.id);
+        const itemId = idValido(requisicao.params.itemId);
+        if (!contaId || !itemId)
+          return resposta.status(400).json({ erro: "Item inválido." });
+        try {
+          const db = banco();
+          const tabela =
+            tipo === "mensagens" ? "gmail_mensagens" : "gmail_anexos";
+          const item = db
+            .prepare(`SELECT conta_id FROM ${tabela} WHERE id=?`)
+            .get(itemId);
+          if (!item || item.conta_id !== contaId)
+            return resposta.status(404).json({ erro: "Item inexistente." });
+          const repo = criarRepositorioGmail(db);
+          if (tipo === "mensagens") repo.reagendarMensagem(itemId);
+          else repo.reagendarAnexo(itemId);
+          return resposta.json({ reagendado: true });
+        } catch {
+          return resposta
+            .status(409)
+            .json({ erro: "O item não admite nova tentativa." });
+        }
+      },
+    );
+  }
 
   rotas.post("/api/admin/gmail/contas", (requisicao, resposta) => {
     try {
@@ -271,4 +498,7 @@ export function criarRotasGmail({
   return rotas;
 }
 
-export const rotasGmail = criarRotasGmail();
+export const sincronizadorGmail = criarSincronizadorGmail();
+export const rotasGmail = criarRotasGmail({
+  sincronizador: sincronizadorGmail,
+});

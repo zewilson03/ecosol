@@ -449,6 +449,63 @@
   margin-top: 24px;
   font-size: 13px;
 }
+.gmail-acompanhamento {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid #d7e3ec;
+}
+.gmail-acompanhamento h4 {
+  margin: 0;
+}
+.gmail-acompanhamento > p:last-child {
+  color: #58738a;
+  font-size: 0.9rem;
+}
+.gmail-triagem {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid #d7e3ec;
+}
+.gmail-triagem h4 {
+  margin: 0;
+}
+.gmail-triagem-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid #d7e3ec;
+  overflow-wrap: anywhere;
+}
+.gmail-triagem-item .gmail-conta-acoes {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.gmail-pendencias {
+  margin: 24px 0;
+  padding: 16px;
+  border-radius: 12px;
+  background: #f4f8fa;
+}
+.gmail-pendencia {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid #d7e3ec;
+}
+@media (max-width: 700px) {
+  .gmail-pendencia {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .gmail-triagem-item {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
 .admin-cabecalho {
   min-height: 76px;
   position: sticky;

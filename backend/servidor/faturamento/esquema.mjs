@@ -18,6 +18,8 @@ export function prepararFaturamento(banco) {
       extracao TEXT NOT NULL, dados TEXT NOT NULL, memoria TEXT,
       unidade_id INTEGER, competencia TEXT,
       status TEXT NOT NULL DEFAULT 'Pendente de revisão',
+      classificacao TEXT NOT NULL DEFAULT 'fatura'
+        CHECK(classificacao IN ('fatura','triagem','nao_fatura')),
       versao INTEGER NOT NULL DEFAULT 1,
       criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       atualizado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -36,9 +38,20 @@ export function prepararFaturamento(banco) {
       documento_id INTEGER, responsavel TEXT NOT NULL,
       origem TEXT NOT NULL DEFAULT 'legado'
         CHECK(origem IN ('legado','manual','gmail')),
+      gmail_anexo_id INTEGER,
       criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
   `);
+  if (
+    !banco
+      .prepare("PRAGMA table_info(faturamento_documentos)")
+      .all()
+      .some((c) => c.name === "classificacao")
+  ) {
+    banco.exec(
+      "ALTER TABLE faturamento_documentos ADD COLUMN classificacao TEXT NOT NULL DEFAULT 'fatura' CHECK(classificacao IN ('fatura','triagem','nao_fatura'))",
+    );
+  }
   if (
     !banco
       .prepare("PRAGMA table_info(faturamento_recebimentos_pdf)")
@@ -49,6 +62,19 @@ export function prepararFaturamento(banco) {
       "ALTER TABLE faturamento_recebimentos_pdf ADD COLUMN origem TEXT NOT NULL DEFAULT 'legado' CHECK(origem IN ('legado','manual','gmail'))",
     );
   }
+  if (
+    !banco
+      .prepare("PRAGMA table_info(faturamento_recebimentos_pdf)")
+      .all()
+      .some((c) => c.name === "gmail_anexo_id")
+  ) {
+    banco.exec(
+      "ALTER TABLE faturamento_recebimentos_pdf ADD COLUMN gmail_anexo_id INTEGER",
+    );
+  }
+  banco.exec(`CREATE UNIQUE INDEX IF NOT EXISTS faturamento_recebimento_gmail_anexo
+    ON faturamento_recebimentos_pdf(gmail_anexo_id)
+    WHERE gmail_anexo_id IS NOT NULL`);
   if (
     !banco
       .prepare("PRAGMA table_info(faturamento_unidades)")
