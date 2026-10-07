@@ -6,6 +6,13 @@ export function prepararFaturamento(banco) {
       documento TEXT NOT NULL, email TEXT NOT NULL, dia_vencimento INTEGER NOT NULL,
       versao INTEGER NOT NULL DEFAULT 1, criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS faturamento_descontos_uc (
+      id INTEGER PRIMARY KEY, unidade_id INTEGER NOT NULL, inicio TEXT NOT NULL,
+      desconto TEXT NOT NULL, criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(unidade_id,inicio)
+    );
+    CREATE INDEX IF NOT EXISTS faturamento_descontos_uc_vigencia
+      ON faturamento_descontos_uc(unidade_id,inicio DESC);
     CREATE TABLE IF NOT EXISTS faturamento_contratos (
       id INTEGER PRIMARY KEY, unidade_id INTEGER NOT NULL, modalidade TEXT NOT NULL,
       desconto TEXT NOT NULL, inicio TEXT NOT NULL,
@@ -20,6 +27,7 @@ export function prepararFaturamento(banco) {
       status TEXT NOT NULL DEFAULT 'Pendente de revisão',
       classificacao TEXT NOT NULL DEFAULT 'fatura'
         CHECK(classificacao IN ('fatura','triagem','nao_fatura')),
+      excluido_em TEXT,
       versao INTEGER NOT NULL DEFAULT 1,
       criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       atualizado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -50,6 +58,16 @@ export function prepararFaturamento(banco) {
   ) {
     banco.exec(
       "ALTER TABLE faturamento_documentos ADD COLUMN classificacao TEXT NOT NULL DEFAULT 'fatura' CHECK(classificacao IN ('fatura','triagem','nao_fatura'))",
+    );
+  }
+  if (
+    !banco
+      .prepare("PRAGMA table_info(faturamento_documentos)")
+      .all()
+      .some((c) => c.name === "excluido_em")
+  ) {
+    banco.exec(
+      "ALTER TABLE faturamento_documentos ADD COLUMN excluido_em TEXT",
     );
   }
   if (

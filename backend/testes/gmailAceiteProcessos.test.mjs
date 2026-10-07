@@ -463,6 +463,7 @@ async function aceite() {
           "gmail_credenciais",
           "gmail_mensagens",
           "gmail_oauth_tentativas",
+          "gmail_revisoes_anexos",
           "gmail_sincronizacoes",
         ],
       );

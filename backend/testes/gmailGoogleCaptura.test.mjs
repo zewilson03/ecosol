@@ -90,6 +90,16 @@ assert.equal(
   (await cliente.obterMensagem({ accessToken: "acesso", id: "m2" })).id,
   "m2",
 );
+await cliente.obterMensagem({
+  accessToken: "acesso",
+  id: "m2",
+  somenteMetadados: true,
+});
+const camposDaMensagem = new URL(chamadas.at(-1).url).searchParams.get(
+  "fields",
+);
+assert.ok(camposDaMensagem.includes("body(attachmentId,size)"));
+assert.ok(!camposDaMensagem.includes("data"));
 responder = () =>
   json({ size: 9, data: Buffer.from("%PDF-1.4\n").toString("base64url") });
 assert.equal(

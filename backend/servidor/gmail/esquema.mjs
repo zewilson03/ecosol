@@ -134,6 +134,15 @@ export function prepararGmail(banco) {
       CREATE INDEX IF NOT EXISTS gmail_anexos_documento
         ON gmail_anexos(documento_id) WHERE documento_id IS NOT NULL;
 
+      CREATE TABLE IF NOT EXISTS gmail_revisoes_anexos (
+        id INTEGER PRIMARY KEY,
+        conta_id INTEGER NOT NULL REFERENCES gmail_contas(id) ON DELETE RESTRICT,
+        anexo_id INTEGER NOT NULL UNIQUE REFERENCES gmail_anexos(id) ON DELETE RESTRICT,
+        administrador_id INTEGER NOT NULL,
+        acao TEXT NOT NULL CHECK(acao = 'autorizar_captura'),
+        criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
       INSERT OR IGNORE INTO gmail_mensagens(conta_id,message_id,estado)
         SELECT DISTINCT conta_id,message_id,'detalhada' FROM gmail_anexos;
     `);

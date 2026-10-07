@@ -337,7 +337,11 @@ function PainelGmail() {
                   )}
                 </div>
                 {conectada && (
-                  <AcompanhamentoGmail contaId={conta.id} ativo={!pausada} />
+                  <AcompanhamentoGmail
+                    contaId={conta.id}
+                    email={conta.email}
+                    ativo={!pausada}
+                  />
                 )}
                 <TriagemGmail contaId={conta.id} />
               </article>
@@ -351,9 +355,11 @@ function PainelGmail() {
 
 function AcompanhamentoGmail({
   contaId,
+  email,
   ativo,
 }: {
   contaId: number;
+  email: string;
   ativo: boolean;
 }) {
   const consulta = usarConsulta<ProgressoGmail>(`${base}/${contaId}/progresso`);
@@ -416,6 +422,28 @@ function AcompanhamentoGmail({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: "{}",
+        },
+      );
+      pendencias.atualizar();
+      consulta.atualizar();
+    } catch (falha) {
+      definirErro((falha as Error).message);
+    }
+  }
+
+  async function autorizarCaptura(item: PendenciaGmail) {
+    if (
+      !window.confirm(
+        `Você conferiu “${item.nome}” no Gmail e confirma que este PDF deve ser capturado para a triagem do Ecosol?`,
+      )
+    )
+      return;
+    definirErro("");
+    try {
+      await alterarDados(
+        `${base}/${contaId}/anexos/${item.id}/autorizar-captura`,
+        {
+          confirmacao: "CONFERI_NO_GMAIL",
         },
       );
       pendencias.atualizar();
@@ -573,18 +601,39 @@ function AcompanhamentoGmail({
                   key={`${item.tipo}-${item.id}`}
                 >
                   <span>
-                    {item.titulo} · {item.erroCodigo || "falha sem código"} ·{" "}
-                    {item.estado === "falha_temporaria"
-                      ? "nova tentativa agendada"
-                      : "revisão manual"}
+                    {item.titulo} ·{" "}
+                    {item.erroCodigo === "revisao_email"
+                      ? "Nome não identificado como fatura; PDF não baixado. Pesquise este nome na conta Gmail conectada."
+                      : `${item.erroCodigo || "falha sem código"} · ${item.estado === "falha_temporaria" ? "nova tentativa agendada" : "revisão manual"}`}
                   </span>
-                  <button
-                    className="admin-botao secundario"
-                    type="button"
-                    onClick={() => reagendar(item.tipo, item.id)}
-                  >
-                    Tentar novamente
-                  </button>
+                  {item.tipo === "anexos" &&
+                  item.erroCodigo === "revisao_email" ? (
+                    <>
+                      <a
+                        className="admin-botao secundario"
+                        href={`https://mail.google.com/mail/u/?authuser=${encodeURIComponent(email)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Abrir Gmail
+                      </a>
+                      <button
+                        className="admin-botao secundario"
+                        type="button"
+                        onClick={() => autorizarCaptura(item)}
+                      >
+                        Conferi: capturar para triagem
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      className="admin-botao secundario"
+                      type="button"
+                      onClick={() => reagendar(item.tipo, item.id)}
+                    >
+                      Tentar novamente
+                    </button>
+                  )}
                 </div>
               ))}
               {(cursoresPendencias.mensagem || cursoresPendencias.anexo) && (
@@ -614,11 +663,16 @@ function TriagemGmail({ contaId }: { contaId: number }) {
   );
   const [extras, definirExtras] = useState<ItemTriagemGmail[]>([]);
   const [proximo, definirProximo] = useState<number | null>(null);
-  const [ocupado, definirOcupado] = useState<number | null>(null);
+  const [ocupado, definirOcupado] = useState(false);
+  const [selecionados, definirSelecionados] = useState<
+    Record<number, ItemTriagemGmail>
+  >({});
   const [erro, definirErro] = useState("");
+  const [mensagem, definirMensagem] = useState("");
   useEffect(() => {
     definirExtras([]);
     definirProximo(consulta.dados?.proximoAntes ?? null);
+    definirSelecionados({});
   }, [consulta.dados]);
 
   async function carregarMais() {
@@ -644,7 +698,8 @@ function TriagemGmail({ contaId }: { contaId: number }) {
         : "Confirma que este PDF não é uma fatura? Ele permanecerá guardado nesta triagem.";
     if (!window.confirm(aviso)) return;
     definirErro("");
-    definirOcupado(item.id);
+    definirMensagem("");
+    definirOcupado(true);
     try {
       await consultarServidor(
         `${base}/${contaId}/triagem/${item.id}/classificacao`,
@@ -658,11 +713,85 @@ function TriagemGmail({ contaId }: { contaId: number }) {
     } catch (falha) {
       definirErro((falha as Error).message);
     } finally {
-      definirOcupado(null);
+      definirOcupado(false);
     }
   }
 
   const itens = [...(consulta.dados?.itens ?? []), ...extras];
+  const escolhidos = Object.values(selecionados);
+  const todosSelecionados =
+    itens.length > 0 && itens.every((item) => selecionados[item.id]);
+
+  function alternarItem(item: ItemTriagemGmail) {
+    definirSelecionados((atuais) => {
+      const novos = { ...atuais };
+      if (novos[item.id]) delete novos[item.id];
+      else novos[item.id] = item;
+      return novos;
+    });
+  }
+
+  function alternarTodos() {
+    definirSelecionados((atuais) => {
+      if (itens.every((item) => atuais[item.id])) return {};
+      return Object.fromEntries(itens.map((item) => [item.id, item]));
+    });
+  }
+
+  async function executarLote(
+    acao: "fatura" | "nao_fatura" | "excluir",
+    selecao = escolhidos,
+  ) {
+    if (selecao.length < 1) return;
+    if (selecao.length > 500) {
+      definirErro("Selecione até 500 PDFs por operação.");
+      return;
+    }
+    if (acao === "excluir") {
+      const confirmacao = window.prompt(
+        `Exclusão definitiva de ${selecao.length} PDF(s) no Ecosol. O conteúdo e os dados extraídos não poderão ser recuperados pelo sistema; Gmail e backups existentes não serão apagados. Digite EXCLUIR para confirmar:`,
+      );
+      if (confirmacao !== "EXCLUIR") return;
+    } else {
+      const aviso =
+        acao === "fatura"
+          ? `Enviar ${selecao.length} PDF(s) para Faturas? Eles ficarão acessíveis à equipe e ainda precisarão de conferência antes do cálculo.`
+          : `Marcar ${selecao.length} PDF(s) como não faturas? Eles continuarão guardados nesta triagem.`;
+      if (!window.confirm(aviso)) return;
+    }
+    definirErro("");
+    definirMensagem("");
+    definirOcupado(true);
+    try {
+      const resultado = await consultarServidor<{
+        alterados?: number;
+        excluidos?: number;
+      }>(
+        `${base}/${contaId}/triagem/${acao === "excluir" ? "excluir-em-lote" : "classificacao-em-lote"}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            itens: selecao.map(({ id, versao }) => ({ id, versao })),
+            ...(acao === "excluir"
+              ? { confirmacao: "EXCLUIR" }
+              : { destino: acao }),
+          }),
+        },
+      );
+      definirMensagem(
+        acao === "excluir"
+          ? `${resultado.excluidos} PDF(s) excluído(s) do Ecosol.`
+          : `${resultado.alterados} PDF(s) reclassificado(s).`,
+      );
+      consulta.atualizar();
+    } catch (falha) {
+      definirErro((falha as Error).message);
+    } finally {
+      definirOcupado(false);
+    }
+  }
+
   const aguardando =
     consulta.dados?.contagens.find((x) => x.classificacao === "triagem")
       ?.quantidade ?? 0;
@@ -685,22 +814,72 @@ function TriagemGmail({ contaId }: { contaId: number }) {
         Aguardando classificação: {aguardando} · Não são faturas: {naoFaturas}.
         Apenas documentos confirmados entram em Faturas.
       </p>
+      {itens.length > 0 && (
+        <div className="gmail-triagem-lote">
+          <label>
+            <input
+              type="checkbox"
+              checked={todosSelecionados}
+              disabled={ocupado}
+              onChange={alternarTodos}
+            />
+            Selecionar todos os {itens.length} PDFs carregados
+          </label>
+          <span>{escolhidos.length} selecionado(s)</span>
+          <div className="gmail-conta-acoes">
+            <button
+              className="admin-botao secundario"
+              type="button"
+              disabled={ocupado || escolhidos.length === 0}
+              onClick={() => executarLote("fatura")}
+            >
+              Classificar como faturas
+            </button>
+            <button
+              className="admin-botao secundario"
+              type="button"
+              disabled={ocupado || escolhidos.length === 0}
+              onClick={() => executarLote("nao_fatura")}
+            >
+              Classificar como não faturas
+            </button>
+            <button
+              className="admin-botao perigo"
+              type="button"
+              disabled={ocupado || escolhidos.length === 0}
+              onClick={() => executarLote("excluir")}
+            >
+              Excluir selecionados
+            </button>
+          </div>
+        </div>
+      )}
       {(consulta.erro || erro) && (
         <p className="admin-aviso erro" role="alert">
           {consulta.erro || erro}
         </p>
       )}
+      {mensagem && <p className="admin-aviso">{mensagem}</p>}
       {itens.length === 0 && !consulta.carregando && (
         <p>Nenhum PDF na triagem.</p>
       )}
       {itens.map((item) => (
         <div className="gmail-triagem-item" key={item.id}>
-          <span>
-            {item.nome} ·{" "}
-            {item.classificacao === "triagem"
-              ? "Aguardando classificação"
-              : "Não é fatura"}
-          </span>
+          <label className="gmail-triagem-selecao">
+            <input
+              type="checkbox"
+              checked={Boolean(selecionados[item.id])}
+              disabled={ocupado}
+              onChange={() => alternarItem(item)}
+              aria-label={`Selecionar ${item.nome}`}
+            />
+            <span>
+              {item.nome} ·{" "}
+              {item.classificacao === "triagem"
+                ? "Aguardando classificação"
+                : "Não é fatura"}
+            </span>
+          </label>
           <div className="gmail-conta-acoes">
             <a
               className="admin-botao secundario"
@@ -713,7 +892,7 @@ function TriagemGmail({ contaId }: { contaId: number }) {
             <button
               className="admin-botao secundario"
               type="button"
-              disabled={ocupado !== null}
+              disabled={ocupado}
               onClick={() => classificar(item, "fatura")}
             >
               Enviar para Faturas
@@ -722,12 +901,20 @@ function TriagemGmail({ contaId }: { contaId: number }) {
               <button
                 className="admin-botao secundario"
                 type="button"
-                disabled={ocupado !== null}
+                disabled={ocupado}
                 onClick={() => classificar(item, "nao_fatura")}
               >
                 Não é fatura
               </button>
             )}
+            <button
+              className="admin-botao perigo"
+              type="button"
+              disabled={ocupado}
+              onClick={() => executarLote("excluir", [item])}
+            >
+              Excluir
+            </button>
           </div>
         </div>
       ))}

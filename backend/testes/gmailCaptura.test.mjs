@@ -21,6 +21,13 @@ const { receberAnexoGmail } =
 const { criarSincronizadorGmail, partesPdf } =
   await import("../servidor/gmail/sincronizar.mjs");
 const { ErroGoogleGmail } = await import("../servidor/gmail/google.mjs");
+const { candidatoFaturaPeloNome } =
+  await import("../servidor/gmail/identificacaoPrevia.mjs");
+
+assert.equal(candidatoFaturaPeloNome("2026094232190.pdf"), true);
+assert.equal(candidatoFaturaPeloNome("2026134232190.pdf"), false);
+assert.equal(candidatoFaturaPeloNome("Termo de fatura por e-mail.pdf"), false);
+assert.equal(candidatoFaturaPeloNome("conta-de-energia.pdf"), false);
 
 const db = obterBanco();
 const repo = criarRepositorioGmail(db);
@@ -213,7 +220,7 @@ try {
           parts: [
             {
               mimeType: "application/pdf",
-              filename: `${id}.pdf`,
+              filename: "2026094000001.pdf",
               body: {
                 size: pdf.length,
                 attachmentId: `a-${id}-${leiturasMensagem}`,
@@ -276,12 +283,12 @@ try {
           parts: [
             {
               mimeType: "application/pdf",
-              filename: "valido.pdf",
+              filename: "2026094000001.pdf",
               body: { size: pdf.length, attachmentId: "bom" },
             },
             {
               mimeType: "application/pdf",
-              filename: "grande.pdf",
+              filename: "2026094000002.pdf",
               body: { size: 10 * 1024 * 1024 + 1, attachmentId: "grande" },
             },
           ],
@@ -403,7 +410,7 @@ try {
         labelIds: leituras === 1 ? ["INBOX"] : ["TRASH"],
         payload: {
           mimeType: "application/pdf",
-          filename: "fatura.pdf",
+          filename: "2026094000001.pdf",
           body: { size: pdf.length, attachmentId: "a10" },
         },
       };
@@ -430,6 +437,122 @@ try {
       )
       .get(repo.listarAnexos({ contaId: setima })[0].id).n,
     0,
+  );
+
+  const oitava = conta("captura8@gmail.com");
+  db.prepare(
+    `INSERT INTO gmail_credenciais
+    (conta_id,refresh_token_cifrado,email_verificado,escopo,autorizado_em,autorizado_por)
+    VALUES (?,?,?,?,?,?)`,
+  ).run(
+    oitava,
+    cifrarRefreshToken("refresh-teste", oitava, Buffer.alloc(32, 9)),
+    "captura8@gmail.com",
+    "https://www.googleapis.com/auth/gmail.readonly",
+    Date.now(),
+    1,
+  );
+  const downloads = [];
+  let leiturasSemConteudo = 0;
+  const clienteRevisao = {
+    ...cliente,
+    async obterPerfilCompleto() {
+      return { email: "captura8@gmail.com", historyId: "500" };
+    },
+    async listarMensagens() {
+      return { mensagens: [{ id: "m11" }], proximaPagina: null };
+    },
+    async listarHistorico() {
+      return { mensagens: [], proximaPagina: null, historyId: "501" };
+    },
+    async obterMensagem({ somenteMetadados }) {
+      if (somenteMetadados) leiturasSemConteudo++;
+      return {
+        id: "m11",
+        internalDate: String(Date.UTC(2026, 9, 2)),
+        payload: {
+          mimeType: "multipart/mixed",
+          parts: [
+            {
+              mimeType: "application/pdf",
+              filename: "Termo de recebimento de fatura por e-mail.pdf",
+              body: { size: pdf.length, attachmentId: "termo" },
+            },
+            {
+              mimeType: "application/pdf",
+              filename: "2026094000003.pdf",
+              body: { size: pdf.length, attachmentId: "fatura" },
+            },
+          ],
+        },
+      };
+    },
+    async obterAnexo({ anexoId }) {
+      downloads.push(anexoId);
+      return { size: pdf.length, data: pdf.toString("base64url") };
+    },
+  };
+  const sincronizadorRevisao = criarSincronizadorGmail({
+    banco: () => db,
+    criarCliente: () => clienteRevisao,
+    receber: (entrada) => receberAnexoGmail({ ...entrada, ler }),
+  });
+  assert.equal(
+    (await sincronizadorRevisao.sincronizar(oitava)).concluida,
+    true,
+  );
+  assert.deepEqual(downloads, ["fatura"]);
+  assert.equal(leiturasSemConteudo, 1);
+  const termo = repo
+    .listarAnexos({ contaId: oitava })
+    .find((a) => a.attachment_id === "termo");
+  assert.equal(termo.estado, "pendente_manual");
+  assert.equal(termo.erro_codigo, "revisao_email");
+  assert.equal(termo.documento_id, null);
+  assert.throws(() => repo.reagendarAnexo(termo.id), /Revise o arquivo/);
+  assert.throws(
+    () =>
+      repo.autorizarCapturaAposRevisao({
+        contaId: setima,
+        anexoId: termo.id,
+        administradorId: 1,
+      }),
+    /aguardando revisão/,
+  );
+  assert.equal(
+    repo.autorizarCapturaAposRevisao({
+      contaId: oitava,
+      anexoId: termo.id,
+      administradorId: 1,
+    }),
+    true,
+  );
+  assert.throws(
+    () =>
+      repo.autorizarCapturaAposRevisao({
+        contaId: oitava,
+        anexoId: termo.id,
+        administradorId: 1,
+      }),
+    /aguardando revisão/,
+  );
+  assert.equal(
+    db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM gmail_revisoes_anexos WHERE anexo_id=? AND administrador_id=1",
+      )
+      .get(termo.id).n,
+    1,
+  );
+  assert.equal(
+    (await sincronizadorRevisao.sincronizar(oitava)).concluida,
+    true,
+  );
+  assert.deepEqual(downloads, ["fatura", "termo"]);
+  assert.equal(
+    repo.listarAnexos({ contaId: oitava }).find((a) => a.id === termo.id)
+      .estado,
+    "duplicado",
   );
   assert.equal(
     db.prepare("PRAGMA integrity_check").get().integrity_check,

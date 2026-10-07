@@ -20,7 +20,14 @@ try {
     resultado TEXT NOT NULL, codigo TEXT NOT NULL, motivo TEXT NOT NULL,
     documento_id INTEGER, responsavel TEXT NOT NULL,
     criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  )`);
+  );
+  CREATE TABLE faturamento_unidades (
+    id INTEGER PRIMARY KEY, uc TEXT NOT NULL UNIQUE, nome TEXT NOT NULL,
+    documento TEXT NOT NULL, email TEXT NOT NULL, dia_vencimento INTEGER NOT NULL,
+    versao INTEGER NOT NULL DEFAULT 1, criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+  INSERT INTO faturamento_unidades(uc,nome,documento,email,dia_vencimento)
+  VALUES ('123','Teste legado','11222333000181','teste@example.test',10);`);
   bancoAntigo
     .prepare(
       "INSERT INTO faturamento_recebimentos_pdf (nome,lote,resultado,codigo,motivo,responsavel) VALUES (?,?,?,?,?,?)",
@@ -34,6 +41,17 @@ try {
       .all()
       .map((r) => ({ ...r })),
     [{ nome: "antigo.pdf", origem: "legado" }],
+  );
+  assert.equal(
+    bancoAntigo
+      .prepare("SELECT uc FROM faturamento_unidades WHERE uc='123'")
+      .get().uc,
+    "123",
+  );
+  assert.equal(
+    bancoAntigo.prepare("SELECT COUNT(*) n FROM faturamento_descontos_uc").get()
+      .n,
+    0,
   );
 } finally {
   bancoAntigo.close();
@@ -60,6 +78,12 @@ const entrada = {
 const havilah = calcularCobranca(entrada);
 assert.equal(havilah.consumo_centavos, 145661);
 assert.equal(havilah.total_centavos, 146830);
+assert.equal(
+  havilah.total_centavos,
+  havilah.consumo_centavos +
+    havilah.equatorial_centavos -
+    havilah.ajuste_centavos,
+);
 assert.equal(
   calcularCobranca({ ...entrada, modalidade: "GDI", ajuste_gdii: "0" })
     .total_centavos,
@@ -134,11 +158,71 @@ assert.equal(extraido.dados.injecao, "1660.00");
 assert.equal(extraido.dados.total_equatorial, "302.40");
 assert.equal(extraido.dados.ajuste_gdii, "290.71");
 assert.equal(extraido.dados.bandeira, undefined);
+const tarifaEquatorial = extrairCampos(
+  [
+    "ADC BANDEIRA AMARELA kWh 100,00 0,024217 2,42",
+    "CONSUMO NAO COMPENSADO",
+    "kWh 100,00 1,145752 114,58",
+    "INJECAO SCEE - UC 000375915701270 - GD I kWh 769,00 0,787589 -605,66",
+  ].join("\n"),
+);
+assert.equal(tarifaEquatorial.dados.unitario, "1.145752");
+assert.equal(tarifaEquatorial.dados.bandeira, "0.024217");
+assert.equal(
+  calcularCobranca({
+    injecao: "769",
+    unitario: tarifaEquatorial.dados.unitario,
+    bandeira: tarifaEquatorial.dados.bandeira,
+    desconto: "0",
+    total_equatorial: "0",
+    ajuste_gdii: "0",
+    modalidade: "GDI",
+  }).tarifa_completa,
+  "1.169969",
+);
+assert.equal(
+  extrairCampos("INJECAO SCEE - UC 123 - GD I kWh 769,00 0,787589 -605,66")
+    .dados.unitario,
+  undefined,
+);
+assert.equal(
+  extrairCampos(
+    "CONSUMO NAO COMPENSADO kWh 100,00 1,145752 114,58\n" +
+      "CONSUMO NAO COMPENSADO kWh 10,00 1,300000 13,00",
+  ).dados.unitario,
+  undefined,
+);
 assert.equal(
   extrairCampos(linhas.concat(linhas.at(-1)).join("\n")).dados.ajuste_gdii,
   undefined,
 );
 assert.match(extrairCampos("").avisos.join(" "), /sem texto/);
+const cabecalhoEquatorial = [
+  "PERDAS DE TRANSFORMACAO / RAMAL: 0% 2.903.188.012-00",
+  " SET/2026  R$*********137,03   14/10/2026",
+  "INFORMACOES DO SCEE: GERACAO KWH: UC 000375915701270",
+  "EQUATORIAL GOIAS DISTRIBUIDORA DE ENERGIA S/A 2.903.188.012-00 SET/2026",
+].join("\n");
+const capturadoEquatorial = extrairCampos(cabecalhoEquatorial);
+assert.equal(capturadoEquatorial.dados.uc, "290318801200");
+assert.equal(capturadoEquatorial.dados.total_equatorial, "137.03");
+assert.equal(capturadoEquatorial.dados.vencimento_equatorial, "2026-10-14");
+assert.equal(capturadoEquatorial.dados.competencia, "2026-09");
+assert.equal(
+  extrairCampos(
+    cabecalhoEquatorial.replace(
+      "2.903.188.012-00 SET/2026",
+      "9.999.999.012-00 SET/2026",
+    ),
+  ).dados.uc,
+  undefined,
+);
+assert.equal(
+  extrairCampos(
+    `${cabecalhoEquatorial}\n OUT/2026  R$*********999,99   15/11/2026`,
+  ).dados.total_equatorial,
+  undefined,
+);
 
 const cookies = {};
 for (const nivel of [1, 2, 3]) {
@@ -204,6 +288,7 @@ const unidade = {
 };
 const campos = {
   ...extraido.dados,
+  modalidade: "GDII",
   unitario: "1.1",
   bandeira: "0.069969",
   origem_tarifa: "propria",
@@ -378,20 +463,123 @@ try {
   );
 
   assert.equal((await chamar(`/documentos/${d.id}/pdf`, null)).status, 401);
-  const download = await chamar(`/documentos/${d.id}/pdf`, 1);
-  assert.equal(download.status, 200);
-  assert.deepEqual(Buffer.from(await download.arrayBuffer()), arquivo);
-  d = await ok(`/documentos/${d.id}`, "PATCH", {
-    versao: d.versao,
-    dados: campos,
-  });
-  await ok(`/documentos/${d.id}`, "PATCH", { versao: 1, dados: campos }, 409);
+  for (const nivel of [1, 2, 3]) {
+    const visualizacao = await chamar(`/documentos/${d.id}/pdf`, nivel);
+    assert.equal(visualizacao.status, 200);
+    assert.equal(visualizacao.headers.get("content-type"), "application/pdf");
+    assert.match(
+      visualizacao.headers.get("content-disposition") ?? "",
+      /^inline; filename="fatura-\d+\.pdf"$/,
+    );
+    assert.equal(visualizacao.headers.get("x-frame-options"), "SAMEORIGIN");
+    assert.equal(visualizacao.headers.get("cache-control"), "no-store");
+    assert.deepEqual(Buffer.from(await visualizacao.arrayBuffer()), arquivo);
+  }
+  const antesDaPrevia = banco
+    .prepare(
+      "SELECT versao,dados,memoria,status FROM faturamento_documentos WHERE id=?",
+    )
+    .get(d.id);
+  const historicoAntesDaPrevia = banco
+    .prepare(
+      "SELECT COUNT(*) n FROM faturamento_historico WHERE documento_id=?",
+    )
+    .get(d.id).n;
+  assert.equal(
+    (
+      await chamar(`/documentos/${d.id}/previa`, null, "POST", {
+        versao: d.versao,
+        dados: campos,
+      })
+    ).status,
+    401,
+  );
+  const previa = await ok(
+    `/documentos/${d.id}/previa`,
+    "POST",
+    { versao: d.versao, dados: campos },
+    200,
+    1,
+  );
+  assert.equal(previa.memoria.total_centavos, 146830);
+  assert.equal(previa.memoria.tarifa_completa, "1.169969");
+  assert.match(previa.hash, /^[a-f0-9]{64}$/);
+  assert.deepEqual(
+    banco
+      .prepare(
+        "SELECT versao,dados,memoria,status FROM faturamento_documentos WHERE id=?",
+      )
+      .get(d.id),
+    antesDaPrevia,
+  );
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT COUNT(*) n FROM faturamento_historico WHERE documento_id=?",
+      )
+      .get(d.id).n,
+    historicoAntesDaPrevia,
+  );
+  await ok(
+    `/documentos/${d.id}/previa`,
+    "POST",
+    { versao: d.versao + 1, dados: campos },
+    409,
+  );
+  await ok(
+    `/documentos/${d.id}/previa`,
+    "POST",
+    { versao: d.versao, dados: { ...campos, unitario: "" } },
+    400,
+  );
   await ok(`/documentos/${d.id}/calcular`, "POST", { versao: d.versao }, 400);
+  await ok(
+    `/documentos/${d.id}/calcular`,
+    "POST",
+    {
+      versao: d.versao,
+      conferido: true,
+      dados: campos,
+      previa_hash: previa.hash,
+    },
+    403,
+    1,
+  );
+  await ok(
+    `/documentos/${d.id}/calcular`,
+    "POST",
+    { versao: d.versao, conferido: true, dados: campos },
+    409,
+  );
+  await ok(
+    `/documentos/${d.id}/calcular`,
+    "POST",
+    {
+      versao: d.versao,
+      conferido: true,
+      dados: campos,
+      previa_hash: "0".repeat(64),
+    },
+    409,
+  );
+  assert.deepEqual(
+    banco
+      .prepare(
+        "SELECT versao,dados,memoria,status FROM faturamento_documentos WHERE id=?",
+      )
+      .get(d.id),
+    antesDaPrevia,
+  );
   d = await ok(`/documentos/${d.id}/calcular`, "POST", {
     versao: d.versao,
     conferido: true,
+    dados: campos,
+    previa_hash: previa.hash,
   });
   assert.equal(d.memoria.total_centavos, 146830);
+  assert.deepEqual(d.memoria, previa.memoria);
+  assert.equal(d.versao, antesDaPrevia.versao + 1);
+  await ok(`/documentos/${d.id}`, "PATCH", { versao: 1, dados: campos }, 409);
   await ok(`/documentos/${d.id}/aprovar`, "POST", { versao: d.versao }, 403, 2);
   await ok(`/unidades/${u.id}`, "PATCH", {
     ...unidade,
@@ -423,6 +611,12 @@ try {
     { inicio: "2026-10", modalidade: "GDII", desconto: "30" },
     201,
   );
+  await ok(
+    `/unidades/${u.id}/descontos`,
+    "POST",
+    { inicio: "2026-10", desconto: "30", versao: 2 },
+    201,
+  );
   let repetida = await ok(
     "/documentos?lote=teste&nome=outra.pdf",
     "POST",
@@ -451,7 +645,12 @@ try {
     pdf(["GDI de referencia"]),
     201,
   );
-  const dadosGdi = { ...campos, uc: "12345", ajuste_gdii: "0" };
+  const dadosGdi = {
+    ...campos,
+    uc: "12345",
+    ajuste_gdii: "0",
+    modalidade: "GDI",
+  };
   gdi = await ok(`/documentos/${gdi.id}`, "PATCH", {
     versao: gdi.versao,
     dados: dadosGdi,
@@ -508,6 +707,469 @@ try {
     { versao: outroLote.versao, conferido: true },
     400,
   );
+  const { modalidade: _modalidade, inicio: _inicio, ...dadosUc } = unidade;
+  await ok(
+    "/unidades",
+    "POST",
+    {
+      ...dadosUc,
+      uc: "987654321",
+      desconto_inicio: "2026-01",
+      modalidade: "GDI",
+    },
+    400,
+  );
+  const ucSemContrato = await ok(
+    "/unidades",
+    "POST",
+    { ...dadosUc, uc: "987654321", desconto_inicio: "2026-01" },
+    201,
+  );
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT COUNT(*) n FROM faturamento_contratos WHERE unidade_id=?",
+      )
+      .get(ucSemContrato.id).n,
+    0,
+  );
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT desconto FROM faturamento_descontos_uc WHERE unidade_id=?",
+      )
+      .get(ucSemContrato.id).desconto,
+    "25",
+  );
+  await ok(
+    `/unidades/${ucSemContrato.id}/descontos`,
+    "POST",
+    {
+      desconto: "101",
+      inicio: "2026-09",
+      versao: 1,
+    },
+    400,
+  );
+  await ok(
+    `/unidades/${ucSemContrato.id}/descontos`,
+    "POST",
+    { desconto: "30", inicio: "2026-09", versao: 1 },
+    403,
+    2,
+  );
+  await ok(
+    `/unidades/${ucSemContrato.id}/descontos`,
+    "POST",
+    { desconto: "20", inicio: "2026-01", versao: 1 },
+    409,
+  );
+  let manual = await ok(
+    "/documentos?lote=manual&nome=manual.pdf",
+    "POST",
+    pdf(["Fatura com modalidade manual e desconto da UC"]),
+    201,
+  );
+  const camposManuais = { ...campos, uc: "987654321", modalidade: "" };
+  manual = await ok(`/documentos/${manual.id}`, "PATCH", {
+    versao: manual.versao,
+    dados: camposManuais,
+  });
+  await ok(
+    `/documentos/${manual.id}/calcular`,
+    "POST",
+    {
+      versao: manual.versao,
+      conferido: true,
+    },
+    400,
+  );
+  manual = await ok(`/documentos/${manual.id}`, "PATCH", {
+    versao: manual.versao,
+    dados: { ...camposManuais, modalidade: "DESCONHECIDA" },
+  });
+  await ok(
+    `/documentos/${manual.id}/calcular`,
+    "POST",
+    { versao: manual.versao, conferido: true },
+    400,
+  );
+  manual = await ok(`/documentos/${manual.id}`, "PATCH", {
+    versao: manual.versao,
+    dados: { ...camposManuais, modalidade: "GDII" },
+  });
+  manual = await ok(`/documentos/${manual.id}/calcular`, "POST", {
+    versao: manual.versao,
+    conferido: true,
+  });
+  assert.equal(manual.memoria.total_centavos, 146830);
+  assert.equal(
+    manual.memoria.contrato.origem,
+    "modalidade_na_fatura_desconto_na_uc",
+  );
+  assert.equal(manual.memoria.contrato.modalidade, "GDII");
+  assert.equal(manual.memoria.contrato.desconto, "25");
+  const previaAntesDoDesconto = await ok(
+    `/documentos/${manual.id}/previa`,
+    "POST",
+    { versao: manual.versao, dados: manual.dados },
+  );
+  await ok(
+    `/unidades/${ucSemContrato.id}/descontos`,
+    "POST",
+    {
+      desconto: "30",
+      inicio: "2026-09",
+      versao: 1,
+    },
+    201,
+  );
+  await ok(
+    `/unidades/${ucSemContrato.id}/descontos`,
+    "POST",
+    { desconto: "35", inicio: "2026-10", versao: 1 },
+    409,
+  );
+  await ok(
+    `/documentos/${manual.id}/aprovar`,
+    "POST",
+    {
+      versao: manual.versao,
+    },
+    409,
+  );
+  const antesDaMudanca = banco
+    .prepare(
+      "SELECT versao,dados,memoria,status FROM faturamento_documentos WHERE id=?",
+    )
+    .get(manual.id);
+  await ok(
+    `/documentos/${manual.id}/calcular`,
+    "POST",
+    {
+      versao: manual.versao,
+      conferido: true,
+      dados: manual.dados,
+      previa_hash: previaAntesDoDesconto.hash,
+    },
+    409,
+  );
+  assert.deepEqual(
+    banco
+      .prepare(
+        "SELECT versao,dados,memoria,status FROM faturamento_documentos WHERE id=?",
+      )
+      .get(manual.id),
+    antesDaMudanca,
+  );
+  const previaDepoisDoDesconto = await ok(
+    `/documentos/${manual.id}/previa`,
+    "POST",
+    { versao: manual.versao, dados: manual.dados },
+  );
+  assert.equal(previaDepoisDoDesconto.memoria.contrato.desconto, "30");
+  banco.exec(`CREATE TEMP TRIGGER impedir_auditoria_calculo
+    BEFORE INSERT ON faturamento_historico
+    WHEN NEW.documento_id=${manual.id} AND NEW.acao='Cálculo conferido'
+    BEGIN SELECT RAISE(ABORT,'falha simulada'); END`);
+  await ok(
+    `/documentos/${manual.id}/calcular`,
+    "POST",
+    {
+      versao: manual.versao,
+      conferido: true,
+      dados: manual.dados,
+      previa_hash: previaDepoisDoDesconto.hash,
+    },
+    500,
+  );
+  banco.exec("DROP TRIGGER impedir_auditoria_calculo");
+  assert.deepEqual(
+    banco
+      .prepare(
+        "SELECT versao,dados,memoria,status FROM faturamento_documentos WHERE id=?",
+      )
+      .get(manual.id),
+    antesDaMudanca,
+  );
+  manual = await ok(`/documentos/${manual.id}/calcular`, "POST", {
+    versao: manual.versao,
+    conferido: true,
+    dados: manual.dados,
+    previa_hash: previaDepoisDoDesconto.hash,
+  });
+  assert.equal(manual.memoria.contrato.desconto, "30");
+  manual = await ok(`/documentos/${manual.id}/aprovar`, "POST", {
+    versao: manual.versao,
+  });
+  assert.match(manual.status, /aguardando emissão/);
+  await ok(
+    `/unidades/${ucSemContrato.id}/descontos`,
+    "POST",
+    {
+      desconto: "35",
+      inicio: "2026-08",
+      versao: 2,
+    },
+    409,
+  );
+  await ok(
+    `/unidades/${ucSemContrato.id}/descontos`,
+    "POST",
+    {
+      desconto: "35",
+      inicio: "2026-10",
+      versao: 2,
+    },
+    201,
+  );
+  assert.equal(
+    (await ok(`/documentos/${manual.id}`)).memoria.contrato.desconto,
+    "30",
+  );
+  let proximaCompetencia = await ok(
+    "/documentos?lote=manual&nome=outubro-uc.pdf",
+    "POST",
+    pdf(["Fatura da UC com nova vigência em outubro"]),
+    201,
+  );
+  proximaCompetencia = await ok(
+    `/documentos/${proximaCompetencia.id}`,
+    "PATCH",
+    {
+      versao: proximaCompetencia.versao,
+      dados: {
+        ...camposManuais,
+        competencia: "2026-10",
+        vencimento_ecosol: "2026-10-20",
+        modalidade: "GDII",
+      },
+    },
+  );
+  proximaCompetencia = await ok(
+    `/documentos/${proximaCompetencia.id}/calcular`,
+    "POST",
+    { versao: proximaCompetencia.versao, conferido: true },
+  );
+  assert.equal(proximaCompetencia.memoria.contrato.desconto, "35");
+  assert.equal(proximaCompetencia.memoria.contrato.desconto_inicio, "2026-10");
+  let substituicao = await ok(
+    "/documentos?lote=manual&nome=substituicao.pdf",
+    "POST",
+    pdf(["Condições manuais em UC com vigência antiga"]),
+    201,
+  );
+  substituicao = await ok(`/documentos/${substituicao.id}`, "PATCH", {
+    versao: substituicao.versao,
+    dados: {
+      ...campos,
+      competencia: "2026-11",
+      vencimento_ecosol: "2026-11-10",
+      modalidade: "",
+    },
+  });
+  await ok(
+    `/documentos/${substituicao.id}/calcular`,
+    "POST",
+    { versao: substituicao.versao, conferido: true },
+    400,
+  );
+  substituicao = await ok(`/documentos/${substituicao.id}`, "PATCH", {
+    versao: substituicao.versao,
+    dados: {
+      ...campos,
+      competencia: "2026-11",
+      vencimento_ecosol: "2026-11-10",
+      modalidade: "GDII",
+    },
+  });
+  substituicao = await ok(`/documentos/${substituicao.id}/calcular`, "POST", {
+    versao: substituicao.versao,
+    conferido: true,
+  });
+  assert.equal(substituicao.memoria.contrato.desconto, "30");
+  assert.equal(
+    substituicao.memoria.contrato.origem,
+    "modalidade_na_fatura_desconto_na_uc",
+  );
+  const pdfReanalise = pdf([
+    "PERDAS DE TRANSFORMACAO / RAMAL: 0% 2.903.188.012-00",
+    "SET/2026 R$*********137,03 14/10/2026",
+    "INJECAO SCEE - UC 000375915701270 - GD I KWH 769,00 0,787589 -605,66",
+    "EQUATORIAL GOIAS DISTRIBUIDORA DE ENERGIA S/A 2.903.188.012-00 SET/2026",
+  ]);
+  let reanalisada = await ok(
+    "/documentos?lote=reanalise&nome=antiga.pdf",
+    "POST",
+    pdfReanalise,
+    201,
+  );
+  const {
+    uc: _ucReanalise,
+    total_equatorial: _totalReanalise,
+    vencimento_equatorial: _vencimentoReanalise,
+    ...dadosAntigos
+  } = reanalisada.dados;
+  banco
+    .prepare("UPDATE faturamento_documentos SET dados=?,extracao=? WHERE id=?")
+    .run(
+      JSON.stringify(dadosAntigos),
+      JSON.stringify({
+        ...reanalisada.extracao,
+        dados: { competencia: "2026-09" },
+      }),
+      reanalisada.id,
+    );
+  assert.equal(
+    (
+      await chamar(`/documentos/${reanalisada.id}/reanalisar`, 2, "POST", {
+        versao: reanalisada.versao,
+      })
+    ).status,
+    403,
+  );
+  await ok(
+    `/documentos/${reanalisada.id}/reanalisar`,
+    "POST",
+    { versao: 99 },
+    409,
+  );
+  banco.exec(`CREATE TEMP TRIGGER impedir_auditoria_reanalise
+    BEFORE INSERT ON faturamento_historico
+    WHEN NEW.documento_id=${reanalisada.id} AND NEW.acao='Reanálise de PDF'
+    BEGIN SELECT RAISE(ABORT,'falha simulada'); END`);
+  await ok(
+    `/documentos/${reanalisada.id}/reanalisar`,
+    "POST",
+    { versao: reanalisada.versao },
+    500,
+  );
+  banco.exec("DROP TRIGGER impedir_auditoria_reanalise");
+  assert.equal(
+    JSON.parse(
+      banco
+        .prepare("SELECT dados FROM faturamento_documentos WHERE id=?")
+        .get(reanalisada.id).dados,
+    ).uc,
+    undefined,
+  );
+  const resultadoReanalise = await ok(
+    `/documentos/${reanalisada.id}/reanalisar`,
+    "POST",
+    { versao: reanalisada.versao },
+  );
+  assert.deepEqual(
+    resultadoReanalise.preenchidos.sort(),
+    ["uc", "total_equatorial", "vencimento_equatorial"].sort(),
+  );
+  reanalisada = await ok(`/documentos/${reanalisada.id}`);
+  assert.equal(reanalisada.dados.uc, "290318801200");
+  assert.equal(reanalisada.dados.total_equatorial, "137.03");
+  assert.equal(reanalisada.dados.vencimento_equatorial, "2026-10-14");
+  assert.equal(reanalisada.status, "Pendente de revisão");
+  assert.equal(reanalisada.memoria, null);
+  const segundaReanalise = await ok(
+    `/documentos/${reanalisada.id}/reanalisar`,
+    "POST",
+    { versao: reanalisada.versao },
+  );
+  assert.equal(segundaReanalise.atualizado, false);
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT COUNT(*) n FROM faturamento_historico WHERE documento_id=? AND acao='Reanálise de PDF'",
+      )
+      .get(reanalisada.id).n,
+    1,
+  );
+  let tarifaAntiga = await ok(
+    "/documentos?lote=reanalise&nome=tarifa-antiga.pdf",
+    "POST",
+    pdf([
+      ...cabecalhoEquatorial.split("\n"),
+      "ADC BANDEIRA AMARELA kWh 100,00 0,024217 2,42",
+      "CONSUMO NAO COMPENSADO kWh 100,00 1,145752 114,58",
+      "INJECAO SCEE - UC 000375915701270 - GD I kWh 769,00 0,787589 -605,66",
+    ]),
+    201,
+  );
+  banco
+    .prepare("UPDATE faturamento_documentos SET dados=?,extracao=? WHERE id=?")
+    .run(
+      JSON.stringify({ ...tarifaAntiga.dados, unitario: "0.787589" }),
+      JSON.stringify({
+        ...tarifaAntiga.extracao,
+        dados: { ...tarifaAntiga.extracao.dados, unitario: "0.787589" },
+      }),
+      tarifaAntiga.id,
+    );
+  const tarifaCorrigida = await ok(
+    `/documentos/${tarifaAntiga.id}/reanalisar`,
+    "POST",
+    { versao: tarifaAntiga.versao },
+  );
+  assert.deepEqual(tarifaCorrigida.corrigidos, ["unitario"]);
+  tarifaAntiga = await ok(`/documentos/${tarifaAntiga.id}`);
+  assert.equal(tarifaAntiga.dados.unitario, "1.145752");
+  assert.equal(tarifaAntiga.dados.bandeira, "0.024217");
+  assert.equal(
+    calcularCobranca({
+      injecao: tarifaAntiga.dados.injecao,
+      unitario: tarifaAntiga.dados.unitario,
+      bandeira: tarifaAntiga.dados.bandeira,
+      desconto: "0",
+      total_equatorial: "0",
+      ajuste_gdii: "0",
+      modalidade: "GDI",
+    }).tarifa_completa,
+    "1.169969",
+  );
+  let editada = await ok(
+    "/documentos?lote=reanalise&nome=editada.pdf",
+    "POST",
+    pdf([...cabecalhoEquatorial.split("\n"), "PDF editado"]),
+    201,
+  );
+  editada = await ok(`/documentos/${editada.id}`, "PATCH", {
+    versao: editada.versao,
+    dados: {
+      ...editada.dados,
+      total_equatorial: "999.00",
+      vencimento_equatorial: "",
+    },
+  });
+  const dadosAntes = structuredClone(editada.dados);
+  banco
+    .prepare("UPDATE faturamento_documentos SET extracao=? WHERE id=?")
+    .run(JSON.stringify({ ...editada.extracao, dados: {} }), editada.id);
+  const resultadoEditada = await ok(
+    `/documentos/${editada.id}/reanalisar`,
+    "POST",
+    { versao: editada.versao },
+  );
+  assert.equal(resultadoEditada.dadosManuaisPreservados, true);
+  assert.deepEqual(resultadoEditada.preenchidos, []);
+  editada = await ok(`/documentos/${editada.id}`);
+  assert.deepEqual(editada.dados, dadosAntes);
+  assert.equal(editada.extracao.dados.vencimento_equatorial, "2026-10-14");
+  await ok(`/documentos/${d.id}/reanalisar`, "POST", { versao: d.versao }, 409);
+  const descartada = await ok(
+    "/documentos?lote=reanalise&nome=descartada.pdf",
+    "POST",
+    pdf([...cabecalhoEquatorial.split("\n"), "PDF descartado"]),
+    201,
+  );
+  banco
+    .prepare(
+      "UPDATE faturamento_documentos SET classificacao='triagem',excluido_em=CURRENT_TIMESTAMP,pdf=X'' WHERE id=?",
+    )
+    .run(descartada.id);
+  await ok(
+    `/documentos/${descartada.id}/reanalisar`,
+    "POST",
+    { versao: descartada.versao },
+    404,
+  );
   assert.equal(banco.prepare("SELECT COUNT(*) AS n FROM faturas").get().n, 0);
   assert.equal(
     banco.prepare("SELECT COUNT(*) AS n FROM contas_a_pagar").get().n,
@@ -515,7 +1177,7 @@ try {
   );
   assert.equal(banco.prepare("SELECT COUNT(*) AS n FROM dev_mail").get().n, 0);
   console.log(
-    "OK: Havilah, arredondamento, extração de PDF, cadastros, vigências, permissões, duplicidade, referências de lote e aprovação sem emissão/envio.",
+    "OK: Havilah, arredondamento, extração de PDF, UC sem contrato, condições manuais, permissões, duplicidade, referências de lote e aprovação sem emissão/envio.",
   );
 } finally {
   await new Promise((r) => server.close(r));

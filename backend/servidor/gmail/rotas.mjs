@@ -10,6 +10,8 @@ import { criarRepositorioOAuthGmail } from "./oauthRepositorio.mjs";
 import { criarSincronizadorGmail } from "./sincronizar.mjs";
 import {
   classificarDocumentoGmail,
+  classificarDocumentosGmail,
+  excluirDocumentosGmail,
   listarTriagemGmail,
   obterPdfTriagemGmail,
 } from "./triagem.mjs";
@@ -45,6 +47,35 @@ function irParaPainel(resposta, resultado) {
   resposta.set("Cache-Control", "no-store");
   resposta.set("Referrer-Policy", "no-referrer");
   return resposta.redirect(303, `/admin/gmail?oauth=${resultado}`);
+}
+
+function erroDaTriagem(resposta, erro, acao) {
+  if (
+    [
+      "versao_invalida",
+      "destino_invalido",
+      "selecao_invalida",
+      "confirmacao_invalida",
+    ].includes(erro.message)
+  )
+    return resposta.status(400).json({ erro: "Seleção inválida." });
+  if (erro.message === "documento_indisponivel")
+    return resposta.status(404).json({ erro: "Documento inexistente." });
+  if (erro.message === "documento_compartilhado")
+    return resposta.status(409).json({
+      erro: "PDF vinculado a outra caixa ou recebimento; a exclusão foi bloqueada.",
+    });
+  if (
+    [
+      "versao_obsoleta",
+      "classificacao_inalterada",
+      "estado_financeiro_incompativel",
+    ].includes(erro.message)
+  )
+    return resposta
+      .status(409)
+      .json({ erro: "Documento alterado; atualize a triagem." });
+  return resposta.status(500).json({ erro: `Falha na ${acao}.` });
 }
 
 export function criarRotasGmail({
@@ -203,6 +234,33 @@ export function criarRotasGmail({
     },
   );
 
+  rotas.post(
+    "/api/admin/gmail/contas/:id/anexos/:itemId/autorizar-captura",
+    (requisicao, resposta) => {
+      const contaId = idValido(requisicao.params.id);
+      const anexoId = idValido(requisicao.params.itemId);
+      if (
+        !contaId ||
+        !anexoId ||
+        requisicao.body?.confirmacao !== "CONFERI_NO_GMAIL"
+      )
+        return resposta.status(400).json({ erro: "Confirmação inválida." });
+      try {
+        criarRepositorioGmail(banco()).autorizarCapturaAposRevisao({
+          contaId,
+          anexoId,
+          administradorId: requisicao.acessoGmail.administrador.id,
+        });
+        resposta.set("Cache-Control", "no-store");
+        return resposta.json({ autorizado: true });
+      } catch {
+        return resposta
+          .status(409)
+          .json({ erro: "Anexo não está aguardando revisão no Gmail." });
+      }
+    },
+  );
+
   rotas.get("/api/admin/gmail/contas/:id/triagem", (requisicao, resposta) => {
     const contaId = idValido(requisicao.params.id);
     const antes = requisicao.query.antes;
@@ -240,6 +298,50 @@ export function criarRotasGmail({
   );
 
   rotas.post(
+    "/api/admin/gmail/contas/:id/triagem/classificacao-em-lote",
+    (requisicao, resposta) => {
+      const contaId = idValido(requisicao.params.id);
+      if (!contaId)
+        return resposta.status(400).json({ erro: "Conta inválida." });
+      try {
+        const resultado = classificarDocumentosGmail({
+          banco: banco(),
+          contaId,
+          itens: requisicao.body?.itens,
+          destino: requisicao.body?.destino,
+          administrador: requisicao.acessoGmail.administrador,
+        });
+        resposta.set("Cache-Control", "no-store");
+        return resposta.json(resultado);
+      } catch (erro) {
+        return erroDaTriagem(resposta, erro, "classificação");
+      }
+    },
+  );
+
+  rotas.post(
+    "/api/admin/gmail/contas/:id/triagem/excluir-em-lote",
+    (requisicao, resposta) => {
+      const contaId = idValido(requisicao.params.id);
+      if (!contaId)
+        return resposta.status(400).json({ erro: "Conta inválida." });
+      try {
+        const resultado = excluirDocumentosGmail({
+          banco: banco(),
+          contaId,
+          itens: requisicao.body?.itens,
+          administrador: requisicao.acessoGmail.administrador,
+          confirmacao: requisicao.body?.confirmacao,
+        });
+        resposta.set("Cache-Control", "no-store");
+        return resposta.json(resultado);
+      } catch (erro) {
+        return erroDaTriagem(resposta, erro, "exclusão");
+      }
+    },
+  );
+
+  rotas.post(
     "/api/admin/gmail/contas/:id/triagem/:documentoId/classificacao",
     (requisicao, resposta) => {
       const contaId = idValido(requisicao.params.id);
@@ -258,21 +360,7 @@ export function criarRotasGmail({
         resposta.set("Cache-Control", "no-store");
         return resposta.json(resultado);
       } catch (erro) {
-        if (["versao_invalida", "destino_invalido"].includes(erro.message))
-          return resposta.status(400).json({ erro: "Classificação inválida." });
-        if (erro.message === "documento_indisponivel")
-          return resposta.status(404).json({ erro: "Documento inexistente." });
-        if (
-          [
-            "versao_obsoleta",
-            "classificacao_inalterada",
-            "estado_financeiro_incompativel",
-          ].includes(erro.message)
-        )
-          return resposta
-            .status(409)
-            .json({ erro: "Documento alterado; atualize a triagem." });
-        return resposta.status(500).json({ erro: "Falha na classificação." });
+        return erroDaTriagem(resposta, erro, "classificação");
       }
     },
   );

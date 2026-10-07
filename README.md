@@ -12,31 +12,55 @@ adiciona tabelas ao SQLite existente sem remover registros. Faça backup consist
 do banco antes de atualizar uma instalação em uso.
 
 1. Em **Clientes → Unidades e contratos**, cadastre a UC, CPF/CNPJ numérico,
-   nome, e-mail, dia preferido, modalidade e desconto com competência inicial.
-   Este é o cadastro financeiro; não cria acesso ao portal. Várias UCs podem
-   compartilhar o mesmo CPF/CNPJ. As contas de acesso existentes são preservadas.
+   nome, e-mail, dia preferido, desconto percentual da UC e sua competência
+   inicial. Não é necessário cadastrar contrato nem
+   associar usina nesta fase. Este é o cadastro financeiro; não cria acesso ao
+   portal. Várias UCs podem compartilhar o mesmo CPF/CNPJ. As contas de acesso
+   existentes são preservadas.
 2. Em **Faturas**, informe um lote e importe o PDF Equatorial (máximo 10 MB e
    10 páginas). O arquivo original fica privado no banco e pode ser baixado pela
    equipe. PDFs com senha ou inválidos são recusados. A assinatura do arquivo
    impede importar o mesmo PDF novamente.
 3. Confira os campos sugeridos e complete os ausentes. Esta etapa extrai texto,
    mas não faz OCR: documentos digitalizados exigem preenchimento manual.
-   Tarifas SCEE são sugestões e devem ser conferidas com a regra comercial.
-4. Informe os componentes unitário + bandeira em R$/kWh, ou selecione uma GDI
-   **aprovada do mesmo lote**. Referências não são escolhidas automaticamente.
-   Informe zero explicitamente quando não houver bandeira ou ajuste; campo vazio
-   nunca significa zero. Use decimais sem separador de milhares.
+   A tarifa unitária sugerida vem da linha **Consumo não compensado**, não da
+   linha **Injeção SCEE**; a bandeira é somada separadamente. Confira ambas
+   com o PDF e a regra comercial antes de calcular.
+   O administrador de nível 3 pode usar **Reanalisar faturas pendentes** para
+   reler PDFs já armazenados. A ação preenche campos vazios e corrige o unitário
+   antigo apenas quando ele coincide com a extração automática anterior, em
+   faturas sem conferência manual; nas já editadas, atualiza as evidências,
+   mas preserva todos os dados informados pela equipe. Faturas calculadas,
+   aprovadas, excluídas ou não classificadas como fatura não são reanalisadas.
+   A reanálise não calcula, aprova nem emite cobranças.
+4. Na própria fatura, informe a **modalidade (GDI/GDII)** e confira o desconto
+   da UC vigente naquela competência. Informe os componentes unitário +
+   bandeira em R$/kWh, ou selecione uma GDI **aprovada do mesmo lote**.
+   Referências não são escolhidas automaticamente. Informe zero explicitamente
+   quando não houver bandeira ou ajuste; campo vazio nunca significa zero. Use
+   decimais sem separador de milhares. A modalidade e o desconto da UC ficam
+   congelados na memória auditável da cobrança, sem criar um contrato
+   cadastrado. Uma alteração de desconto exige nova competência inicial e
+   preserva os percentuais anteriores. Cobranças ainda não aprovadas que forem
+   afetadas exigem novo cálculo; as aprovadas preservam o desconto usado e
+   impedem uma alteração retroativa que as alcance. Mesmo nas faturas antigas,
+   a modalidade precisa ser confirmada manualmente antes de um novo cálculo.
 5. Confirme o vencimento Ecosol manualmente, observando o dia preferido. A regra
    para chegada tardia, feriados e meses curtos ainda precisa ser definida.
-6. Marque a conferência e escolha **Salvar e calcular**. O demonstrativo mostra
+6. Use **Calcular prévia** para conferir energia, tarifa, desconto e parcelas
+   do valor Ecosol antes de salvar; a prévia não altera a fatura. Qualquer
+   mudança nos campos exige nova prévia. Marque a conferência e escolha
+   **Salvar e calcular**. O servidor recalcula e só grava se o resultado ainda
+   corresponder à prévia. O demonstrativo mostra
    `ARRED(injecao × (unitario + bandeira) × (1 − desconto/100); 2)
    - total_equatorial − ajuste_gdii`. Não soma mínimo ou iluminação novamente.
 7. O nível 3 pode **Aprovar para emissão futura**. A memória fica protegida contra
-   edição e guarda contrato, dados cadastrais e fonte da tarifa. Esta aprovação
+   edição e guarda as condições informadas, dados cadastrais e fonte da tarifa. Esta aprovação
    não emite boleto, não envia e-mail e não cria pagamento bancário.
 
 Permissões: nível 1 consulta; níveis 2 e 3 cadastram unidades, importam e calculam;
-nível 3 acrescenta vigências e aprova. Alterações simultâneas são detectadas.
+nível 3 aprova. A API de vigências antigas permanece compatível, mas não é
+necessária no novo fluxo manual. Alterações simultâneas são detectadas.
 Uma UC/competência não pode ter duas cobranças calculadas ou aprovadas. Segunda
 via diferente pode ser importada para análise, mas o cálculo duplicado é bloqueado.
 Cobranças aprovadas não têm reabertura nesta etapa; o fluxo de revisão/cancelamento
@@ -45,6 +69,13 @@ fica para a etapa bancária. Novas vigências não podem alcançar cobranças ap
 Os módulos ficam em `backend/servidor/faturamento`. `decimal.js` trata precisão e
 arredondamento; `pdfjs-dist` extrai texto. `PreparacaoFaturas.tsx` e
 `UnidadesDeCobranca.tsx` integram as telas existentes.
+
+Ao atualizar uma instalação existente, a migração cria o histórico de descontos
+sem preencher percentuais antigos por suposição. UCs antigas precisam receber
+uma vigência de desconto e as faturas pendentes precisam ter modalidade
+confirmada antes de calcular. Cobranças já calculadas antes da atualização
+precisam ser recalculadas antes da aprovação; cobranças aprovadas conservam sua
+memória.
 
 Validação: `pnpm test:faturamento`, `pnpm test:permissoes` e `pnpm build`.
 Os testes usam bancos temporários e PDFs sintéticos, sem modificar dados reais.

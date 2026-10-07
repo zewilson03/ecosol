@@ -60,12 +60,15 @@ function anexoValido(item, messageId) {
     texto(item.messageId, "Message ID", 512) !== messageId
   )
     throw new Error("Anexo não pertence à mensagem reservada.");
+  if (item.revisaoEmail !== undefined && typeof item.revisaoEmail !== "boolean")
+    throw new Error("Revisão do anexo inválida.");
   return {
     messageId,
     partPath: texto(item.partPath, "Caminho da parte", 256),
     attachmentId: opcional(item.attachmentId, "Attachment ID", 1024),
     nome: texto(item.nome, "Nome do anexo", 255),
     mimeType: texto(item.mimeType, "Tipo do anexo", 127),
+    revisaoEmail: item.revisaoEmail === true,
   };
 }
 
@@ -478,8 +481,8 @@ export function criarRepositorioGmail(banco) {
         const buscar = banco.prepare(`SELECT id,attachment_id,nome,mime_type
           FROM gmail_anexos WHERE conta_id=? AND message_id=? AND part_path=?`);
         const inserir = banco.prepare(`INSERT INTO gmail_anexos
-          (conta_id,message_id,part_path,attachment_id,nome,mime_type)
-          VALUES (?,?,?,?,?,?)`);
+          (conta_id,message_id,part_path,attachment_id,nome,mime_type,estado,erro_codigo)
+          VALUES (?,?,?,?,?,?,?,?)`);
         for (const item of anexos) {
           const candidato = anexoValido(item, mensagem.message_id);
           const anterior = buscar.get(
@@ -504,6 +507,8 @@ export function criarRepositorioGmail(banco) {
               candidato.attachmentId,
               candidato.nome,
               candidato.mimeType,
+              candidato.revisaoEmail ? "pendente_manual" : "pendente",
+              candidato.revisaoEmail ? "revisao_email" : null,
             );
           }
         }
@@ -774,11 +779,46 @@ export function criarRepositorioGmail(banco) {
           anexo.estado !== "falha_temporaria"
         )
           throw new Error("Este anexo não admite nova tentativa.");
+        if (anexo.erro_codigo === "revisao_email")
+          throw new Error(
+            "Revise o arquivo no Gmail antes de autorizar a captura.",
+          );
         banco
           .prepare(
             `UPDATE gmail_anexos SET estado='pendente', erro_codigo=NULL,
               proxima_tentativa_em=NULL, documento_id=NULL, hash_pdf=NULL,
               atualizado_em=CURRENT_TIMESTAMP WHERE id=?`,
+          )
+          .run(anexoId);
+        return true;
+      });
+    },
+
+    autorizarCapturaAposRevisao({ contaId, anexoId, administradorId }) {
+      inteiroPositivo(contaId, "Conta");
+      inteiroPositivo(anexoId, "Anexo");
+      inteiroPositivo(administradorId, "Administrador");
+      return transacao(banco, () => {
+        contaExistente(banco, contaId);
+        const anexo = banco
+          .prepare("SELECT * FROM gmail_anexos WHERE id=? AND conta_id=?")
+          .get(anexoId, contaId);
+        if (
+          !anexo ||
+          anexo.estado !== "pendente_manual" ||
+          anexo.erro_codigo !== "revisao_email"
+        )
+          throw new Error("Anexo não está aguardando revisão no Gmail.");
+        banco
+          .prepare(
+            `INSERT INTO gmail_revisoes_anexos
+          (conta_id,anexo_id,administrador_id,acao) VALUES (?,?,?,'autorizar_captura')`,
+          )
+          .run(contaId, anexoId, administradorId);
+        banco
+          .prepare(
+            `UPDATE gmail_anexos SET estado='pendente',erro_codigo=NULL,
+          proxima_tentativa_em=NULL,atualizado_em=CURRENT_TIMESTAMP WHERE id=?`,
           )
           .run(anexoId);
         return true;

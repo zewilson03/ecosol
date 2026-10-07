@@ -86,6 +86,67 @@ db.prepare(
   anexoId,
 );
 
+function criarItem(nome) {
+  const conteudo = Buffer.from(`%PDF-1.4\n${nome}\n`);
+  const hashItem = createHash("sha256").update(conteudo).digest("hex");
+  const mensagem = `lote-${nome}`;
+  db.prepare(
+    "INSERT INTO gmail_mensagens(conta_id,message_id,estado) VALUES (?,?,'detalhada')",
+  ).run(contaId, mensagem);
+  const id = Number(
+    db
+      .prepare(
+        `INSERT INTO faturamento_documentos
+         (hash,nome,pdf,lote,texto,extracao,dados,classificacao)
+         VALUES (?,?,?,?,?,?,?,'triagem')`,
+      )
+      .run(
+        hashItem,
+        nome,
+        conteudo,
+        "gmail-1",
+        "texto privado",
+        '{"dados":{}}',
+        '{"uc":"123"}',
+      ).lastInsertRowid,
+  );
+  const anexo = Number(
+    db
+      .prepare(
+        `INSERT INTO gmail_anexos
+         (conta_id,message_id,part_path,attachment_id,nome,mime_type,estado,hash_pdf,documento_id)
+         VALUES (?,?,?,?,?,?,'capturado',?,?)`,
+      )
+      .run(
+        contaId,
+        mensagem,
+        "0.1",
+        "a1",
+        nome,
+        "application/pdf",
+        hashItem,
+        id,
+      ).lastInsertRowid,
+  );
+  db.prepare(
+    `INSERT INTO faturamento_recebimentos_pdf
+     (hash,nome,lote,resultado,codigo,motivo,documento_id,responsavel,origem,gmail_anexo_id)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`,
+  ).run(
+    hashItem,
+    nome,
+    "gmail-1",
+    "Recebida",
+    "ok",
+    "teste",
+    id,
+    "Gmail",
+    "gmail",
+    anexo,
+  );
+  return { id, versao: 1, anexo };
+}
+
 const app = express();
 app.use(
   express.json(),
@@ -221,6 +282,271 @@ try {
       .get(documentoId, "Classificação de PDF Gmail").n,
     2,
   );
+  const loteA = criarItem("lote-a.pdf");
+  const loteB = criarItem("lote-b.pdf");
+  const classificarLote = `${triagem}/classificacao-em-lote`;
+  const excluirLote = `${triagem}/excluir-em-lote`;
+  assert.equal(
+    (
+      await chamar(classificarLote, basico, "POST", {
+        itens: [loteA, loteB],
+        destino: "fatura",
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await chamar(classificarLote, admin, "POST", {
+        itens: [loteA, loteA],
+        destino: "fatura",
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await chamar(classificarLote, admin, "POST", {
+        itens: [loteA, { id: loteB.id, versao: 99 }],
+        destino: "fatura",
+      })
+    ).status,
+    409,
+  );
+  assert.equal(
+    db
+      .prepare("SELECT classificacao FROM faturamento_documentos WHERE id=?")
+      .get(loteA.id).classificacao,
+    "triagem",
+  );
+  const primeiraClassificacao = await chamar(classificarLote, admin, "POST", {
+    itens: [loteA, loteB],
+    destino: "nao_fatura",
+  });
+  assert.equal(primeiraClassificacao.status, 200);
+  assert.equal((await primeiraClassificacao.json()).alterados, 2);
+  const classificacaoMista = await chamar(classificarLote, admin, "POST", {
+    itens: [
+      { id: loteA.id, versao: 2 },
+      { id: loteB.id, versao: 2 },
+    ],
+    destino: "nao_fatura",
+  });
+  assert.equal(classificacaoMista.status, 200);
+  assert.equal((await classificacaoMista.json()).alterados, 0);
+  const promoverLote = await chamar(classificarLote, admin, "POST", {
+    itens: [
+      { id: loteA.id, versao: 2 },
+      { id: loteB.id, versao: 2 },
+    ],
+    destino: "fatura",
+  });
+  assert.equal(promoverLote.status, 200);
+  assert.equal((await promoverLote.json()).alterados, 2);
+  const excluirA = criarItem("excluir-a.pdf");
+  const excluirB = criarItem("excluir-b.pdf");
+  assert.equal(
+    (
+      await chamar(excluirLote, admin, "POST", {
+        itens: [excluirA],
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await chamar(excluirLote, admin, "POST", {
+        itens: [excluirA, { id: loteA.id, versao: 3 }],
+        confirmacao: "EXCLUIR",
+      })
+    ).status,
+    404,
+  );
+  assert.ok(
+    db
+      .prepare(
+        "SELECT length(pdf) tamanho FROM faturamento_documentos WHERE id=?",
+      )
+      .get(excluirA.id).tamanho > 0,
+  );
+  assert.equal(
+    (
+      await chamar(excluirLote, admin, "POST", {
+        itens: [excluirA, { id: excluirB.id, versao: 99 }],
+        confirmacao: "EXCLUIR",
+      })
+    ).status,
+    409,
+  );
+  assert.equal(
+    (
+      await chamar(excluirLote, basico, "POST", {
+        itens: [excluirA, excluirB],
+        confirmacao: "EXCLUIR",
+      })
+    ).status,
+    403,
+  );
+  db.exec(`CREATE TEMP TRIGGER impedir_auditoria_exclusao
+    BEFORE INSERT ON faturamento_historico
+    WHEN NEW.documento_id=${excluirB.id}
+      AND NEW.acao='Exclusão definitiva de PDF Gmail'
+    BEGIN SELECT RAISE(ABORT,'falha simulada'); END`);
+  assert.equal(
+    (
+      await chamar(excluirLote, admin, "POST", {
+        itens: [excluirA, excluirB],
+        confirmacao: "EXCLUIR",
+      })
+    ).status,
+    500,
+  );
+  db.exec("DROP TRIGGER impedir_auditoria_exclusao");
+  for (const item of [excluirA, excluirB])
+    assert.ok(
+      db
+        .prepare(
+          "SELECT length(pdf) tamanho FROM faturamento_documentos WHERE id=?",
+        )
+        .get(item.id).tamanho > 0,
+    );
+  const exclusao = await chamar(excluirLote, admin, "POST", {
+    itens: [excluirA, excluirB],
+    confirmacao: "EXCLUIR",
+  });
+  assert.equal(exclusao.status, 200);
+  assert.equal((await exclusao.json()).excluidos, 2);
+  for (const item of [excluirA, excluirB]) {
+    const salvo = db
+      .prepare(
+        "SELECT length(pdf) tamanho,texto,extracao,dados,excluido_em FROM faturamento_documentos WHERE id=?",
+      )
+      .get(item.id);
+    assert.equal(salvo.tamanho, 0);
+    assert.equal(salvo.texto, "");
+    assert.equal(salvo.extracao, "{}");
+    assert.equal(salvo.dados, "{}");
+    assert.ok(salvo.excluido_em);
+    assert.equal(
+      (await chamar(`${triagem}/${item.id}/pdf`, admin)).status,
+      404,
+    );
+    assert.equal(
+      db
+        .prepare("SELECT documento_id FROM gmail_anexos WHERE id=?")
+        .get(item.anexo).documento_id,
+      item.id,
+    );
+    assert.equal(
+      db
+        .prepare(
+          "SELECT COUNT(*) n FROM faturamento_historico WHERE documento_id=? AND acao='Exclusão definitiva de PDF Gmail'",
+        )
+        .get(item.id).n,
+      1,
+    );
+  }
+  assert.equal(
+    (
+      await chamar(classificarLote, admin, "POST", {
+        itens: [excluirA],
+        destino: "fatura",
+      })
+    ).status,
+    404,
+  );
+  assert.ok(
+    !(await (await chamar(triagem, admin)).json()).itens.some((item) =>
+      [excluirA.id, excluirB.id].includes(item.id),
+    ),
+  );
+  const compartilhado = criarItem("compartilhado.pdf");
+  const normal = criarItem("normal.pdf");
+  const outraConta = criarRepositorioGmail(db).cadastrarConta({
+    email: "outra@gmail.com",
+    dataInicio: "2026-10-01",
+  }).id;
+  db.prepare(
+    "INSERT INTO gmail_mensagens(conta_id,message_id,estado) VALUES (?,?,'detalhada')",
+  ).run(outraConta, "duplicado-entre-contas");
+  const hashCompartilhado = db
+    .prepare("SELECT hash FROM faturamento_documentos WHERE id=?")
+    .get(compartilhado.id).hash;
+  const anexoCompartilhado = Number(
+    db
+      .prepare(
+        `INSERT INTO gmail_anexos
+         (conta_id,message_id,part_path,attachment_id,nome,mime_type,estado,hash_pdf,documento_id)
+         VALUES (?,?,?,?,?,?,'duplicado',?,?)`,
+      )
+      .run(
+        outraConta,
+        "duplicado-entre-contas",
+        "0.1",
+        "a1",
+        "compartilhado.pdf",
+        "application/pdf",
+        hashCompartilhado,
+        compartilhado.id,
+      ).lastInsertRowid,
+  );
+  db.prepare(
+    `INSERT INTO faturamento_recebimentos_pdf
+     (hash,nome,lote,resultado,codigo,motivo,documento_id,responsavel,origem,gmail_anexo_id)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`,
+  ).run(
+    hashCompartilhado,
+    "compartilhado.pdf",
+    "gmail-2",
+    "Duplicada",
+    "duplicada",
+    "teste",
+    compartilhado.id,
+    "Gmail",
+    "gmail",
+    anexoCompartilhado,
+  );
+  const exclusaoCompartilhada = await chamar(excluirLote, admin, "POST", {
+    itens: [normal, compartilhado],
+    confirmacao: "EXCLUIR",
+  });
+  assert.equal(exclusaoCompartilhada.status, 409);
+  assert.match((await exclusaoCompartilhada.json()).erro, /outra caixa/);
+  for (const item of [normal, compartilhado])
+    assert.ok(
+      db
+        .prepare(
+          "SELECT length(pdf) tamanho FROM faturamento_documentos WHERE id=?",
+        )
+        .get(item.id).tamanho > 0,
+    );
+  const manual = criarItem("manual-duplicado.pdf");
+  db.prepare(
+    `INSERT INTO faturamento_recebimentos_pdf
+     (hash,nome,lote,resultado,codigo,motivo,documento_id,responsavel,origem)
+     VALUES (?,?,?,?,?,?,?,?,?)`,
+  ).run(
+    db
+      .prepare("SELECT hash FROM faturamento_documentos WHERE id=?")
+      .get(manual.id).hash,
+    "manual-duplicado.pdf",
+    "manual",
+    "Duplicada",
+    "duplicada",
+    "teste",
+    manual.id,
+    "Operador",
+    "manual",
+  );
+  assert.equal(
+    (
+      await chamar(excluirLote, admin, "POST", {
+        itens: [manual],
+        confirmacao: "EXCLUIR",
+      })
+    ).status,
+    409,
+  );
   const inserirPendente = db.prepare(
     `INSERT INTO gmail_mensagens(conta_id,message_id,estado,erro_codigo)
      VALUES (?,?,'pendente_manual','teste')`,
@@ -245,6 +571,85 @@ try {
   assert.equal(
     (await chamar(`${pendencias}?aposMensagem=abc`, admin)).status,
     400,
+  );
+  db.prepare(
+    "INSERT INTO gmail_mensagens(conta_id,message_id,estado) VALUES (?,?,'detalhada')",
+  ).run(contaId, "mensagem-termo");
+  const anexoRevisao = Number(
+    db
+      .prepare(
+        `INSERT INTO gmail_anexos
+    (conta_id,message_id,part_path,attachment_id,nome,mime_type,estado,erro_codigo)
+    VALUES (?,?,?,?,?,?,'pendente_manual','revisao_email')`,
+      )
+      .run(
+        contaId,
+        "mensagem-termo",
+        "0.0",
+        "anexo-termo",
+        "Termo de fatura por e-mail.pdf",
+        "application/pdf",
+      ).lastInsertRowid,
+  );
+  const listaRevisao = await chamar(`${pendencias}?incluirMensagem=0`, admin);
+  assert.equal(listaRevisao.status, 200);
+  const itemRevisao = (await listaRevisao.json()).anexos.find(
+    (item) => item.id === anexoRevisao,
+  );
+  assert.equal(itemRevisao.nome, "Termo de fatura por e-mail.pdf");
+  assert.equal(itemRevisao.erroCodigo, "revisao_email");
+  const autorizar = `/api/admin/gmail/contas/${contaId}/anexos/${anexoRevisao}/autorizar-captura`;
+  assert.equal(
+    (
+      await chamar(autorizar, basico, "POST", {
+        confirmacao: "CONFERI_NO_GMAIL",
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (await chamar(autorizar, admin, "POST", { confirmacao: "sim" })).status,
+    400,
+  );
+  assert.equal(
+    (
+      await chamar(
+        `/api/admin/gmail/contas/${contaId}/anexos/${anexoRevisao}/tentar-novamente`,
+        admin,
+        "POST",
+        {},
+      )
+    ).status,
+    409,
+  );
+  assert.equal(
+    (
+      await chamar(autorizar, admin, "POST", {
+        confirmacao: "CONFERI_NO_GMAIL",
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await chamar(autorizar, admin, "POST", {
+        confirmacao: "CONFERI_NO_GMAIL",
+      })
+    ).status,
+    409,
+  );
+  assert.equal(
+    db.prepare("SELECT estado FROM gmail_anexos WHERE id=?").get(anexoRevisao)
+      .estado,
+    "pendente",
+  );
+  assert.equal(
+    db
+      .prepare(
+        "SELECT administrador_id FROM gmail_revisoes_anexos WHERE anexo_id=?",
+      )
+      .get(anexoRevisao).administrador_id,
+    1,
   );
   assert.equal(
     db.prepare("PRAGMA integrity_check").get().integrity_check,

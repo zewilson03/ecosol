@@ -9,6 +9,8 @@ export type Contrato = {
   modalidade: string;
   desconto: string;
   inicio: string;
+  origem?: string;
+  desconto_inicio?: string;
 };
 export type Unidade = {
   usina_id?: number | null;
@@ -19,6 +21,7 @@ export type Unidade = {
   documento: string;
   email: string;
   dia_vencimento: number;
+  descontos: { id: number; inicio: string; desconto: string }[];
   versao: number;
   contratos: Contrato[];
 };
@@ -30,7 +33,7 @@ export default function UnidadesDeCobranca() {
     usarConsulta<{ id: number; nome: string }[]>("/api/admin/usinas");
   const { nivel } = usarAdministrador();
   const [edicao, setEdicao] = useState<Unidade | "nova" | null>(null);
-  const [contrato, setContrato] = useState<Unidade | null>(null);
+  const [descontoPara, setDescontoPara] = useState<Unidade | null>(null);
   const [erro, setErro] = useState("");
   const [mensagem, setMensagem] = useState("");
   const [ocupado, setOcupado] = useState(false);
@@ -42,32 +45,21 @@ export default function UnidadesDeCobranca() {
       .includes(busca.toLowerCase()),
   );
 
-  async function salvar(
-    evento: FormEvent<HTMLFormElement>,
-    novoContrato = false,
-  ) {
+  async function salvar(evento: FormEvent<HTMLFormElement>) {
     evento.preventDefault();
     setOcupado(true);
     setErro("");
     setMensagem("");
     const dados = Object.fromEntries(new FormData(evento.currentTarget));
     try {
-      const endereco = novoContrato
-        ? `${base}/${contrato!.id}/contratos`
-        : atual
-          ? `${base}/${atual.id}`
-          : base;
-      await consultarServidor(endereco, {
-        method: !novoContrato && atual ? "PATCH" : "POST",
+      await consultarServidor(atual ? `${base}/${atual.id}` : base, {
+        method: atual ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...dados, versao: atual?.versao }),
       });
       setEdicao(null);
-      setContrato(null);
       consulta.atualizar();
-      setMensagem(
-        "Cadastro salvo. Cobranças já aprovadas permanecem com os dados originais.",
-      );
+      setMensagem("UC salva. Informe a modalidade ao conferir cada fatura.");
     } catch (e) {
       setErro((e as Error).message);
     } finally {
@@ -75,38 +67,37 @@ export default function UnidadesDeCobranca() {
     }
   }
 
-  function camposContrato() {
-    return (
-      <>
-        <label>
-          Modalidade
-          <select name="modalidade" required>
-            <option value="GDI">GDI</option>
-            <option value="GDII">GDII</option>
-          </select>
-        </label>
-        <label>
-          Desconto contratado (%)
-          <input
-            name="desconto"
-            inputMode="decimal"
-            placeholder="Ex.: 25"
-            required
-          />
-        </label>
-        <label>
-          Vigente a partir da competência
-          <input name="inicio" type="month" required />
-        </label>
-      </>
-    );
+  async function salvarDesconto(evento: FormEvent<HTMLFormElement>) {
+    evento.preventDefault();
+    if (!descontoPara) return;
+    setOcupado(true);
+    setErro("");
+    setMensagem("");
+    try {
+      const dados = Object.fromEntries(new FormData(evento.currentTarget));
+      await consultarServidor(`${base}/${descontoPara.id}/descontos`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...dados, versao: descontoPara.versao }),
+      });
+      setDescontoPara(null);
+      consulta.atualizar();
+      setMensagem("Nova vigência de desconto registrada para a UC.");
+    } catch (e) {
+      setErro((e as Error).message);
+    } finally {
+      setOcupado(false);
+    }
   }
 
   return (
     <>
       <div className="admin-aviso">
-        Cadastre os dados de cobrança de cada UC. Um mesmo CPF/CNPJ pode ter
-        várias unidades. Este cadastro não cria nem altera acessos ao portal.
+        Cadastre a UC e o desconto percentual com sua competência inicial. Cada
+        mudança do desconto cria uma nova vigência, preservando as anteriores. A
+        modalidade será informada em cada fatura; não é necessário cadastrar
+        contrato ou vincular uma usina agora. Este cadastro não cria acesso ao
+        portal.
       </div>
       <ImportacaoExcel
         aoImportar={consulta.atualizar}
@@ -149,7 +140,7 @@ export default function UnidadesDeCobranca() {
               className="admin-botao"
               onClick={() => {
                 setEdicao("nova");
-                setContrato(null);
+                setDescontoPara(null);
                 setErro("");
               }}
             >
@@ -164,7 +155,7 @@ export default function UnidadesDeCobranca() {
                 <th>Cliente / UC</th>
                 <th>CPF/CNPJ</th>
                 <th>Contato / vencimento</th>
-                <th>Contratos</th>
+                <th>Descontos por competência</th>
                 <th>Ações</th>
               </tr>
             </thead>
@@ -182,9 +173,18 @@ export default function UnidadesDeCobranca() {
                     <small>Dia preferido: {u.dia_vencimento}</small>
                   </td>
                   <td>
+                    {u.descontos.length === 0 && (
+                      <small>Desconto a definir</small>
+                    )}
+                    {u.descontos.map((d) => (
+                      <small key={d.id}>
+                        {d.inicio}: {d.desconto}%
+                      </small>
+                    ))}
                     {u.contratos.map((c) => (
-                      <small key={c.id}>
-                        {c.inicio}: {c.modalidade} · {c.desconto}%
+                      <small key={`contrato-${c.id}`}>
+                        Contrato anterior {c.inicio}: {c.modalidade} ·{" "}
+                        {c.desconto}%
                       </small>
                     ))}
                   </td>
@@ -196,7 +196,7 @@ export default function UnidadesDeCobranca() {
                           disabled={ocupado}
                           onClick={() => {
                             setEdicao(u);
-                            setContrato(null);
+                            setDescontoPara(null);
                           }}
                         >
                           Editar cadastro
@@ -207,11 +207,12 @@ export default function UnidadesDeCobranca() {
                           className="admin-botao secundario"
                           disabled={ocupado}
                           onClick={() => {
-                            setContrato(u);
+                            setDescontoPara(u);
                             setEdicao(null);
+                            setErro("");
                           }}
                         >
-                          Nova vigência
+                          Alterar desconto
                         </button>
                       )}
                     </div>
@@ -235,7 +236,7 @@ export default function UnidadesDeCobranca() {
           key={atual?.id ?? "nova"}
           onSubmit={(e) => salvar(e)}
         >
-          <h3>{atual ? "Editar unidade" : "Nova unidade e contrato"}</h3>
+          <h3>{atual ? "Editar unidade" : "Nova unidade consumidora"}</h3>
           <fieldset className="admin-campos" disabled={ocupado}>
             <label>
               Usina de alocação
@@ -297,7 +298,23 @@ export default function UnidadesDeCobranca() {
                 required
               />
             </label>
-            {!atual && camposContrato()}
+            {!atual && (
+              <>
+                <label>
+                  Desconto inicial da UC (%)
+                  <input
+                    name="desconto"
+                    inputMode="decimal"
+                    placeholder="Ex.: 25 ou 0"
+                    required
+                  />
+                </label>
+                <label>
+                  Desconto válido desde a competência
+                  <input name="desconto_inicio" type="month" required />
+                </label>
+              </>
+            )}
           </fieldset>
           <div className="admin-acoes">
             <button className="admin-botao" disabled={ocupado}>
@@ -314,25 +331,37 @@ export default function UnidadesDeCobranca() {
           </div>
         </form>
       )}
-      {contrato && (
-        <form className="admin-formulario" onSubmit={(e) => salvar(e, true)}>
-          <h3>Nova vigência — {contrato.nome}</h3>
+      {descontoPara && (
+        <form className="admin-formulario" onSubmit={salvarDesconto}>
+          <h3>Alterar desconto — UC {descontoPara.uc}</h3>
           <p>
-            O contrato anterior permanece no histórico. A nova condição vale a
-            partir da competência escolhida.
+            Informe a competência a partir da qual a nova taxa vale. As taxas
+            anteriores permanecem no histórico; cobranças aprovadas não mudam.
           </p>
           <fieldset className="admin-campos" disabled={ocupado}>
-            {camposContrato()}
+            <label>
+              Novo desconto (%)
+              <input
+                name="desconto"
+                inputMode="decimal"
+                placeholder="Ex.: 20 ou 0"
+                required
+              />
+            </label>
+            <label>
+              Vigente a partir da competência
+              <input name="inicio" type="month" required />
+            </label>
           </fieldset>
           <div className="admin-acoes">
             <button className="admin-botao" disabled={ocupado}>
-              Salvar vigência
+              Salvar nova vigência
             </button>
             <button
               type="button"
               className="admin-botao secundario"
               disabled={ocupado}
-              onClick={() => setContrato(null)}
+              onClick={() => setDescontoPara(null)}
             >
               Cancelar
             </button>

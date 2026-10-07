@@ -7,6 +7,7 @@ import {
 } from "./google.mjs";
 import { criarRepositorioGmail } from "./repositorio.mjs";
 import { PdfGmailInvalido, receberAnexoGmail } from "./receberAnexo.mjs";
+import { candidatoFaturaPeloNome } from "./identificacaoPrevia.mjs";
 
 const LIMITE_PDF = 10 * 1024 * 1024;
 const LIMITE_PARTES = 200;
@@ -162,6 +163,7 @@ export function criarSincronizadorGmail({
         const dados = await cliente.obterMensagem({
           accessToken,
           id: mensagem.message_id,
+          somenteMetadados: true,
         });
         const anteriorAoInicio =
           BigInt(dados.internalDate) <
@@ -180,6 +182,7 @@ export function criarSincronizadorGmail({
             attachmentId: item.attachmentId,
             nome: item.nome,
             mimeType: item.mimeType,
+            revisaoEmail: !candidatoFaturaPeloNome(item.nome),
           })),
           agora: agora(),
         });

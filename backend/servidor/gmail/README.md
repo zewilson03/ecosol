@@ -108,7 +108,7 @@ callback redireciona apenas para a página local, sem código/token na URL.
    a data inicial, autorize no Google e confira a identidade exibida. Teste
    também Cancelar no Google, retorno repetido e sessão encerrada durante a
    autorização. Depois da validação, retome a conta se desejar habilitar a
-  busca da entrega 4; a entrega 3, isoladamente, não realizava a busca.
+   busca da entrega 4; a entrega 3, isoladamente, não realizava a busca.
 
 O escopo `gmail.readonly` é classificado pelo Google como **restrito**. Um
 projeto externo em modo _Testing_ emite refresh tokens que expiram após sete
@@ -148,11 +148,31 @@ retorno após encerrar a sessão administrativa.
   até 10 MB e 10 páginas; assinatura e leitura são verificadas no servidor.
   Arquivo com senha, danificado, excessivo ou MIME anormal fica pendente com
   código de erro. Um anexo problemático não bloqueia os demais. Não há OCR.
+- A leitura inicial da mensagem solicita somente metadados MIME, sem
+  `body.data`. Antes de solicitar os bytes do anexo, o Ecosol identifica como
+  candidato de fatura Equatorial apenas nomes no padrão `AAAAMM` seguido de sete dígitos e
+  `.pdf`, com mês válido. Outros nomes (inclusive `Termo`) ficam em
+  `pendente_manual/revisao_email`: aparecem no painel com nome, sem PDF salvo
+  no Ecosol, para conferência na conta Gmail conectada. Um administrador de
+  nível 3 pode confirmar que conferiu o e-mail e autorizar a captura; a ação
+  fica auditada e o PDF segue para triagem, nunca direto para cobrança. O
+  nome do arquivo é apenas um filtro prévio: não prova que o conteúdo é fatura.
+  Documentos capturados antes desta regra não são apagados retroativamente.
 - PDFs válidos entram primeiro na triagem restrita. O administrador pode abrir
   o PDF, marcar que não é fatura ou enviá-lo a Faturas, onde ficará como
   `Pendente de revisão`. A origem Gmail e o recebimento ficam rastreáveis;
   duplicatas por conteúdo vinculam-se ao documento existente. Nenhuma
   cobrança, cálculo ou aprovação é automática.
+- Na triagem, o administrador avançado pode selecionar até 500 PDFs carregados
+  e classificá-los em lote como faturas ou não faturas. O lote é atômico:
+  se um item tiver sido alterado, nenhum é reclassificado. Também pode excluir
+  um ou vários PDFs ainda na triagem ou marcados como não faturas, digitando
+  `EXCLUIR`. Essa operação apaga permanentemente do banco operacional os bytes
+  do PDF, o texto e os dados extraídos, mas preserva metadados mínimos, vínculo
+  Gmail e auditoria para impedir recaptura acidental. Não permite excluir uma
+  fatura já enviada ao fluxo financeiro, nem um PDF vinculado a outra caixa ou
+  recebido também por outro caminho. O e-mail original no Gmail e backups
+  anteriores **não** são apagados; a exclusão não é eliminação forense de dados.
 - Falhas de rede, timeout e limite da API recebem espera crescente. Um token
   de acesso expirado é renovado automaticamente; perda real de autorização
   suspende a conta e exige reconexão. O painel mostra a última

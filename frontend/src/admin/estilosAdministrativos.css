@@ -308,6 +308,20 @@
 .faturamento-confirmacao label strong {
   color: #294a61;
 }
+.faturamento-previa {
+  display: grid;
+  gap: 14px;
+}
+.faturamento-previa > .admin-botao {
+  justify-self: start;
+}
+.faturamento-previa-pendencias {
+  margin: 0;
+  color: #8b4d24;
+}
+.faturamento-previa .faturamento-demonstrativo {
+  margin-top: 4px;
+}
 .faturamento-demonstrativo {
   background: #f0f7f3;
   border: 1px solid #cee4d7;
@@ -332,13 +346,21 @@
   font-size: 20px;
   font-weight: 800;
 }
-.faturamento-texto {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  max-height: 400px;
-  overflow: auto;
+.faturamento-pdf-painel {
+  display: grid;
+  gap: 10px;
+  padding-top: 14px;
+}
+.faturamento-pdf-painel p {
+  margin: 0;
+}
+.faturamento-pdf-visualizador {
+  display: block;
+  width: 100%;
+  height: clamp(480px, 70vh, 900px);
+  border: 1px solid #d6e4ea;
+  border-radius: 12px;
   background: #f6f9fc;
-  padding: 16px;
 }
 .admin-lateral {
   position: sticky;
@@ -468,6 +490,22 @@
 }
 .gmail-triagem h4 {
   margin: 0;
+}
+.gmail-triagem-lote {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 0;
+}
+.gmail-triagem-lote label,
+.gmail-triagem-selecao {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.gmail-triagem-lote .gmail-conta-acoes {
+  flex-wrap: wrap;
 }
 .gmail-triagem-item {
   display: flex;

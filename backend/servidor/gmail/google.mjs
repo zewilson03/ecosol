@@ -4,6 +4,12 @@ const TOKEN = "https://oauth2.googleapis.com/token";
 const PERFIL = "https://gmail.googleapis.com/gmail/v1/users/me/profile";
 const API = "https://gmail.googleapis.com/gmail/v1/users/me";
 const TEMPO_LIMITE_MS = 10000;
+// MIME pode ser aninhado até o limite aceito pelo sincronizador. Excluímos
+// body.data da resposta usada para identificar anexos antes do download.
+let CAMPOS_MENSAGEM_SEM_CONTEUDO = "mimeType,filename,body(attachmentId,size)";
+for (let profundidade = 0; profundidade < 12; profundidade++)
+  CAMPOS_MENSAGEM_SEM_CONTEUDO = `mimeType,filename,body(attachmentId,size),parts(${CAMPOS_MENSAGEM_SEM_CONTEUDO})`;
+CAMPOS_MENSAGEM_SEM_CONTEUDO = `id,internalDate,labelIds,payload(${CAMPOS_MENSAGEM_SEM_CONTEUDO})`;
 
 export class ErroGoogleGmail extends Error {
   constructor(categoria, status = null) {
@@ -426,11 +432,14 @@ export function criarClienteGoogle(configuracao, fetchImpl = fetch) {
       };
     },
 
-    async obterMensagem({ accessToken, id }) {
+    async obterMensagem({ accessToken, id, somenteMetadados = false }) {
+      if (typeof somenteMetadados !== "boolean")
+        throw new TypeError("Tipo de leitura da mensagem inválido.");
       const dados = await requisitarJson(
         fetchImpl,
         urlApi(`messages/${encodeURIComponent(texto(id, "ID da mensagem"))}`, {
           format: "full",
+          fields: somenteMetadados ? CAMPOS_MENSAGEM_SEM_CONTEUDO : null,
         }),
         { headers: tokenAcesso(accessToken) },
         "mensagem",
