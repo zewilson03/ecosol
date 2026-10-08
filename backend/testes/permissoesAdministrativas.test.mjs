@@ -456,6 +456,11 @@ try {
           "INSERT INTO faturas (cliente_id, referencia, vencimento, valor_centavos) VALUES (?, ?, ?, ?)",
         )
         .run(id, "2026-09", "2026-10-10", 15000);
+      banco
+        .prepare(
+          "INSERT INTO faturamento_unidades (uc,nome,documento,email,dia_vencimento,cliente_id) VALUES (?,?,?,?,?,?)",
+        )
+        .run("900001", nome, cpf, "uc@teste.local", 5, id);
     }
     const endereco = "/api/admin/clientes/" + id;
     assert.equal((await chamar(endereco, null, "DELETE")).status, 401);
@@ -477,6 +482,20 @@ try {
       null,
     );
     if (nivel === 1) {
+      assert.equal(
+        banco
+          .prepare("SELECT cliente_id FROM faturamento_unidades WHERE uc='900001'")
+          .get().cliente_id,
+        null,
+      );
+      assert.equal(
+        banco
+          .prepare(
+            "SELECT COUNT(*) AS n FROM faturamento_historico WHERE acao='Desvinculação de UC por exclusão do cliente do portal'",
+          )
+          .get().n,
+        1,
+      );
       const faturas = await (
         await chamar("/api/admin/faturas", cookies[1])
       ).json();

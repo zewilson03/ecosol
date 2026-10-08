@@ -1,5 +1,8 @@
-import { FormEvent, useState } from "react";
-import { Link } from "react-router-dom";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { sugerirVencimentoEcosol } from "./vencimentoEcosol";
+import { unidadeDaFatura } from "./vinculoAutomaticoFatura";
+import { pendenciasParaCalculo, situacaoParaEmissao } from "./prontidaoFatura";
 import {
   consultarServidor,
   formatarDinheiro,
@@ -42,6 +45,7 @@ type Documento = {
   versao: number;
   dados: Record<string, string>;
   extracao: {
+    dados?: Record<string, string>;
     avisos: string[];
     evidencias: Record<string, string>;
     paginas?: number;
@@ -73,6 +77,19 @@ type Recebimento = {
 };
 const base = "/api/admin/faturamento/documentos";
 const aprovada = "Aprovada — aguardando emissão";
+const normalizarBuscaCliente = (valor: string) =>
+  valor
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("pt-BR")
+    .trim();
+const secaoDaPendencia = (pendencia: string) => {
+  if (/cliente|UC/.test(pendencia)) return "cadastro";
+  if (/competência|energia injetada|total Equatorial/.test(pendencia))
+    return "equatorial";
+  if (/vencimento/.test(pendencia)) return "datas";
+  return "ecosol";
+};
 
 function DemonstrativoCalculo({
   memoria,
@@ -83,6 +100,7 @@ function DemonstrativoCalculo({
 }) {
   const entrada = memoria.entradas;
   const decimalBr = (valor: string) => valor.replace(".", ",");
+  const semInjecao = memoria.regra === "ecosol-v1-sem-injecao";
   return (
     <div className="faturamento-demonstrativo">
       <h3>
@@ -90,39 +108,51 @@ function DemonstrativoCalculo({
           ? "Prévia do cálculo — não salva"
           : "Demonstrativo interno — sem validade para pagamento"}
       </h3>
+      {semInjecao && (
+        <p>
+          Sem injeção SCEE: não há cobrança de energia Ecosol, tarifa, desconto
+          ou ajuste GDII. O total é somente o valor Equatorial.
+        </p>
+      )}
       <dl>
         <div>
           <dt>Energia injetada</dt>
           <dd>{decimalBr(entrada.injecao)} kWh</dd>
         </div>
+        {!semInjecao && (
+          <>
+            <div>
+              <dt>Unitário com tributos</dt>
+              <dd>R$ {decimalBr(entrada.unitario)}/kWh</dd>
+            </div>
+            <div>
+              <dt>+ Bandeira</dt>
+              <dd>R$ {decimalBr(entrada.bandeira)}/kWh</dd>
+            </div>
+            <div>
+              <dt>= Tarifa completa</dt>
+              <dd>R$ {decimalBr(memoria.tarifa_completa)}/kWh</dd>
+            </div>
+            <div>
+              <dt>Desconto da UC</dt>
+              <dd>{decimalBr(entrada.desconto)}%</dd>
+            </div>
+          </>
+        )}
         <div>
-          <dt>Unitário com tributos</dt>
-          <dd>R$ {decimalBr(entrada.unitario)}/kWh</dd>
-        </div>
-        <div>
-          <dt>+ Bandeira</dt>
-          <dd>R$ {decimalBr(entrada.bandeira)}/kWh</dd>
-        </div>
-        <div>
-          <dt>= Tarifa completa</dt>
-          <dd>R$ {decimalBr(memoria.tarifa_completa)}/kWh</dd>
-        </div>
-        <div>
-          <dt>Desconto da UC</dt>
-          <dd>{decimalBr(entrada.desconto)}%</dd>
-        </div>
-        <div>
-          <dt>Consumo com desconto</dt>
+          <dt>{semInjecao ? "Energia Ecosol" : "Consumo com desconto"}</dt>
           <dd>{formatarDinheiro(memoria.consumo_centavos)}</dd>
         </div>
         <div>
           <dt>+ Total Equatorial</dt>
           <dd>{formatarDinheiro(memoria.equatorial_centavos)}</dd>
         </div>
-        <div>
-          <dt>− Ajuste GDII</dt>
-          <dd>{formatarDinheiro(memoria.ajuste_centavos)}</dd>
-        </div>
+        {!semInjecao && (
+          <div>
+            <dt>− Ajuste GDII</dt>
+            <dd>{formatarDinheiro(memoria.ajuste_centavos)}</dd>
+          </div>
+        )}
         <div className="faturamento-total">
           <dt>Valor Ecosol</dt>
           <dd>{formatarDinheiro(memoria.total_centavos)}</dd>
@@ -131,23 +161,28 @@ function DemonstrativoCalculo({
       <p>
         {entrada.modalidade} · Vencimento Ecosol:{" "}
         {memoria.vencimento_ecosol.split("-").reverse().join("/")} · Fonte da
-        tarifa: fatura #{memoria.fonte.documento_id}
+        tarifa:{" "}
+        {semInjecao ? "não aplicável" : `fatura #${memoria.fonte.documento_id}`}
       </p>
       <small>
-        Cálculo: energia injetada × tarifa completa × (1 − desconto/100),
-        arredondado a centavos; depois soma o total Equatorial e subtrai o
-        ajuste GDII.
+        {semInjecao
+          ? "Cálculo: 0 kWh injetado; total Ecosol igual ao total Equatorial, sem desconto ou ajuste."
+          : "Cálculo: energia injetada × tarifa completa × (1 − desconto/100), arredondado a centavos; depois soma o total Equatorial e subtrai o ajuste GDII."}
       </small>
     </div>
   );
 }
 
 export default function PreparacaoFaturas() {
+  const navegar = useNavigate();
   const consulta = usarConsulta<Documento[]>(base);
   const recebimentos = usarConsulta<Recebimento[]>(
     "/api/admin/faturamento/recebimentos",
   );
   const unidades = usarConsulta<Unidade[]>("/api/admin/faturamento/unidades");
+  const clientesPortal = usarConsulta<{ id: number; name: string }[]>(
+    "/api/admin/faturamento/clientes",
+  );
   const { nivel } = usarAdministrador();
   const [exportacaoAberta, setExportacaoAberta] = useState(false);
   const [evidenciasAbertas, setEvidenciasAbertas] = useState(false);
@@ -165,12 +200,66 @@ export default function PreparacaoFaturas() {
   const [mensagem, setMensagem] = useState("");
   const [busca, setBusca] = useState("");
   const [filtro, setFiltro] = useState("");
+  const [renomeando, setRenomeando] = useState<{
+    documentoId: number;
+    versao: number;
+    nomeAnterior: string;
+    origem: "lista" | "detalhe";
+    recebimentoId?: number;
+  } | null>(null);
+  const [nomeEditado, setNomeEditado] = useState("");
+  const [buscaCliente, setBuscaCliente] = useState("");
+  const [sugestoesAbertas, setSugestoesAbertas] = useState(false);
+  const [sugestaoAtiva, setSugestaoAtiva] = useState(0);
+  const cancelarRenomeacao = useRef(false);
+  const salvandoRenomeacao = useRef(false);
+
+  useEffect(() => {
+    if (
+      !selecionado ||
+      selecionado.memoria ||
+      selecionado.status === aprovada ||
+      alterado ||
+      dados.unidade_id ||
+      !unidades.dados
+    )
+      return;
+    const encontrada = unidadeDaFatura(
+      dados,
+      selecionado.extracao.dados?.uc,
+      selecionado.nome,
+      unidades.dados,
+    );
+    if (!encontrada) return;
+    setDados((anterior) => ({
+      ...anterior,
+      uc: encontrada.uc,
+      unidade_id: String(encontrada.id),
+      cliente_id: encontrada.cliente_id ? String(encontrada.cliente_id) : "",
+      vencimento_ecosol:
+        anterior.vencimento_ecosol ||
+        (encontrada.dia_vencimento >= 1 && encontrada.dia_vencimento <= 31
+          ? sugerirVencimentoEcosol(encontrada.dia_vencimento)
+          : ""),
+    }));
+    setBuscaCliente(encontrada.cliente_nome ?? encontrada.nome);
+    setAlterado(true);
+    setConferido(false);
+  }, [selecionado, unidades.dados, dados, alterado]);
 
   function mostrar(d: Documento) {
     if (selecionado?.id !== d.id) setEvidenciasAbertas(false);
     setSelecionado(d);
     setPrevia(null);
     setDados(d.dados);
+    const unidadeSalva = unidades.dados?.find(
+      (item) => item.id === Number(d.dados.unidade_id),
+    );
+    setBuscaCliente(
+      unidadeSalva?.cliente_nome ?? d.memoria?.unidade.cliente_nome ?? "",
+    );
+    setSugestoesAbertas(false);
+    setSugestaoAtiva(0);
     setAlterado(false);
     setConferido(false);
   }
@@ -180,6 +269,142 @@ export default function PreparacaoFaturas() {
     setMensagem("");
     try {
       mostrar(await consultarServidor<Documento>(`${base}/${numero}`));
+    } catch (e) {
+      setErro((e as Error).message);
+    } finally {
+      setOcupado(false);
+    }
+  }
+  function iniciarRenomeacao(
+    d: Documento,
+    origem: "lista" | "detalhe",
+    recebimentoId?: number,
+  ) {
+    if (ocupado || renomeando || nivel < 2 || d.status === aprovada) return;
+    cancelarRenomeacao.current = false;
+    setRenomeando({
+      documentoId: d.id,
+      versao: d.versao,
+      nomeAnterior: d.nome,
+      origem,
+      recebimentoId,
+    });
+    setNomeEditado(d.nome.replace(/\.pdf$/i, ""));
+    setErro("");
+    setMensagem("");
+  }
+  async function salvarNomeEditado() {
+    if (cancelarRenomeacao.current || !renomeando || salvandoRenomeacao.current)
+      return;
+    const alvo = renomeando;
+    const parteEditada = nomeEditado.trim();
+    if (!parteEditada) {
+      setErro("Informe um nome para o PDF.");
+      return;
+    }
+    const novoNome = /\.pdf$/i.test(parteEditada)
+      ? parteEditada
+      : `${parteEditada}.pdf`;
+    if (novoNome === alvo.nomeAnterior) {
+      setRenomeando(null);
+      return;
+    }
+    salvandoRenomeacao.current = true;
+    setOcupado(true);
+    setErro("");
+    setMensagem("");
+    try {
+      const atualizado = await consultarServidor<Documento>(
+        `${base}/${alvo.documentoId}/renomear`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ versao: alvo.versao, nome: novoNome }),
+        },
+      );
+      setSelecionado((atual) =>
+        atual?.id === atualizado.id
+          ? {
+              ...atual,
+              nome: atualizado.nome,
+              versao: atualizado.versao,
+              historico: atualizado.historico,
+            }
+          : atual,
+      );
+      if (selecionado?.id === atualizado.id) {
+        setPrevia(null);
+        setConferido(false);
+      }
+      setRenomeando(null);
+      consulta.atualizar();
+      recebimentos.atualizar();
+      setMensagem(`Arquivo renomeado para ${atualizado.nome}.`);
+    } catch (e) {
+      setErro((e as Error).message);
+    } finally {
+      salvandoRenomeacao.current = false;
+      setOcupado(false);
+    }
+  }
+  function editorNome() {
+    return (
+      <span className="faturamento-renomear">
+        <input
+          autoFocus
+          aria-label="Novo nome do PDF"
+          value={nomeEditado}
+          maxLength={196}
+          onChange={(e) => setNomeEditado(e.target.value)}
+          onFocus={(e) => e.currentTarget.select()}
+          onBlur={() => {
+            if (cancelarRenomeacao.current) {
+              cancelarRenomeacao.current = false;
+              return;
+            }
+            void salvarNomeEditado();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              e.currentTarget.blur();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              cancelarRenomeacao.current = true;
+              setRenomeando(null);
+            }
+          }}
+        />
+        <span>.pdf</span>
+      </span>
+    );
+  }
+  async function excluirSelecionado() {
+    if (!selecionado || selecionado.status !== "Pendente de revisão") return;
+    const confirmacao = window.prompt(
+      `Excluir definitivamente ${selecionado.nome} do Ecosol? O PDF e os dados extraídos serão removidos, mas o e-mail e o anexo no Gmail não serão apagados. Digite EXCLUIR para confirmar:`,
+    );
+    if (confirmacao !== "EXCLUIR") return;
+    setOcupado(true);
+    setErro("");
+    setMensagem("");
+    try {
+      await consultarServidor(`${base}/${selecionado.id}/excluir`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          versao: selecionado.versao,
+          confirmacao,
+        }),
+      });
+      setSelecionado(null);
+      setEvidenciasAbertas(false);
+      setPrevia(null);
+      setMensagem(
+        "PDF excluído do Ecosol. O e-mail no Gmail permanece intacto.",
+      );
+      consulta.atualizar();
+      recebimentos.atualizar();
     } catch (e) {
       setErro((e as Error).message);
     } finally {
@@ -344,6 +569,81 @@ export default function PreparacaoFaturas() {
     setAlterado(true);
     setConferido(false);
   }
+  function digitarCliente(valor: string) {
+    setBuscaCliente(valor);
+    setSugestoesAbertas(Boolean(valor.trim()));
+    setSugestaoAtiva(0);
+    setDados((anterior) => ({
+      ...anterior,
+      unidade_id: "",
+      cliente_id: "",
+      uc_divergente_confirmada: "",
+    }));
+    setPrevia(null);
+    setAlterado(true);
+    setConferido(false);
+  }
+  function escolherCliente(unidadeEscolhida: Unidade) {
+    if (!unidadeEscolhida.cliente_id || !unidadeEscolhida.cliente_nome) return;
+    const ucDoPdf = String(selecionado?.extracao.dados?.uc ?? "").replace(
+      /\D/g,
+      "",
+    );
+    if (
+      ucDoPdf &&
+      ucDoPdf !== unidadeEscolhida.uc &&
+      !window.confirm(
+        `A UC ${unidadeEscolhida.uc} do cliente escolhido difere da UC ${ucDoPdf} lida no PDF. Confirme no PDF antes de vincular esta fatura. Deseja continuar?`,
+      )
+    )
+      return;
+    setBuscaCliente(unidadeEscolhida.cliente_nome);
+    setSugestoesAbertas(false);
+    setDados((anterior) => ({
+      ...anterior,
+      unidade_id: String(unidadeEscolhida.id),
+      cliente_id: String(unidadeEscolhida.cliente_id),
+      uc: unidadeEscolhida.uc,
+      uc_divergente_confirmada:
+        ucDoPdf && ucDoPdf !== unidadeEscolhida.uc ? "sim" : "",
+      vencimento_ecosol: sugerirVencimentoEcosol(
+        unidadeEscolhida.dia_vencimento,
+      ),
+    }));
+    setPrevia(null);
+    setAlterado(true);
+    setConferido(false);
+  }
+  function abrirCadastroComNome() {
+    if (
+      alterado &&
+      !window.confirm(
+        "Há alterações não salvas nesta fatura. Deseja ir ao cadastro mesmo assim?",
+      )
+    )
+      return;
+    navegar("/admin/clientes", {
+      state: {
+        nomeInicialCliente: buscaCliente.trim().slice(0, 120),
+        ucInicial: dados.uc || selecionado?.extracao.dados?.uc || "",
+      },
+    });
+  }
+  function abrirVinculoCliente(clienteId: number) {
+    if (
+      alterado &&
+      !window.confirm(
+        "Há alterações não salvas nesta fatura. Deseja ir ao cadastro mesmo assim?",
+      )
+    )
+      return;
+    navegar("/admin/clientes", {
+      state: {
+        clienteParaVincular: clienteId,
+        ucInicial: dados.uc || selecionado?.extracao.dados?.uc || "",
+      },
+    });
+  }
   async function gerarPrevia() {
     if (!selecionado) return;
     setOcupado(true);
@@ -393,8 +693,37 @@ export default function PreparacaoFaturas() {
   const unidade =
     selecionado?.memoria && !alterado
       ? selecionado.memoria.unidade
-      : unidades.dados?.find((u) => u.uc === uc);
+      : unidades.dados?.find(
+          (u) =>
+            u.id === Number(dados.unidade_id) &&
+            u.uc === uc &&
+            (u.cliente_id === Number(dados.cliente_id) ||
+              (u.cliente_provisorio_id != null && !dados.cliente_id)),
+        );
+  const termoCliente = normalizarBuscaCliente(buscaCliente);
+  const sugestoesCliente = termoCliente
+    ? (clientesPortal.dados ?? [])
+        .filter((item) =>
+          normalizarBuscaCliente(item.name).includes(termoCliente),
+        )
+        .sort((a, b) => {
+          const prefixoA = normalizarBuscaCliente(a.name).startsWith(
+            termoCliente,
+          );
+          const prefixoB = normalizarBuscaCliente(b.name).startsWith(
+            termoCliente,
+          );
+          return (
+            Number(prefixoB) - Number(prefixoA) ||
+            a.name.localeCompare(b.name, "pt-BR")
+          );
+        })
+        .slice(0, 8)
+    : [];
   const modalidadeInformada = (dados.modalidade ?? "").trim();
+  const injecaoInformada = String(dados.injecao ?? "").trim();
+  const semInjecao =
+    injecaoInformada !== "" && Number(injecaoInformada.replace(",", ".")) === 0;
   const descontoVigente = unidade?.descontos
     ?.filter((d) => d.inicio <= (dados.competencia ?? ""))
     .sort((a, b) => b.inicio.localeCompare(a.inicio))[0];
@@ -402,15 +731,22 @@ export default function PreparacaoFaturas() {
     selecionado?.memoria && !alterado
       ? selecionado.memoria.contrato
       : modalidadeInformada
-        ? descontoVigente
+        ? semInjecao
           ? {
               modalidade: modalidadeInformada,
-              desconto: descontoVigente.desconto,
+              desconto: "0",
               inicio: dados.competencia ?? "",
-              origem: "modalidade_na_fatura_desconto_na_uc",
-              desconto_inicio: descontoVigente.inicio,
+              origem: "sem_injecao_sem_desconto",
             }
-          : null
+          : descontoVigente
+            ? {
+                modalidade: modalidadeInformada,
+                desconto: descontoVigente.desconto,
+                inicio: dados.competencia ?? "",
+                origem: "modalidade_na_fatura_desconto_na_uc",
+                desconto_inicio: descontoVigente.inicio,
+              }
+            : null
         : null;
   const referencias =
     consulta.dados?.filter(
@@ -422,28 +758,14 @@ export default function PreparacaoFaturas() {
     ) ?? [];
   const memoria = !alterado ? selecionado?.memoria : null;
   const bloqueado = ocupado || nivel < 2 || selecionado?.status === aprovada;
-  const faltantes = [
-    ["UC", dados.uc],
-    ["competência", dados.competencia],
-    ["energia injetada", dados.injecao],
-    ["modalidade", dados.modalidade],
-    ["origem da tarifa", dados.origem_tarifa],
-    ["total Equatorial", dados.total_equatorial],
-    ["ajuste GDII (informe zero para GDI)", dados.ajuste_gdii],
-    ["vencimento Equatorial", dados.vencimento_equatorial],
-    ["vencimento Ecosol", dados.vencimento_ecosol],
-    ...(dados.origem_tarifa === "referencia"
-      ? [["GDI de referência", dados.referencia_id]]
-      : [
-          ["unitário com tributos", dados.unitario],
-          ["bandeira (informe zero se não houver)", dados.bandeira],
-        ]),
-  ]
-    .filter(([, valor]) => !String(valor ?? "").trim())
-    .map(([nome]) => nome);
-  if (dados.uc && !unidade) faltantes.push("cadastro da UC");
-  if (unidade && dados.competencia && !descontoVigente)
-    faltantes.push("desconto vigente da UC");
+  const faltantes = selecionado
+    ? pendenciasParaCalculo(
+        selecionado,
+        unidades.dados ?? [],
+        consulta.dados ?? [],
+        dados,
+      )
+    : [];
   const lista = (recebimentos.dados ?? []).filter(
     (r) =>
       (!filtro || r.resultado === filtro) &&
@@ -451,19 +773,9 @@ export default function PreparacaoFaturas() {
         .toLowerCase()
         .includes(busca.toLowerCase()),
   );
-  const preenchidos = [
-    dados.uc,
-    dados.competencia,
-    dados.injecao,
-    dados.total_equatorial,
-    dados.vencimento_equatorial,
-    dados.vencimento_ecosol,
-    dados.origem_tarifa === "referencia"
-      ? dados.referencia_id
-      : dados.unitario && dados.bandeira !== undefined && dados.bandeira !== "",
-    unidade,
-    contrato,
-  ].filter(Boolean).length;
+  const documentosPorId = new Map(
+    (consulta.dados ?? []).map((documento) => [documento.id, documento]),
+  );
   const etapa =
     selecionado?.status === aprovada ? 4 : memoria ? 3 : selecionado ? 2 : 1;
   const totalRecebidas =
@@ -476,6 +788,19 @@ export default function PreparacaoFaturas() {
     recebimentos.dados?.filter((r) => r.resultado === "Duplicada").length ?? 0;
   const totalAprovadas =
     consulta.dados?.filter((d) => d.status === aprovada).length ?? 0;
+  const pendenciasLeitura =
+    selecionado?.extracao.qualidade?.pendencias.filter(
+      (pendencia) =>
+        !semInjecao ||
+        (pendencia !== "Preço unitário" && pendencia !== "Bandeira"),
+    ) ?? [];
+  const avisosAplicaveis =
+    selecionado?.extracao.avisos.filter(
+      (aviso) =>
+        !semInjecao ||
+        (!aviso.startsWith("Confira todos os campos com o PDF") &&
+          !aviso.startsWith("Bandeira não identificada")),
+    ) ?? [];
 
   return (
     <>
@@ -513,7 +838,7 @@ export default function PreparacaoFaturas() {
           <strong>{recebimentos.dados?.length ?? 0}</strong> ocorrências
         </span>
         <span className="correto">
-          <strong>{totalRecebidas}</strong> prontas
+          <strong>{totalRecebidas}</strong> recebidas
         </span>
         <span className={totalAtencao ? "atencao" : ""}>
           <strong>{totalAtencao}</strong> com atenção
@@ -616,73 +941,131 @@ export default function PreparacaoFaturas() {
               onChange={(e) => setFiltro(e.target.value)}
             >
               <option value="">Todos os estados</option>
-              <option value="Recebida">Prontas para revisar</option>
+              <option value="Recebida">Faturas recebidas</option>
               <option value="Requer atenção">Requerem atenção</option>
               <option value="Erro">Com erro</option>
               <option value="Duplicada">Duplicadas</option>
             </select>
           </div>
           <div className="faturamento-lista" role="list">
-            {lista.map((r) => (
-              <article
-                className={`faturamento-item ${r.resultado === "Recebida" || r.resultado === "Duplicada" ? "correto" : r.resultado === "Erro" ? "erro" : "atencao"} ${selecionado?.id === r.documento_id ? "selecionado" : ""}`}
-                key={r.id}
-                role="listitem"
-              >
-                <span className="faturamento-estado-icone" aria-hidden="true">
-                  {r.resultado === "Recebida"
-                    ? "✓"
-                    : r.resultado === "Duplicada"
-                      ? "↺"
-                      : r.resultado === "Erro"
-                        ? "!"
-                        : "i"}
-                </span>
-                <div className="faturamento-item-arquivo">
-                  <strong title={r.nome}>{r.nome}</strong>
-                  <span>
-                    {r.lote} ·{" "}
-                    {r.origem === "gmail"
-                      ? "Gmail"
-                      : r.origem === "manual"
-                        ? "Envio manual"
-                        : "Origem anterior"}
-                  </span>
-                </div>
-                <span
-                  className={`faturamento-situacao ${r.resultado === "Recebida" || r.resultado === "Duplicada" ? "correto" : r.resultado === "Erro" ? "erro" : "atencao"}`}
+            {lista.map((r) => {
+              const documentoDaFila = r.documento_id
+                ? documentosPorId.get(r.documento_id)
+                : null;
+              const situacao =
+                r.resultado === "Recebida" &&
+                documentoDaFila &&
+                consulta.dados &&
+                unidades.dados
+                  ? situacaoParaEmissao(
+                      documentoDaFila,
+                      unidades.dados,
+                      consulta.dados,
+                    )
+                  : null;
+              const cor =
+                situacao?.cor ??
+                (r.resultado === "Erro"
+                  ? "incompleta"
+                  : r.resultado === "Duplicada"
+                    ? "duplicada"
+                  : r.resultado === "Requer atenção"
+                    ? "atencao"
+                    : "");
+              return (
+                <article
+                  className={`faturamento-item ${cor} ${selecionado?.id === r.documento_id ? "selecionado" : ""}`}
+                  key={r.id}
+                  role="listitem"
                 >
-                  {r.resultado === "Recebida" ? "Pronta" : r.resultado}
-                </span>
-                <div className="faturamento-item-estado">
-                  <span>{r.motivo}</span>
-                  <small>
-                    UC {r.dados?.uc || "não identificada"} ·{" "}
-                    {r.dados?.competencia || "competência pendente"}
-                  </small>
-                </div>
-                {r.documento_id ? (
-                  <button
-                    type="button"
-                    className="faturamento-abrir"
-                    disabled={ocupado}
-                    onClick={() => abrir(r.documento_id!)}
-                    aria-label={`Revisar ${r.nome}`}
-                  >
-                    {selecionado?.id === r.documento_id
-                      ? "Em revisão"
-                      : r.codigo === "duplicada"
-                        ? "Abrir original"
-                        : "Revisar"}
-                    <span aria-hidden="true">→</span>
-                  </button>
-                ) : (
-                  <span className="faturamento-sem-acao">
-                    Envie outro PDF para continuar
+                  <span className="faturamento-estado-icone" aria-hidden="true">
+                    {situacao?.cor === "incompleta"
+                      ? "!"
+                      : r.resultado === "Recebida"
+                        ? "○"
+                      : r.resultado === "Duplicada"
+                        ? "↺"
+                        : r.resultado === "Erro"
+                          ? "!"
+                          : "i"}
                   </span>
-                )}
-              </article>
-            ))}
+                  <div className="faturamento-item-arquivo">
+                    {renomeando?.origem === "lista" &&
+                    renomeando.recebimentoId === r.id ? (
+                      editorNome()
+                    ) : documentoDaFila &&
+                      nivel >= 2 &&
+                      documentoDaFila.status !== aprovada ? (
+                      <button
+                        type="button"
+                        className="faturamento-nome-botao"
+                        title="Clique para renomear"
+                        aria-label={`Renomear ${r.nome}`}
+                        disabled={ocupado}
+                        onClick={() =>
+                          iniciarRenomeacao(documentoDaFila, "lista", r.id)
+                        }
+                      >
+                        {r.nome}
+                      </button>
+                    ) : (
+                      <strong title={r.nome}>{r.nome}</strong>
+                    )}
+                    <span>
+                      {r.lote} ·{" "}
+                      {r.origem === "gmail"
+                        ? "Gmail"
+                        : r.origem === "manual"
+                          ? "Envio manual"
+                          : "Origem anterior"}
+                    </span>
+                  </div>
+                  <span
+                    className={`faturamento-situacao ${cor}`}
+                  >
+                    {situacao?.texto ??
+                      (r.resultado === "Recebida"
+                        ? "Verificando dados"
+                        : r.resultado)}
+                  </span>
+                  <div className="faturamento-item-estado">
+                    <span>
+                      {situacao?.pendencias.length
+                        ? `Falta: ${situacao.pendencias.join(", ")}.`
+                        : situacao
+                          ? situacao.texto === "Aguardando emissão"
+                            ? "Aprovada internamente; boleto ainda não emitido."
+                            : "Confira os dados antes de emitir o boleto."
+                          : r.motivo}
+                    </span>
+                    <small>
+                      UC {r.dados?.uc || "não identificada"} ·{" "}
+                      {r.dados?.competencia || "competência pendente"}
+                    </small>
+                  </div>
+                  {r.documento_id ? (
+                    <button
+                      type="button"
+                      className="faturamento-abrir"
+                      disabled={ocupado}
+                      onClick={() => abrir(r.documento_id!)}
+                      aria-label={`Revisar ${r.nome}`}
+                    >
+                      {selecionado?.id === r.documento_id
+                        ? "Em revisão"
+                        : r.codigo === "duplicada"
+                          ? "Abrir original"
+                          : "Revisar"}
+                      <span aria-hidden="true">→</span>
+                    </button>
+                  ) : (
+                    <span className="faturamento-sem-acao">
+                      Envie outro PDF para continuar
+                    </span>
+                  )}
+                </article>
+              );
+            })}
             {!lista.length && (
               <div className="faturamento-fila-vazia">
                 <span aria-hidden="true">☀</span>
@@ -709,11 +1092,41 @@ export default function PreparacaoFaturas() {
                   <span className="admin-sobretitulo">
                     Conferência #{selecionado.id}
                   </span>
-                  <h2>{selecionado.nome}</h2>
+                  <h2>
+                    {renomeando?.origem === "detalhe" &&
+                    renomeando.documentoId === selecionado.id ? (
+                      editorNome()
+                    ) : nivel >= 2 && selecionado.status !== aprovada ? (
+                      <button
+                        type="button"
+                        className="faturamento-nome-botao"
+                        title="Clique para renomear"
+                        aria-label={`Renomear ${selecionado.nome}`}
+                        disabled={ocupado}
+                        onClick={() =>
+                          iniciarRenomeacao(selecionado, "detalhe")
+                        }
+                      >
+                        {selecionado.nome}
+                      </button>
+                    ) : (
+                      selecionado.nome
+                    )}
+                  </h2>
                   <p>Lote: {selecionado.lote}</p>
                 </div>
                 <div className="faturamento-revisao-opcoes">
-                  <span className="admin-status">{selecionado.status}</span>
+                  <span
+                    className={`admin-status ${selecionado.status === aprovada || selecionado.status === "Calculada" || !faltantes.length ? "aguardando" : "incompleta"}`}
+                  >
+                    {selecionado.status === aprovada
+                      ? "Aguardando emissão"
+                      : selecionado.status === "Calculada"
+                        ? "Aguardando aprovação"
+                        : faltantes.length
+                          ? "Dados pendentes"
+                          : "Pronta para avaliação"}
+                  </span>
                   <a
                     className="admin-botao secundario"
                     href={`${base}/${selecionado.id}/pdf`}
@@ -722,6 +1135,18 @@ export default function PreparacaoFaturas() {
                   >
                     Abrir PDF
                   </a>
+                  {nivel >= 3 &&
+                    selecionado.status === "Pendente de revisão" &&
+                    !selecionado.memoria && (
+                      <button
+                        type="button"
+                        className="admin-botao perigo"
+                        disabled={ocupado}
+                        onClick={excluirSelecionado}
+                      >
+                        Excluir PDF
+                      </button>
+                    )}
                   <button
                     className="faturamento-fechar"
                     disabled={ocupado}
@@ -735,44 +1160,245 @@ export default function PreparacaoFaturas() {
                   </button>
                 </div>
               </header>
-              <div className="faturamento-qualidade">
-                <div>
-                  <strong>{preenchidos}/9 itens prontos</strong>
-                  <span>Inclui cadastro, contrato, tarifa e vencimentos</span>
-                </div>
-                <progress value={preenchidos} max="9" />
-                {selecionado.extracao.qualidade && (
-                  <small>
-                    Leitura do PDF:{" "}
-                    {selecionado.extracao.qualidade.campos_identificados}/
-                    {selecionado.extracao.qualidade.campos_esperados} campos
-                    reconhecidos
-                    {selecionado.extracao.qualidade.pendencias.length
-                      ? ` · confira ${selecionado.extracao.qualidade.pendencias.join(", ")}`
-                      : " · leitura completa"}
-                  </small>
-                )}
+              <div
+                className={`faturamento-resumo ${faltantes.length ? "pendente" : "pronto"}`}
+                role="status"
+              >
+                <strong>
+                  {selecionado.status === aprovada
+                    ? "Aprovada para emissão futura"
+                    : selecionado.status === "Calculada"
+                      ? "Cálculo concluído; aguarda aprovação"
+                      : faltantes.length
+                        ? `${faltantes.length} ${faltantes.length === 1 ? "pendência" : "pendências"} para avançar`
+                        : "Dados completos para avaliação"}
+                </strong>
+                {faltantes.length > 0 &&
+                  selecionado.status !== aprovada &&
+                  selecionado.status !== "Calculada" && (
+                    <ul aria-label="Dados que faltam">
+                      {faltantes.map((pendencia) => (
+                        <li key={pendencia}>
+                          <a href={`#conferencia-${secaoDaPendencia(pendencia)}`}>
+                            {pendencia} <span aria-hidden="true">↗</span>
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                {selecionado.status !== aprovada &&
+                  selecionado.status !== "Calculada" &&
+                  !faltantes.length && (
+                    <span>Confira os campos com o PDF antes de calcular.</span>
+                  )}
               </div>
-              {selecionado.extracao.avisos.map((aviso, i) => (
-                <p className="admin-aviso" key={i}>
-                  {aviso}
-                </p>
-              ))}
+              {(selecionado.extracao.qualidade ||
+                pendenciasLeitura.length > 0 ||
+                avisosAplicaveis.length > 0) && (
+                <details className="faturamento-leitura-detalhes">
+                  <summary>
+                    Leitura do PDF
+                    {selecionado.extracao.qualidade
+                      ? ` · ${selecionado.extracao.qualidade.campos_identificados}/${selecionado.extracao.qualidade.campos_esperados} campos reconhecidos`
+                      : ""}
+                    {pendenciasLeitura.length || avisosAplicaveis.length
+                      ? ` · ${pendenciasLeitura.length + avisosAplicaveis.length} observações`
+                      : ""}
+                  </summary>
+                  {pendenciasLeitura.length > 0 && (
+                    <p>Confira no PDF: {pendenciasLeitura.join(", ")}.</p>
+                  )}
+                  {avisosAplicaveis.map((aviso, i) => (
+                    <p key={i}>{aviso}</p>
+                  ))}
+                </details>
+              )}
               <div className="faturamento-conferencia">
-                <section className="faturamento-grupo">
+                <section id="conferencia-cadastro" className="faturamento-grupo faturamento-grupo--cadastro">
                   <div className="faturamento-grupo-titulo">
                     <span>01</span>
                     <div>
-                      <h3>Identificação e consumo</h3>
-                      <p>Compare estes dados diretamente com o PDF.</p>
+                      <small>Cadastro da UC</small>
+                      <h3>Cliente e unidade consumidora</h3>
+                      <p>Quem está vinculado a esta fatura.</p>
+                    </div>
+                  </div>
+                  <fieldset className="admin-campos faturamento-campos-unicos" disabled={bloqueado}>
+                    <div
+                      className={`faturamento-cliente-busca ${faltantes.includes("cliente e UC") || faltantes.includes("cadastro definitivo do cliente") ? "faturamento-campo-pendente" : ""}`}
+                      onBlur={(e) => {
+                        if (
+                          !(e.relatedTarget instanceof Node) ||
+                          !e.currentTarget.contains(e.relatedTarget)
+                        )
+                          setSugestoesAbertas(false);
+                      }}
+                    >
+                      <label htmlFor="faturamento-cliente">
+                        Cliente responsável pela fatura
+                      </label>
+                      <input
+                        id="faturamento-cliente"
+                        role="combobox"
+                        aria-autocomplete="list"
+                        aria-expanded={sugestoesAbertas}
+                        aria-controls="faturamento-sugestoes-clientes"
+                        autoComplete="off"
+                        placeholder="Digite o nome do cliente"
+                        value={buscaCliente || unidade?.cliente_nome || ""}
+                        maxLength={160}
+                        onFocus={() =>
+                          setSugestoesAbertas(Boolean(buscaCliente.trim()))
+                        }
+                        onChange={(e) => digitarCliente(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") {
+                            setSugestoesAbertas(false);
+                          } else if (
+                            e.key === "ArrowDown" ||
+                            e.key === "ArrowUp"
+                          ) {
+                            e.preventDefault();
+                            setSugestoesAbertas(true);
+                            setSugestaoAtiva((atual) =>
+                              sugestoesCliente.length
+                                ? (atual +
+                                    (e.key === "ArrowDown" ? 1 : -1) +
+                                    sugestoesCliente.length) %
+                                  sugestoesCliente.length
+                                : 0,
+                            );
+                          } else if (e.key === "Enter" && sugestoesAbertas) {
+                            e.preventDefault();
+                            if (sugestoesCliente.length) {
+                              const cliente =
+                                sugestoesCliente[sugestaoAtiva] ??
+                                sugestoesCliente[0];
+                              const vinculadas = (unidades.dados ?? []).filter(
+                                (item) => item.cliente_id === cliente.id,
+                              );
+                              const ucLida = (dados.uc ?? "")
+                                .replace(/\D/g, "")
+                                .replace(/^0+(?=\d)/, "");
+                              const correspondente = vinculadas.find(
+                                (item) => item.uc === ucLida,
+                              );
+                              if (correspondente)
+                                escolherCliente(correspondente);
+                              else if (vinculadas.length === 1 && !ucLida)
+                                escolherCliente(vinculadas[0]);
+                              else if (nivel >= 2)
+                                abrirVinculoCliente(cliente.id);
+                            } else if (
+                              !clientesPortal.carregando &&
+                              !clientesPortal.erro &&
+                              nivel >= 2
+                            )
+                              abrirCadastroComNome();
+                          }
+                        }}
+                      />
+                      {sugestoesAbertas && termoCliente && (
+                        <div
+                          className="faturamento-cliente-sugestoes"
+                          id="faturamento-sugestoes-clientes"
+                          role="listbox"
+                          aria-label="Clientes encontrados"
+                        >
+                          {sugestoesCliente.map((cliente, indice) => {
+                            const vinculadas = (unidades.dados ?? []).filter(
+                              (item) => item.cliente_id === cliente.id,
+                            );
+                            return (
+                              <div
+                                key={cliente.id}
+                                className={
+                                  indice === sugestaoAtiva ? "ativa" : ""
+                                }
+                              >
+                                <strong>{cliente.name}</strong>
+                                {vinculadas.map((item) => (
+                                  <button
+                                    type="button"
+                                    role="option"
+                                    aria-selected={unidade?.id === item.id}
+                                    key={item.id}
+                                    onClick={() => escolherCliente(item)}
+                                  >
+                                    UC {item.uc} · dia preferido{" "}
+                                    {item.dia_vencimento}
+                                  </button>
+                                ))}
+                                {nivel >= 2 ? (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      abrirVinculoCliente(cliente.id)
+                                    }
+                                  >
+                                    + Adicionar ou vincular outra UC
+                                  </button>
+                                ) : !vinculadas.length ? (
+                                  <small>
+                                    Solicite à equipe autorizada o vínculo de
+                                    uma UC.
+                                  </small>
+                                ) : null}
+                              </div>
+                            );
+                          })}
+                          {!sugestoesCliente.length &&
+                            !clientesPortal.carregando &&
+                            !clientesPortal.erro &&
+                            (nivel >= 2 ? (
+                              <button
+                                type="button"
+                                onClick={abrirCadastroComNome}
+                              >
+                                + Cadastrar “{buscaCliente.trim()}”
+                              </button>
+                            ) : (
+                              <p>Solicite o cadastro à equipe autorizada.</p>
+                            ))}
+                          {(clientesPortal.carregando ||
+                            unidades.carregando) && <p>Buscando clientes…</p>}
+                          {(clientesPortal.erro || unidades.erro) && (
+                            <p>Não foi possível buscar clientes.</p>
+                          )}
+                        </div>
+                      )}
+                      <small>
+                        UC no PDF:{" "}
+                        {selecionado.extracao.dados?.uc || "não identificada"}
+                        {unidade
+                          ? ` · UC do cadastro: ${unidade.uc}`
+                          : " · selecione o cliente e a UC"}
+                      </small>
+                      {unidade?.cliente_provisorio_id != null && (
+                        <small className="faturamento-pendente-ajuda">
+                          Cadastro provisório, sem acesso ao portal. {" "}
+                          <Link to="/admin/clientes">
+                            Completar cadastro do cliente
+                          </Link>
+                        </small>
+                      )}
+                    </div>
+                  </fieldset>
+                </section>
+                <section id="conferencia-equatorial" className="faturamento-grupo faturamento-grupo--equatorial">
+                  <div className="faturamento-grupo-titulo">
+                    <span>02</span>
+                    <div>
+                      <small>Leitura do PDF</small>
+                      <h3>Energia e valor Equatorial</h3>
+                      <p>Dados apresentados pela distribuidora.</p>
                     </div>
                   </div>
                   <fieldset className="admin-campos" disabled={bloqueado}>
-                    {campo("uc", "Unidade consumidora")}
-                    {campo("competencia", "Competência", "month")}
+                    {campo("competencia", "Mês de referência", "month")}
                     {campo(
                       "injecao",
-                      "Injeção SCEE (kWh)",
+                      "Energia injetada SCEE (kWh)",
                       "text",
                       "Ex.: 1660",
                     )}
@@ -783,24 +1409,30 @@ export default function PreparacaoFaturas() {
                       "Ex.: 302,40",
                     )}
                   </fieldset>
+                  {semInjecao && (
+                    <p className="faturamento-nota-conferencia">
+                      Injeção SCEE 0 kWh: confirme essa ausência e o total no
+                      PDF. Tarifa e desconto não entram no cálculo.
+                    </p>
+                  )}
                 </section>
-                <section className="faturamento-grupo">
+                <section id="conferencia-ecosol" className="faturamento-grupo faturamento-grupo--ecosol">
                   <div className="faturamento-grupo-titulo">
-                    <span>02</span>
+                    <span>03</span>
                     <div>
-                      <h3>Condições e tarifa</h3>
-                      <p>
-                        Informe a modalidade desta fatura. O desconto vem do
-                        histórico da UC conforme a competência; ambos serão
-                        preservados na memória da cobrança, sem criar contrato.
-                      </p>
+                      <small>Regra de cobrança</small>
+                      <h3>Condições Ecosol</h3>
+                      <p>Modalidade e tarifa usada no cálculo.</p>
                     </div>
                   </div>
                   <fieldset className="admin-campos" disabled={bloqueado}>
-                    <label>
+                    <label
+                      className={!dados.modalidade ? "faturamento-campo-pendente" : ""}
+                    >
                       Modalidade desta fatura
                       <select
                         value={dados.modalidade ?? ""}
+                        aria-invalid={!dados.modalidade}
                         onChange={(e) => mudar("modalidade", e.target.value)}
                       >
                         <option value="">Selecione</option>
@@ -810,10 +1442,77 @@ export default function PreparacaoFaturas() {
                     </label>
                     {campo(
                       "ajuste_gdii",
-                      "Ajuste GDII (R$; informe 0 para GDI)",
+                      semInjecao
+                        ? "Ajuste GDII (deve ser 0 sem injeção)"
+                        : "Ajuste GDII (R$; informe 0 para GDI)",
                       "text",
-                      "Ex.: 290,71",
+                      semInjecao ? "0" : "Ex.: 290,71",
                     )}
+                    {!semInjecao && (
+                      <label>
+                        Origem da tarifa
+                        <select
+                          value={dados.origem_tarifa ?? "propria"}
+                          onChange={(e) =>
+                            mudar("origem_tarifa", e.target.value)
+                          }
+                        >
+                          <option value="propria">
+                            Componentes conferidos nesta fatura
+                          </option>
+                          <option value="referencia">
+                            GDI aprovada do mesmo lote
+                          </option>
+                        </select>
+                      </label>
+                    )}
+                    {!semInjecao &&
+                      (dados.origem_tarifa === "referencia" ? (
+                        <label>
+                          Fatura GDI de referência
+                          <select
+                            value={dados.referencia_id ?? ""}
+                            onChange={(e) =>
+                              mudar("referencia_id", e.target.value)
+                            }
+                          >
+                            <option value="">Selecione uma referência</option>
+                            {referencias.map((r) => (
+                              <option key={r.id} value={r.id}>
+                                #{r.id} · UC {r.dados.uc} · R${" "}
+                                {r.memoria?.tarifa_completa}/kWh
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : (
+                        <>
+                          {campo("unitario", "Unitário com tributos (R$/kWh)")}
+                          {campo(
+                            "bandeira",
+                            "Bandeira (R$/kWh; 0 se confirmada ausência)",
+                          )}
+                        </>
+                      ))}
+                  </fieldset>
+                  {unidade && !semInjecao && contrato && (
+                    <p className="faturamento-condicao-resumo">
+                      Desconto da UC: <strong>{contrato.desconto}%</strong>
+                      {contrato.desconto_inicio &&
+                        ` · vigente desde ${contrato.desconto_inicio}`}
+                    </p>
+                  )}
+                </section>
+                <section id="conferencia-datas" className="faturamento-grupo faturamento-grupo--datas">
+                  <div className="faturamento-grupo-titulo">
+                    <span>04</span>
+                    <div>
+                      <small>Calendário de pagamento</small>
+                      <h3>Vencimentos</h3>
+                      <p>Compare a data Equatorial e defina a data Ecosol.</p>
+                    </div>
+                  </div>
+                  <fieldset className="admin-campos" disabled={bloqueado}>
                     {campo(
                       "vencimento_equatorial",
                       "Vencimento Equatorial",
@@ -821,81 +1520,30 @@ export default function PreparacaoFaturas() {
                     )}
                     {campo(
                       "vencimento_ecosol",
-                      "Vencimento Ecosol — confirmar manualmente",
+                      "Vencimento Ecosol (opcional)",
                       "date",
                     )}
-                    <label>
-                      Origem da tarifa
-                      <select
-                        value={dados.origem_tarifa ?? "propria"}
-                        onChange={(e) => mudar("origem_tarifa", e.target.value)}
-                      >
-                        <option value="propria">
-                          Componentes conferidos nesta fatura
-                        </option>
-                        <option value="referencia">
-                          GDI aprovada do mesmo lote
-                        </option>
-                      </select>
-                    </label>
-                    {dados.origem_tarifa === "referencia" ? (
-                      <label>
-                        Fatura GDI de referência
-                        <select
-                          value={dados.referencia_id ?? ""}
-                          onChange={(e) =>
-                            mudar("referencia_id", e.target.value)
-                          }
-                        >
-                          <option value="">Selecione uma referência</option>
-                          {referencias.map((r) => (
-                            <option key={r.id} value={r.id}>
-                              #{r.id} · UC {r.dados.uc} · R${" "}
-                              {r.memoria?.tarifa_completa}/kWh
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    ) : (
-                      <>
-                        {campo("unitario", "Unitário com tributos (R$/kWh)")}
-                        {campo(
-                          "bandeira",
-                          "Bandeira (R$/kWh; 0 se confirmada ausência)",
-                        )}
-                      </>
-                    )}
                   </fieldset>
-                  <div
-                    className={`faturamento-vinculo ${unidade && contrato ? "correto" : "atencao"}`}
-                  >
-                    {unidade ? (
-                      <p>
-                        <strong>{unidade.nome}</strong> · Dia preferido:{" "}
-                        {unidade.dia_vencimento} · Desconto aplicado:{" "}
-                        {contrato
-                          ? `${contrato.desconto}%${contrato.desconto_inicio ? ` desde ${contrato.desconto_inicio}` : ""}`
-                          : "não cadastrado para esta competência"}
-                        .{" "}
-                        {contrato
-                          ? `${contrato.modalidade} · ${contrato.origem === "modalidade_na_fatura_desconto_na_uc" ? "modalidade desta fatura" : `contrato anterior vigente desde ${contrato.inicio}`}.`
-                          : "Informe a modalidade e confira a vigência do desconto na UC."}
-                      </p>
-                    ) : (
-                      <p>
-                        Unidade não identificada.{" "}
-                        <Link to="/admin/clientes">
-                          Cadastre em Clientes → Unidades e contratos.
-                        </Link>
+                  {!dados.vencimento_ecosol &&
+                    dados.vencimento_equatorial && (
+                      <p className="faturamento-ajuda-vencimento">
+                        Sem data Ecosol: será usado o vencimento Equatorial de{" "}
+                        <strong>
+                          {dados.vencimento_equatorial
+                            .split("-")
+                            .reverse()
+                            .join("/")}
+                        </strong>
+                        .
                       </p>
                     )}
-                  </div>
                 </section>
                 {selecionado.status !== aprovada && (
-                  <section className="faturamento-grupo faturamento-previa">
+                  <section className="faturamento-grupo faturamento-grupo--resultado faturamento-previa">
                     <div className="faturamento-grupo-titulo">
-                      <span>03</span>
+                      <span>05</span>
                       <div>
+                        <small>Resultado antes de salvar</small>
                         <h3>Prévia do cálculo</h3>
                         <p>
                           Veja a conta completa antes de salvar. Esta prévia não
@@ -905,7 +1553,8 @@ export default function PreparacaoFaturas() {
                     </div>
                     {faltantes.length > 0 && (
                       <p className="faturamento-previa-pendencias">
-                        Para gerar a prévia, complete: {faltantes.join(", ")}.
+                        Resolva as pendências indicadas no início da conferência
+                        para gerar a prévia.
                       </p>
                     )}
                     <button
@@ -924,7 +1573,7 @@ export default function PreparacaoFaturas() {
                 {!bloqueado && (
                   <section className="faturamento-confirmacao">
                     <div>
-                      <span>04</span>
+                      <span>06</span>
                       <div>
                         <strong>Confirmar dados</strong>
                         <p>

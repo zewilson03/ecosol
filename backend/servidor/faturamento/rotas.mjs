@@ -2,6 +2,7 @@ import express, { Router } from "express";
 import { createHash } from "node:crypto";
 import { obterBanco } from "../bancoDeDados.mjs";
 import { exigirNivel } from "../permissoesDaEquipe.mjs";
+import { apenasDigitos, cpfValidoParaCadastro } from "../validacaoDeCpf.mjs";
 import { receberPdf } from "./receberPdf.mjs";
 import { reanalisarFatura } from "./reanalisar.mjs";
 import { registrarHistorico } from "./registros.mjs";
@@ -31,10 +32,26 @@ function id(valor) {
     falhar("Identificador inválido.");
   return numero;
 }
+function nomePdf(valor) {
+  if (typeof valor !== "string") falhar("Informe o novo nome do PDF.");
+  const nome = valor.trim();
+  if (
+    nome.length < 5 ||
+    nome.length > 200 ||
+    !/\.pdf$/i.test(nome) ||
+    /^[. ]/.test(nome) ||
+    /[<>:"/\\|?*\x00-\x1f\x7f]/.test(nome) ||
+    /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/i.test(nome)
+  )
+    falhar(
+      "Use um nome de arquivo válido, com até 200 caracteres e extensão .pdf.",
+    );
+  return nome;
+}
 function documento(numero) {
   const d = obterBanco()
     .prepare(
-      `SELECT ${colunas} FROM faturamento_documentos WHERE id=? AND classificacao='fatura'`,
+      `SELECT ${colunas} FROM faturamento_documentos WHERE id=? AND classificacao='fatura' AND excluido_em IS NULL`,
     )
     .get(id(numero));
   if (!d) falhar("Fatura não encontrada.", 404);
@@ -98,7 +115,7 @@ function listarUnidades() {
   const banco = obterBanco();
   return banco
     .prepare(
-      "SELECT u.*, s.nome AS usina_nome FROM faturamento_unidades u LEFT JOIN usinas s ON s.id=u.usina_id ORDER BY u.nome, u.uc",
+      "SELECT u.*, s.nome AS usina_nome, COALESCE(c.name,p.nome) AS cliente_nome FROM faturamento_unidades u LEFT JOIN usinas s ON s.id=u.usina_id LEFT JOIN customers c ON c.id=u.cliente_id LEFT JOIN faturamento_clientes_provisorios p ON p.id=u.cliente_provisorio_id ORDER BY u.nome, u.uc",
     )
     .all()
     .map((u) => ({
@@ -117,6 +134,230 @@ function listarUnidades() {
 }
 
 router.get("/unidades", (_req, res) => res.json(listarUnidades()));
+router.get("/clientes-provisorios", (_req, res) =>
+  res.json(
+    obterBanco()
+      .prepare(
+        "SELECT p.id,p.nome,COUNT(u.id) AS unidades FROM faturamento_clientes_provisorios p LEFT JOIN faturamento_unidades u ON u.cliente_provisorio_id=p.id GROUP BY p.id ORDER BY p.nome,p.id",
+      )
+      .all(),
+  ),
+);
+router.get("/clientes", (_req, res) =>
+  res.json(
+    obterBanco()
+      .prepare("SELECT id,name FROM customers ORDER BY name,id")
+      .all(),
+  ),
+);
+function conferirCliente(numero) {
+  if (
+    numero !== null &&
+    !obterBanco().prepare("SELECT id FROM customers WHERE id=?").get(numero)
+  )
+    falhar("Cliente do portal não encontrado.");
+}
+function clienteInformado(valor) {
+  return valor === undefined || valor === null || valor === ""
+    ? null
+    : id(valor);
+}
+router.post("/cadastro-integrado", exigirNivel(2), (req, res) => {
+  const entrada = req.body ?? {};
+  const clienteExistenteId = clienteInformado(entrada.cliente_id);
+  const uc = normalizarUc(entrada.uc);
+  let novoCliente = null;
+  if (clienteExistenteId === null) {
+    const nome = texto(entrada.nome, "o nome do cliente", 120);
+    const cpfInformado = String(entrada.cpf ?? "").trim();
+    if (!cpfValidoParaCadastro(cpfInformado))
+      falhar("Informe um CPF válido para o cliente.");
+    const email = texto(
+      entrada.email,
+      "o e-mail do cliente",
+      180,
+    ).toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+      falhar("E-mail do cliente inválido.");
+    novoCliente = { nome, cpf: apenasDigitos(cpfInformado), email };
+  }
+  const resultado = transacao(() => {
+    const banco = obterBanco();
+    let clienteId = clienteExistenteId;
+    if (clienteId !== null) {
+      const cliente = banco
+        .prepare("SELECT cpf FROM customers WHERE id=?")
+        .get(clienteId);
+      if (!cliente)
+        falhar("Cliente do portal não encontrado. Atualize a lista.", 409);
+      if (entrada.cpf && apenasDigitos(String(entrada.cpf)) !== cliente.cpf)
+        falhar("O CPF informado não corresponde ao cliente selecionado.", 409);
+    } else {
+      if (
+        banco
+          .prepare(
+            "SELECT 1 FROM customers WHERE cpf=? UNION ALL SELECT 1 FROM staff_users WHERE cpf=? LIMIT 1",
+          )
+          .get(novoCliente.cpf, novoCliente.cpf)
+      )
+        falhar(
+          "Este CPF já está cadastrado. Selecione o cliente existente.",
+          409,
+        );
+      clienteId = Number(
+        banco
+          .prepare("INSERT INTO customers (name,cpf,email) VALUES (?,?,?)")
+          .run(novoCliente.nome, novoCliente.cpf, novoCliente.email)
+          .lastInsertRowid,
+      );
+    }
+    const unidadeExistente = banco
+      .prepare("SELECT id,cliente_id,cliente_provisorio_id FROM faturamento_unidades WHERE uc=?")
+      .get(uc);
+    if (unidadeExistente) {
+      if (unidadeExistente.cliente_provisorio_id !== null)
+        falhar(
+          "Esta UC pertence a um cadastro provisório de teste. Complete e confira os dados antes de vinculá-la ao portal.",
+          409,
+        );
+      if (
+        unidadeExistente.cliente_id !== null &&
+        unidadeExistente.cliente_id !== clienteId
+      )
+        falhar(
+          "Esta UC já pertence a outro cliente do portal. Confira o cadastro antes de prosseguir.",
+          409,
+        );
+      const temDesconto = Boolean(
+        banco
+          .prepare(
+            "SELECT 1 FROM faturamento_descontos_uc WHERE unidade_id=? LIMIT 1",
+          )
+          .get(unidadeExistente.id),
+      );
+      const descontoInicial = temDesconto
+        ? null
+        : {
+            valor: decimal(
+              entrada.desconto,
+              "o desconto percentual da UC",
+              2,
+              "100",
+            ),
+            inicio: competencia(entrada.desconto_inicio),
+          };
+      if (unidadeExistente.cliente_id === clienteId && temDesconto)
+        return {
+          cliente_id: clienteId,
+          unidade_id: unidadeExistente.id,
+          estado: "ja_vinculada",
+        };
+      if (
+        unidadeExistente.cliente_id === null &&
+        entrada.confirmar_vinculo !== true
+      )
+        falhar(
+          "Confirme os dados da UC existente antes de vinculá-la ao cliente.",
+        );
+      if (unidadeExistente.cliente_id === null) {
+        const atualizado = banco
+          .prepare(
+            "UPDATE faturamento_unidades SET cliente_id=?,versao=versao+1 WHERE id=? AND cliente_id IS NULL",
+          )
+          .run(clienteId, unidadeExistente.id);
+        if (atualizado.changes !== 1)
+          falhar(
+            "A UC mudou durante o cadastro. Atualize e confira novamente.",
+            409,
+          );
+      }
+      if (descontoInicial) {
+        banco
+          .prepare(
+            "INSERT INTO faturamento_descontos_uc (unidade_id,inicio,desconto) VALUES (?,?,?)",
+          )
+          .run(
+            unidadeExistente.id,
+            descontoInicial.inicio,
+            descontoInicial.valor,
+          );
+        if (unidadeExistente.cliente_id === clienteId)
+          banco
+            .prepare(
+              "UPDATE faturamento_unidades SET versao=versao+1 WHERE id=?",
+            )
+            .run(unidadeExistente.id);
+      }
+      historico(
+        req,
+        unidadeExistente.cliente_id === null
+          ? "Vínculo de UC existente ao cliente do portal"
+          : "Desconto inicial de UC vinculada",
+        {
+          cliente_id: clienteId,
+          uc,
+          ...(descontoInicial ? { desconto: descontoInicial } : {}),
+        },
+        null,
+        unidadeExistente.id,
+      );
+      return {
+        cliente_id: clienteId,
+        unidade_id: unidadeExistente.id,
+        estado:
+          unidadeExistente.cliente_id === null
+            ? "vinculada"
+            : "desconto_iniciado",
+      };
+    }
+    const unidade = validarUnidade({
+      uc,
+      nome: entrada.unidade_nome,
+      documento: entrada.unidade_documento,
+      email: entrada.unidade_email,
+      dia_vencimento: entrada.dia_vencimento,
+    });
+    const desconto = decimal(
+      entrada.desconto,
+      "o desconto percentual da UC",
+      2,
+      "100",
+    );
+    const inicio = competencia(entrada.desconto_inicio);
+    const unidadeId = Number(
+      banco
+        .prepare(
+          "INSERT INTO faturamento_unidades (uc,nome,documento,email,dia_vencimento,cliente_id) VALUES (?,?,?,?,?,?)",
+        )
+        .run(
+          unidade.uc,
+          unidade.nome,
+          unidade.documento,
+          unidade.email,
+          unidade.dia_vencimento,
+          clienteId,
+        ).lastInsertRowid,
+    );
+    banco
+      .prepare(
+        "INSERT INTO faturamento_descontos_uc (unidade_id,inicio,desconto) VALUES (?,?,?)",
+      )
+      .run(unidadeId, inicio, desconto);
+    historico(
+      req,
+      "Cadastro integrado de cliente e UC",
+      {
+        cliente_id: clienteId,
+        uc,
+        desconto: { inicio, valor: desconto },
+      },
+      null,
+      unidadeId,
+    );
+    return { cliente_id: clienteId, unidade_id: unidadeId, estado: "criada" };
+  });
+  res.status(resultado.estado === "ja_vinculada" ? 200 : 201).json(resultado);
+});
 function conferirUsina(numero) {
   if (
     numero !== null &&
@@ -151,6 +392,7 @@ router.post("/usinas", exigirNivel(3), (req, res) => {
 });
 router.post("/unidades", exigirNivel(2), (req, res) => {
   const u = validarUnidade(req.body);
+  const clienteId = clienteInformado(req.body.cliente_id);
   const desconto = decimal(
     req.body.desconto,
     "o desconto percentual da UC",
@@ -169,13 +411,21 @@ router.post("/unidades", exigirNivel(2), (req, res) => {
   const numero = transacao(() => {
     const banco = obterBanco();
     conferirUsina(u.usina_id);
+    conferirCliente(clienteId);
     const numero = Number(
       banco
         .prepare(
-          "INSERT INTO faturamento_unidades (uc,nome,documento,email,dia_vencimento,usina_id) VALUES (?,?,?,?,?,?)",
+          "INSERT INTO faturamento_unidades (uc,nome,documento,email,dia_vencimento,usina_id,cliente_id) VALUES (?,?,?,?,?,?,?)",
         )
-        .run(u.uc, u.nome, u.documento, u.email, u.dia_vencimento, u.usina_id)
-        .lastInsertRowid,
+        .run(
+          u.uc,
+          u.nome,
+          u.documento,
+          u.email,
+          u.dia_vencimento,
+          u.usina_id,
+          clienteId,
+        ).lastInsertRowid,
     );
     banco
       .prepare(
@@ -192,7 +442,7 @@ router.post("/unidades", exigirNivel(2), (req, res) => {
       req,
       c ? "Cadastro de unidade e contrato" : "Cadastro de unidade",
       {
-        unidade: u,
+        unidade: { ...u, cliente_id: clienteId },
         desconto: { inicio: descontoInicio, valor: desconto },
         contrato: c,
       },
@@ -213,19 +463,42 @@ router.patch("/unidades/:id", exigirNivel(2), (req, res) => {
       .prepare("SELECT * FROM faturamento_unidades WHERE id=?")
       .get(numero);
     if (!anterior) falhar("Unidade não encontrada.", 404);
+    const clienteId = Object.hasOwn(req.body, "cliente_id")
+      ? clienteInformado(req.body.cliente_id)
+      : anterior.cliente_id;
+    conferirCliente(clienteId);
     if (anterior.versao !== Number(req.body.versao))
       falhar("Cadastro alterado. Atualize a lista.", 409);
     if (anterior.uc !== u.uc)
       falhar("O número da UC não pode ser alterado. Cadastre outra unidade.");
     banco
       .prepare(
-        "UPDATE faturamento_unidades SET nome=?,documento=?,email=?,dia_vencimento=?,usina_id=?,versao=versao+1 WHERE id=?",
+        "UPDATE faturamento_unidades SET nome=?,documento=?,email=?,dia_vencimento=?,usina_id=?,cliente_id=?,cliente_provisorio_id=?,versao=versao+1 WHERE id=?",
       )
-      .run(u.nome, u.documento, u.email, u.dia_vencimento, u.usina_id, numero);
+      .run(
+        u.nome,
+        u.documento,
+        u.email,
+        u.dia_vencimento,
+        u.usina_id,
+        clienteId,
+        clienteId === null ? anterior.cliente_provisorio_id : null,
+        numero,
+      );
     historico(
       req,
-      "Atualização cadastral",
-      { anterior, novo: u },
+      anterior.cliente_provisorio_id !== null && clienteId !== null
+        ? "Conclusão cadastral de teste"
+        : "Atualização cadastral",
+      {
+        anterior,
+        novo: {
+          ...u,
+          cliente_id: clienteId,
+          cliente_provisorio_id:
+            clienteId === null ? anterior.cliente_provisorio_id : null,
+        },
+      },
       null,
       numero,
     );
@@ -322,7 +595,7 @@ router.get("/documentos", (_req, res) => {
   res.json(
     obterBanco()
       .prepare(
-        "SELECT id FROM faturamento_documentos WHERE classificacao='fatura' ORDER BY id DESC",
+        "SELECT id FROM faturamento_documentos WHERE classificacao='fatura' AND excluido_em IS NULL ORDER BY id DESC",
       )
       .all()
       .map((r) => documento(r.id)),
@@ -332,15 +605,16 @@ router.get("/recebimentos", (_req, res) => {
   res.json(
     obterBanco()
       .prepare(
-        `SELECT r.*,d.status AS estado_documento,d.dados,d.memoria
+        `SELECT r.*,d.nome AS nome_atual,d.status AS estado_documento,d.dados,d.memoria
          FROM faturamento_recebimentos_pdf r
          LEFT JOIN faturamento_documentos d ON d.id=r.documento_id
-         WHERE r.documento_id IS NULL OR d.classificacao='fatura'
+         WHERE r.documento_id IS NULL OR (d.classificacao='fatura' AND d.excluido_em IS NULL)
          ORDER BY r.id DESC`,
       )
       .all()
-      .map((r) => ({
+      .map(({ nome_atual, ...r }) => ({
         ...r,
+        nome: nome_atual ?? r.nome,
         dados: r.dados ? JSON.parse(r.dados) : null,
         memoria: r.memoria ? JSON.parse(r.memoria) : null,
       })),
@@ -354,15 +628,93 @@ router.get("/documentos/:id/pdf", (req, res) => {
   const arquivo = obterBanco()
     .prepare("SELECT pdf FROM faturamento_documentos WHERE id=?")
     .get(d.id);
+  const nomeAscii = d.nome
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z0-9._ -]/g, "_");
+  const nomeCodificado = encodeURIComponent(d.nome).replace(
+    /['()*]/g,
+    (caractere) => `%${caractere.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
   res
     .set({
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="fatura-${d.id}.pdf"`,
+      "Content-Disposition": `inline; filename="${nomeAscii}"; filename*=UTF-8''${nomeCodificado}`,
       "Cache-Control": "no-store",
       "X-Content-Type-Options": "nosniff",
       "X-Frame-Options": "SAMEORIGIN",
     })
     .send(Buffer.from(arquivo.pdf));
+});
+
+router.post("/documentos/:id/renomear", exigirNivel(2), (req, res) => {
+  const numero = id(req.params.id);
+  const novoNome = nomePdf(req.body?.nome);
+  transacao(() => {
+    const d = documento(numero);
+    conferirVersao(d, req.body);
+    if (novoNome === d.nome) return;
+    const atualizado = obterBanco()
+      .prepare(
+        `UPDATE faturamento_documentos
+         SET nome=?,versao=versao+1,atualizado_em=CURRENT_TIMESTAMP
+         WHERE id=? AND versao=? AND classificacao='fatura'
+           AND excluido_em IS NULL AND status<>?`,
+      )
+      .run(novoNome, numero, d.versao, APROVADA);
+    if (atualizado.changes !== 1)
+      falhar(
+        "Este registro foi alterado. Atualize a fila e tente novamente.",
+        409,
+      );
+    historico(
+      req,
+      "PDF renomeado",
+      { anterior: d.nome, novo: novoNome },
+      numero,
+    );
+  });
+  res.set("Cache-Control", "no-store").json(documentoCompleto(numero));
+});
+
+router.post("/documentos/:id/excluir", exigirNivel(3), (req, res) => {
+  const numero = id(req.params.id);
+  if (req.body?.confirmacao !== "EXCLUIR")
+    falhar("Digite EXCLUIR para confirmar a exclusão do PDF.");
+  transacao(() => {
+    const d = documento(numero);
+    conferirVersao(d, req.body);
+    if (
+      d.status !== "Pendente de revisão" ||
+      d.memoria !== null ||
+      d.unidade_id !== null ||
+      d.competencia !== null
+    )
+      falhar("Somente PDFs sem cálculo podem ser excluídos da fila.", 409);
+    const removido = obterBanco()
+      .prepare(
+        `UPDATE faturamento_documentos
+         SET pdf=X'',texto='',extracao='{}',dados='{}',
+             classificacao='nao_fatura',excluido_em=CURRENT_TIMESTAMP,
+             versao=versao+1,atualizado_em=CURRENT_TIMESTAMP
+         WHERE id=? AND versao=? AND classificacao='fatura'
+           AND excluido_em IS NULL AND status='Pendente de revisão'
+           AND memoria IS NULL AND unidade_id IS NULL AND competencia IS NULL`,
+      )
+      .run(numero, d.versao);
+    if (removido.changes !== 1)
+      falhar(
+        "Este registro foi alterado. Atualize a fila e tente novamente.",
+        409,
+      );
+    historico(
+      req,
+      "Exclusão definitiva de PDF em Faturas",
+      { nome: d.nome },
+      numero,
+    );
+  });
+  res.set("Cache-Control", "no-store").json({ excluido: true });
 });
 
 router.post("/documentos/:id/reanalisar", exigirNivel(3), async (req, res) => {
@@ -396,6 +748,9 @@ router.post(
 
 const campos = [
   "uc",
+  "unidade_id",
+  "cliente_id",
+  "uc_divergente_confirmada",
   "competencia",
   "injecao",
   "unitario",
@@ -445,43 +800,89 @@ router.patch("/documentos/:id", exigirNivel(2), (req, res) => {
 function montarCalculo(d, dados = d.dados) {
   const banco = obterBanco(),
     uc = normalizarUc(dados.uc),
-    mes = competencia(dados.competencia);
+    mes = competencia(dados.competencia),
+    semInjecao = decimal(dados.injecao, "a injeção SCEE") === "0";
   const unidade = banco
     .prepare(
-      "SELECT u.*, s.nome AS usina_nome FROM faturamento_unidades u LEFT JOIN usinas s ON s.id=u.usina_id WHERE u.uc=?",
+      "SELECT u.*, s.nome AS usina_nome, c.name AS cliente_nome FROM faturamento_unidades u LEFT JOIN usinas s ON s.id=u.usina_id LEFT JOIN customers c ON c.id=u.cliente_id WHERE u.uc=?",
     )
     .get(uc);
   if (!unidade)
     falhar("Cadastre esta unidade em Clientes → Unidades e contratos.");
+  if (unidade.cliente_provisorio_id !== null)
+    falhar(
+      "Cadastro provisório de teste: confirme CPF/CNPJ, e-mail e cliente do portal antes de calcular uma cobrança.",
+      409,
+    );
+  if (dados.unidade_id) {
+    const unidadeSelecionada = Number(dados.unidade_id);
+    if (
+      !Number.isSafeInteger(unidadeSelecionada) ||
+      unidadeSelecionada < 1 ||
+      unidadeSelecionada !== unidade.id
+    )
+      falhar("O cliente selecionado não corresponde à UC desta fatura.");
+    if (!dados.cliente_id)
+      falhar("Selecione o cliente do portal vinculado a esta UC.");
+  }
+  if (dados.cliente_id) {
+    const clienteSelecionado = Number(dados.cliente_id);
+    if (
+      !Number.isSafeInteger(clienteSelecionado) ||
+      clienteSelecionado < 1 ||
+      clienteSelecionado !== unidade.cliente_id
+    )
+      falhar("A UC não está vinculada ao cliente do portal selecionado.");
+  }
+  if (dados.unidade_id) {
+    const ucLida = String(d.extracao?.dados?.uc ?? "")
+      .replace(/\D/g, "")
+      .replace(/^0+(?=\d)/, "");
+    if (ucLida && ucLida !== uc && dados.uc_divergente_confirmada !== "sim")
+      falhar(
+        "A UC selecionada difere da leitura do PDF. Confirme essa divergência na conferência.",
+      );
+  }
   const modalidadeInformada = String(dados.modalidade ?? "").trim();
   if (!modalidadeInformada)
     falhar("Informe a modalidade nesta fatura antes de calcular.");
-  const desconto = banco
-    .prepare(
-      "SELECT inicio,desconto FROM faturamento_descontos_uc WHERE unidade_id=? AND inicio<=? ORDER BY inicio DESC LIMIT 1",
-    )
-    .get(unidade.id, mes);
-  if (!desconto)
+  const desconto = semInjecao
+    ? null
+    : banco
+        .prepare(
+          "SELECT inicio,desconto FROM faturamento_descontos_uc WHERE unidade_id=? AND inicio<=? ORDER BY inicio DESC LIMIT 1",
+        )
+        .get(unidade.id, mes);
+  if (!semInjecao && !desconto)
     falhar(
       "Cadastre um desconto vigente para esta UC e competência antes de calcular.",
     );
   const contrato = {
     ...validarContrato({
       modalidade: modalidadeInformada,
-      desconto: desconto.desconto,
+      desconto: semInjecao ? "0" : desconto.desconto,
       inicio: mes,
     }),
-    origem: "modalidade_na_fatura_desconto_na_uc",
-    desconto_inicio: desconto.inicio,
+    origem: semInjecao
+      ? "sem_injecao_sem_desconto"
+      : "modalidade_na_fatura_desconto_na_uc",
+    ...(desconto ? { desconto_inicio: desconto.inicio } : {}),
   };
   const vencimento_equatorial = dataValida(dados.vencimento_equatorial);
-  const vencimento_ecosol = dataValida(dados.vencimento_ecosol);
+  const vencimentoInformado = String(dados.vencimento_ecosol ?? "").trim();
+  const vencimento_ecosol = vencimentoInformado
+    ? dataValida(vencimentoInformado)
+    : vencimento_equatorial;
   if (vencimento_ecosol.slice(0, 7) < mes)
     falhar("O vencimento Ecosol não pode anteceder a competência.");
   let unitario = dados.unitario,
     bandeira = dados.bandeira,
     fonte = { tipo: "propria", documento_id: d.id };
-  if (dados.origem_tarifa === "referencia") {
+  if (semInjecao) {
+    unitario = "0";
+    bandeira = "0";
+    fonte = { tipo: "nao_aplicavel", documento_id: d.id };
+  } else if (dados.origem_tarifa === "referencia") {
     const referencia = documento(dados.referencia_id);
     if (
       referencia.id === d.id ||
@@ -544,6 +945,12 @@ router.post("/documentos/:id/calcular", exigirNivel(2), (req, res) => {
     if (req.body.dados !== undefined && req.body.previa_hash === undefined)
       falhar("Gere a prévia antes de salvar e calcular.", 409);
     const memoria = montarCalculo(d, dados);
+    const dadosPersistidos = {
+      ...dados,
+      vencimento_ecosol:
+        String(dados.vencimento_ecosol ?? "").trim() ||
+        memoria.vencimento_ecosol,
+    };
     if (
       req.body.previa_hash !== undefined &&
       (!/^[a-f0-9]{64}$/.test(String(req.body.previa_hash)) ||
@@ -558,7 +965,7 @@ router.post("/documentos/:id/calcular", exigirNivel(2), (req, res) => {
         "UPDATE faturamento_documentos SET dados=?,memoria=?,unidade_id=?,competencia=?,status='Calculada',versao=versao+1,atualizado_em=CURRENT_TIMESTAMP WHERE id=?",
       )
       .run(
-        JSON.stringify(dados),
+        JSON.stringify(dadosPersistidos),
         JSON.stringify(memoria),
         memoria.unidade.id,
         memoria.competencia,
@@ -568,7 +975,7 @@ router.post("/documentos/:id/calcular", exigirNivel(2), (req, res) => {
       historico(
         req,
         "Conferência salva",
-        { anterior: d.dados, novo: dados },
+        { anterior: d.dados, novo: dadosPersistidos },
         numero,
       );
     historico(req, "Cálculo conferido", memoria, numero, memoria.unidade.id);

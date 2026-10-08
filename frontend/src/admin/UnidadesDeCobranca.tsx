@@ -13,6 +13,9 @@ export type Contrato = {
   desconto_inicio?: string;
 };
 export type Unidade = {
+  cliente_id?: number | null;
+  cliente_provisorio_id?: number | null;
+  cliente_nome?: string | null;
   usina_id?: number | null;
   usina_nome?: string | null;
   id: number;
@@ -27,8 +30,15 @@ export type Unidade = {
 };
 const base = "/api/admin/faturamento/unidades";
 
-export default function UnidadesDeCobranca() {
+export default function UnidadesDeCobranca({
+  clienteInicialId = null,
+}: {
+  clienteInicialId?: number | null;
+}) {
   const consulta = usarConsulta<Unidade[]>(base);
+  const clientes = usarConsulta<{ id: number; name: string }[]>(
+    "/api/admin/faturamento/clientes",
+  );
   const usinas =
     usarConsulta<{ id: number; nome: string }[]>("/api/admin/usinas");
   const { nivel } = usarAdministrador();
@@ -40,13 +50,17 @@ export default function UnidadesDeCobranca() {
   const [busca, setBusca] = useState("");
   const atual = edicao && edicao !== "nova" ? edicao : null;
   const unidadesFiltradas = (consulta.dados ?? []).filter((u) =>
-    `${u.nome} ${u.documento} ${u.uc} ${u.usina_nome ?? ""}`
+    `${u.nome} ${u.cliente_nome ?? ""} ${u.documento} ${u.uc} ${u.usina_nome ?? ""}`
       .toLowerCase()
       .includes(busca.toLowerCase()),
   );
 
   async function salvar(evento: FormEvent<HTMLFormElement>) {
     evento.preventDefault();
+    if (!clientes.dados) {
+      setErro("Carregue a lista de clientes antes de salvar a UC.");
+      return;
+    }
     setOcupado(true);
     setErro("");
     setMensagem("");
@@ -97,13 +111,22 @@ export default function UnidadesDeCobranca() {
         mudança do desconto cria uma nova vigência, preservando as anteriores. A
         modalidade será informada em cada fatura; não é necessário cadastrar
         contrato ou vincular uma usina agora. Este cadastro não cria acesso ao
-        portal.
+        portal. Selecione o cliente do portal no formulário da UC para criar um
+        vínculo explícito; clientes com mais de uma UC podem ter várias unidades
+        vinculadas.
       </div>
+      {clienteInicialId && (
+        <p className="admin-aviso">
+          Vincule uma UC existente ao cliente selecionado usando “Editar
+          cadastro”, ou cadastre uma nova UC. Confira os dados antes de salvar.
+        </p>
+      )}
       <ImportacaoExcel
         aoImportar={consulta.atualizar}
         usinas={usinas.dados ?? []}
       />
       <EstadoDaConsulta {...consulta} repetir={consulta.atualizar} />
+      <EstadoDaConsulta {...clientes} repetir={clientes.atualizar} />
       <EstadoDaConsulta {...usinas} repetir={usinas.atualizar} />
       {erro && (
         <p className="admin-aviso erro" role="alert">
@@ -165,12 +188,19 @@ export default function UnidadesDeCobranca() {
                   <td>
                     <strong>{u.nome}</strong>
                     <small>UC {u.uc}</small>
+                    <small>
+                      {u.cliente_provisorio_id
+                        ? `Cadastro provisório de teste: ${u.cliente_nome ?? "a conferir"}`
+                        : `Portal: ${u.cliente_nome ?? "sem vínculo"}`}
+                    </small>
                     <small>Usina: {u.usina_nome ?? "Alocação a definir"}</small>
                   </td>
-                  <td>{u.documento}</td>
+                  <td>{u.documento || "Pendente"}</td>
                   <td>
-                    {u.email}
-                    <small>Dia preferido: {u.dia_vencimento}</small>
+                    {u.email || "E-mail pendente"}
+                    <small>
+                      Dia preferido: {u.dia_vencimento || "a definir"}
+                    </small>
                   </td>
                   <td>
                     {u.descontos.length === 0 && (
@@ -237,7 +267,28 @@ export default function UnidadesDeCobranca() {
           onSubmit={(e) => salvar(e)}
         >
           <h3>{atual ? "Editar unidade" : "Nova unidade consumidora"}</h3>
-          <fieldset className="admin-campos" disabled={ocupado}>
+          <fieldset
+            className="admin-campos"
+            disabled={ocupado || !clientes.dados}
+          >
+            <label>
+              Cliente do portal vinculado
+              <select
+                key={`${atual?.id ?? "nova"}-${clientes.dados?.length ?? "loading"}`}
+                name="cliente_id"
+                defaultValue={atual?.cliente_id ?? clienteInicialId ?? ""}
+              >
+                <option value="">Sem vínculo — selecionar depois</option>
+                {clientes.dados?.map((cliente) => (
+                  <option value={cliente.id} key={cliente.id}>
+                    {cliente.name} (#{cliente.id})
+                  </option>
+                ))}
+              </select>
+              <small>
+                Confirme a identidade do cliente antes de vincular esta UC.
+              </small>
+            </label>
             <label>
               Usina de alocação
               <select name="usina_id" defaultValue={atual?.usina_id ?? ""}>

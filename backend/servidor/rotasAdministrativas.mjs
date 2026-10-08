@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { resumoCriptografico } from "./autenticacao.mjs";
 import { obterBanco } from "./bancoDeDados.mjs";
+import { registrarHistorico } from "./faturamento/registros.mjs";
 import { exigirNivel } from "./permissoesDaEquipe.mjs";
 
 export const rotasAdministrativas = Router();
@@ -10,8 +11,7 @@ rotasAdministrativas.use("/api/admin", (requisicao, resposta, proximo) => {
   // sessões encerradas com um redirecionamento, não com uma resposta JSON.
   if (
     requisicao.method === "GET" &&
-    requisicao.originalUrl.split("?", 1)[0] ===
-      "/api/admin/gmail/oauth/retorno"
+    requisicao.originalUrl.split("?", 1)[0] === "/api/admin/gmail/oauth/retorno"
   )
     return proximo();
   return exigirAdministrador(requisicao, resposta, proximo);
@@ -60,6 +60,22 @@ rotasAdministrativas.delete(
         .run(cliente.name, id);
       banco.prepare("DELETE FROM sessions WHERE customer_id = ?").run(id);
       banco.prepare("DELETE FROM auth_tokens WHERE customer_id = ?").run(id);
+      const unidadesVinculadas = banco
+        .prepare("SELECT id,uc FROM faturamento_unidades WHERE cliente_id = ?")
+        .all(id);
+      banco
+        .prepare(
+          "UPDATE faturamento_unidades SET cliente_id = NULL, versao = versao + 1 WHERE cliente_id = ?",
+        )
+        .run(id);
+      for (const unidade of unidadesVinculadas)
+        registrarHistorico({
+          responsavel: requisicao.administrador.nome,
+          administradorId: requisicao.administrador.id,
+          acao: "Desvinculação de UC por exclusão do cliente do portal",
+          dados: { cliente_id: id, uc: unidade.uc },
+          unidadeId: unidade.id,
+        });
       banco
         .prepare("DELETE FROM login_attempts WHERE key = ?")
         .run(`login:${resumoCriptografico(cliente.cpf)}`);

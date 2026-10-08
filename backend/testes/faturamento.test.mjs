@@ -10,7 +10,11 @@ import {
   documentoValido,
   dataValida,
 } from "../servidor/faturamento/regras.mjs";
-import { extrairCampos, lerPdf } from "../servidor/faturamento/extracao.mjs";
+import {
+  extrairCampos,
+  extrairUcDoQuadro,
+  lerPdf,
+} from "../servidor/faturamento/extracao.mjs";
 import { prepararFaturamento } from "../servidor/faturamento/esquema.mjs";
 
 const bancoAntigo = new DatabaseSync(":memory:");
@@ -49,8 +53,28 @@ try {
     "123",
   );
   assert.equal(
+    bancoAntigo
+      .prepare("SELECT cliente_id FROM faturamento_unidades WHERE uc='123'")
+      .get().cliente_id,
+    null,
+  );
+  assert.equal(
     bancoAntigo.prepare("SELECT COUNT(*) n FROM faturamento_descontos_uc").get()
       .n,
+    0,
+  );
+  assert.equal(
+    bancoAntigo
+      .prepare(
+        "SELECT cliente_provisorio_id FROM faturamento_unidades WHERE uc='123'",
+      )
+      .get().cliente_provisorio_id,
+    null,
+  );
+  assert.equal(
+    bancoAntigo
+      .prepare("SELECT COUNT(*) n FROM faturamento_clientes_provisorios")
+      .get().n,
     0,
   );
 } finally {
@@ -88,6 +112,44 @@ assert.equal(
   calcularCobranca({ ...entrada, modalidade: "GDI", ajuste_gdii: "0" })
     .total_centavos,
   175901,
+);
+const semEnergiaInjetada = calcularCobranca({
+  injecao: "0",
+  unitario: "",
+  bandeira: "",
+  desconto: "",
+  total_equatorial: "128.69",
+  ajuste_gdii: "",
+  modalidade: "GDI",
+});
+assert.equal(semEnergiaInjetada.regra, "ecosol-v1-sem-injecao");
+assert.equal(semEnergiaInjetada.consumo_centavos, 0);
+assert.equal(semEnergiaInjetada.equatorial_centavos, 12869);
+assert.equal(semEnergiaInjetada.ajuste_centavos, 0);
+assert.equal(semEnergiaInjetada.total_centavos, 12869);
+assert.equal(semEnergiaInjetada.entradas.desconto, "0");
+assert.equal(
+  calcularCobranca({
+    ...entrada,
+    injecao: "0",
+    ajuste_gdii: "0",
+  }).total_centavos,
+  30240,
+);
+assert.throws(() =>
+  calcularCobranca({
+    ...entrada,
+    injecao: "0",
+    ajuste_gdii: "1",
+  }),
+);
+assert.throws(() =>
+  calcularCobranca({
+    ...entrada,
+    injecao: "0",
+    ajuste_gdii: "0",
+    total_equatorial: "0",
+  }),
 );
 assert.equal(
   calcularCobranca({
@@ -168,6 +230,35 @@ const tarifaEquatorial = extrairCampos(
 );
 assert.equal(tarifaEquatorial.dados.unitario, "1.145752");
 assert.equal(tarifaEquatorial.dados.bandeira, "0.024217");
+const semInjecao = extrairCampos(
+  [
+    "FORNECIMENTO",
+    "ADC BANDEIRA AMARELA kWh 100,00 0,024217 2,42",
+    "CONSUMO NAO COMPENSADO kWh 100,00 1,145752 114,58",
+    "ITENS FINANCEIROS",
+  ].join("\n"),
+);
+assert.equal(semInjecao.dados.injecao, "0");
+assert.deepEqual(semInjecao.qualidade.campos_inferidos, ["Injeção SCEE"]);
+assert.ok(!semInjecao.qualidade.pendencias.includes("Injeção SCEE"));
+assert.match(semInjecao.evidencias.injecao, /Inferência/);
+assert.equal(
+  extrairCampos("FORNECIMENTO\nCONSUMO kWh 100,00 1,00 100,00").dados.injecao,
+  undefined,
+);
+assert.equal(
+  extrairCampos(
+    "FORNECIMENTO\nINJECAO SCEE - UC 123 - GD I\nCONSUMO kWh 100,00 1,00 100,00\nITENS FINANCEIROS",
+  ).dados.injecao,
+  undefined,
+);
+assert.equal(
+  extrairCampos(
+    "FORNECIMENTO\nINJECAO SCEE - UC 123 - GD I kWh 20,00 1,00 -20,00\n" +
+      "INJECAO SCEE - UC 456 - GD I kWh 30,00 1,00 -30,00\nITENS FINANCEIROS",
+  ).dados.injecao,
+  undefined,
+);
 assert.equal(
   calcularCobranca({
     injecao: "769",
@@ -205,9 +296,45 @@ const cabecalhoEquatorial = [
 ].join("\n");
 const capturadoEquatorial = extrairCampos(cabecalhoEquatorial);
 assert.equal(capturadoEquatorial.dados.uc, "290318801200");
+assert.match(capturadoEquatorial.avisos.join(" "), /quadro verde/);
 assert.equal(capturadoEquatorial.dados.total_equatorial, "137.03");
 assert.equal(capturadoEquatorial.dados.vencimento_equatorial, "2026-10-14");
 assert.equal(capturadoEquatorial.dados.competencia, "2026-09");
+const itemPdf = (str, x, y) => ({ str, transform: [1, 0, 0, 1, x, y] });
+const itensQuadroVerde = [
+  itemPdf("PERDAS DE TRANSFORMAÇÃO / RAMAL: 0%", 18, 1017),
+  itemPdf("3.046.242.012-43", 333, 1017),
+  itemPdf("INJEÇÃO SCEE - UC 000408047401296 - GD I", 19, 724),
+];
+const ucQuadroVerde = extrairUcDoQuadro(itensQuadroVerde, 909, 1211);
+assert.equal(ucQuadroVerde, "3.046.242.012-43");
+const apenasCabecalho =
+  "PERDAS DE TRANSFORMACAO / RAMAL: 0% 3.046.242.012-43\n" +
+  "INJECAO SCEE - UC 000408047401296 - GD I";
+assert.equal(extrairCampos(apenasCabecalho).dados.uc, undefined);
+assert.equal(
+  extrairCampos(apenasCabecalho, { ucQuadro: ucQuadroVerde }).dados.uc,
+  "304624201243",
+);
+assert.match(
+  extrairCampos(apenasCabecalho, { ucQuadro: ucQuadroVerde }).evidencias.uc,
+  /Quadro verde/,
+);
+assert.equal(extrairUcDoQuadro(itensQuadroVerde.slice(1), 909, 1211), null);
+assert.equal(
+  extrairUcDoQuadro(
+    [...itensQuadroVerde, itemPdf("3.046.242.012-44", 335, 1017)],
+    909,
+    1211,
+  ),
+  null,
+);
+const ucsConflitantes = extrairCampos(
+  `${apenasCabecalho}\nEQUATORIAL GOIAS DISTRIBUIDORA DE ENERGIA S/A 9.999.999.012-00 SET/2026`,
+  { ucQuadro: ucQuadroVerde },
+);
+assert.equal(ucsConflitantes.dados.uc, undefined);
+assert.match(ucsConflitantes.avisos.join(" "), /divergentes/);
 assert.equal(
   extrairCampos(
     cabecalhoEquatorial.replace(
@@ -251,6 +378,9 @@ for (const nivel of [1, 2, 3]) {
     );
   cookies[nivel] = `ecosol_session=${token}`;
 }
+banco
+  .prepare("UPDATE staff_users SET cpf=? WHERE email=?")
+  .run("39053344705", "teste1@example.test");
 const app = express();
 app.use(express.json({ limit: "20kb" }), rotasFaturamento);
 const server = app.listen(0, "127.0.0.1");
@@ -298,7 +428,329 @@ try {
   assert.equal((await chamar("/documentos", null)).status, 401);
   assert.equal((await chamar("/unidades", 1, "POST", unidade)).status, 403);
   const u = await ok("/unidades", "POST", unidade, 201);
+  const clientePortalId = Number(
+    banco
+      .prepare("INSERT INTO customers(name,cpf,email) VALUES(?,?,?)")
+      .run("Cliente do portal", "12345678909", "portal@example.test")
+      .lastInsertRowid,
+  );
+  assert.equal((await chamar("/clientes", null)).status, 401);
+  assert.equal(
+    (await ok("/clientes", "GET")).find((c) => c.id === clientePortalId).name,
+    "Cliente do portal",
+  );
+  const vinculada = await ok(
+    "/unidades",
+    "POST",
+    {
+      ...unidade,
+      uc: "123456789012",
+      cliente_id: clientePortalId,
+    },
+    201,
+  );
+  assert.equal(
+    (await ok("/unidades", "GET")).find((item) => item.id === vinculada.id)
+      .cliente_nome,
+    "Cliente do portal",
+  );
+  await ok(`/unidades/${vinculada.id}`, "PATCH", {
+    ...unidade,
+    uc: "123456789012",
+    versao: 1,
+    cliente_id: "",
+  });
+  assert.equal(
+    banco
+      .prepare("SELECT cliente_id FROM faturamento_unidades WHERE id=?")
+      .get(vinculada.id).cliente_id,
+    null,
+  );
+  await ok(
+    "/unidades",
+    "POST",
+    {
+      ...unidade,
+      uc: "123456789013",
+      cliente_id: 999999,
+    },
+    400,
+  );
   await ok("/unidades", "POST", unidade, 409);
+  const cadastroIntegrado = {
+    nome: "Cliente integrado",
+    cpf: "52998224725",
+    email: "integrado@example.test",
+    uc: "987654321000",
+    unidade_nome: "Cliente integrado",
+    unidade_documento: "52998224725",
+    unidade_email: "integrado@example.test",
+    dia_vencimento: 5,
+    desconto: "25",
+    desconto_inicio: "2026-10",
+  };
+  assert.equal(
+    (await chamar("/cadastro-integrado", null, "POST", cadastroIntegrado))
+      .status,
+    401,
+  );
+  assert.equal(
+    (await chamar("/cadastro-integrado", 1, "POST", cadastroIntegrado)).status,
+    403,
+  );
+  const integrado = await ok(
+    "/cadastro-integrado",
+    "POST",
+    cadastroIntegrado,
+    201,
+  );
+  assert.equal(integrado.estado, "criada");
+  assert.equal(
+    banco
+      .prepare("SELECT cliente_id FROM faturamento_unidades WHERE id=?")
+      .get(integrado.unidade_id).cliente_id,
+    integrado.cliente_id,
+  );
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT desconto FROM faturamento_descontos_uc WHERE unidade_id=?",
+      )
+      .get(integrado.unidade_id).desconto,
+    "25",
+  );
+  banco.exec(`CREATE TEMP TRIGGER impedir_auditoria_cadastro_integrado
+    BEFORE INSERT ON faturamento_historico
+    WHEN NEW.acao='Cadastro integrado de cliente e UC'
+    BEGIN SELECT RAISE(ABORT,'falha simulada'); END`);
+  await ok(
+    "/cadastro-integrado",
+    "POST",
+    {
+      ...cadastroIntegrado,
+      cliente_id: integrado.cliente_id,
+      uc: "987654321006",
+    },
+    500,
+  );
+  banco.exec("DROP TRIGGER impedir_auditoria_cadastro_integrado");
+  assert.equal(
+    banco
+      .prepare("SELECT id FROM faturamento_unidades WHERE uc='987654321006'")
+      .get(),
+    undefined,
+  );
+  const repetido = await ok("/cadastro-integrado", "POST", {
+    cliente_id: integrado.cliente_id,
+    cpf: cadastroIntegrado.cpf,
+    uc: cadastroIntegrado.uc,
+  });
+  assert.equal(repetido.estado, "ja_vinculada");
+  await ok("/cadastro-integrado", "POST", cadastroIntegrado, 409);
+  await ok(
+    "/cadastro-integrado",
+    "POST",
+    {
+      ...cadastroIntegrado,
+      cpf: "39053344705",
+      uc: "987654321004",
+    },
+    409,
+  );
+  await ok(
+    "/cadastro-integrado",
+    "POST",
+    {
+      cliente_id: clientePortalId,
+      cpf: "12345678909",
+      uc: cadastroIntegrado.uc,
+      confirmar_vinculo: true,
+    },
+    409,
+  );
+  const semVinculo = await ok(
+    "/unidades",
+    "POST",
+    {
+      ...unidade,
+      uc: "987654321001",
+    },
+    201,
+  );
+  await ok(
+    "/cadastro-integrado",
+    "POST",
+    {
+      cliente_id: clientePortalId,
+      cpf: "12345678909",
+      uc: "987654321001",
+    },
+    400,
+  );
+  const vinculoIntegrado = await ok(
+    "/cadastro-integrado",
+    "POST",
+    {
+      cliente_id: clientePortalId,
+      cpf: "12345678909",
+      uc: "987654321001",
+      confirmar_vinculo: true,
+    },
+    201,
+  );
+  assert.equal(vinculoIntegrado.estado, "vinculada");
+  assert.equal(
+    banco
+      .prepare("SELECT cliente_id FROM faturamento_unidades WHERE id=?")
+      .get(semVinculo.id).cliente_id,
+    clientePortalId,
+  );
+  const antigaSemDesconto = Number(
+    banco
+      .prepare(
+        "INSERT INTO faturamento_unidades(uc,nome,documento,email,dia_vencimento) VALUES(?,?,?,?,?)",
+      )
+      .run(
+        "987654321007",
+        "UC legada",
+        "11222333000181",
+        "legada@example.test",
+        7,
+      ).lastInsertRowid,
+  );
+  const completada = await ok(
+    "/cadastro-integrado",
+    "POST",
+    {
+      cliente_id: clientePortalId,
+      cpf: "12345678909",
+      uc: "987654321007",
+      confirmar_vinculo: true,
+      desconto: "20",
+      desconto_inicio: "2026-09",
+    },
+    201,
+  );
+  assert.equal(completada.estado, "vinculada");
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT desconto FROM faturamento_descontos_uc WHERE unidade_id=?",
+      )
+      .get(antigaSemDesconto).desconto,
+    "20",
+  );
+  const jaVinculadaSemDesconto = Number(
+    banco
+      .prepare(
+        "INSERT INTO faturamento_unidades(uc,nome,documento,email,dia_vencimento,cliente_id) VALUES(?,?,?,?,?,?)",
+      )
+      .run(
+        "987654321008",
+        "UC legada 2",
+        "11222333000181",
+        "legada2@example.test",
+        8,
+        clientePortalId,
+      ).lastInsertRowid,
+  );
+  const descontoAdicionado = await ok(
+    "/cadastro-integrado",
+    "POST",
+    {
+      cliente_id: clientePortalId,
+      cpf: "12345678909",
+      uc: "987654321008",
+      desconto: "15",
+      desconto_inicio: "2026-09",
+    },
+    201,
+  );
+  assert.equal(descontoAdicionado.estado, "desconto_iniciado");
+  assert.equal(
+    banco
+      .prepare("SELECT versao FROM faturamento_unidades WHERE id=?")
+      .get(jaVinculadaSemDesconto).versao,
+    2,
+  );
+  await ok(
+    "/cadastro-integrado",
+    "POST",
+    {
+      ...cadastroIntegrado,
+      cpf: "11144477735",
+      uc: "987654321002",
+      desconto: "101",
+    },
+    400,
+  );
+  assert.equal(
+    banco.prepare("SELECT id FROM customers WHERE cpf='11144477735'").get(),
+    undefined,
+  );
+  const ucEncontrada = await ok(
+    "/unidades",
+    "POST",
+    {
+      ...unidade,
+      uc: "987654321005",
+    },
+    201,
+  );
+  const novoClienteComUcExistente = await ok(
+    "/cadastro-integrado",
+    "POST",
+    {
+      nome: "Outro cliente integrado",
+      cpf: "11144477735",
+      email: "outro@example.test",
+      uc: "987654321005",
+      confirmar_vinculo: true,
+    },
+    201,
+  );
+  assert.equal(novoClienteComUcExistente.estado, "vinculada");
+  assert.equal(novoClienteComUcExistente.unidade_id, ucEncontrada.id);
+  assert.equal(
+    banco
+      .prepare("SELECT cliente_id FROM faturamento_unidades WHERE id=?")
+      .get(ucEncontrada.id).cliente_id,
+    novoClienteComUcExistente.cliente_id,
+  );
+  const concorrente = await ok(
+    "/unidades",
+    "POST",
+    {
+      ...unidade,
+      uc: "987654321003",
+    },
+    201,
+  );
+  const disputas = await Promise.all([
+    chamar("/cadastro-integrado", 2, "POST", {
+      cliente_id: clientePortalId,
+      cpf: "12345678909",
+      uc: "987654321003",
+      confirmar_vinculo: true,
+    }),
+    chamar("/cadastro-integrado", 2, "POST", {
+      cliente_id: integrado.cliente_id,
+      cpf: cadastroIntegrado.cpf,
+      uc: "987654321003",
+      confirmar_vinculo: true,
+    }),
+  ]);
+  assert.deepEqual(
+    disputas.map((resposta) => resposta.status).sort(),
+    [201, 409],
+  );
+  assert.ok(
+    [clientePortalId, integrado.cliente_id].includes(
+      banco
+        .prepare("SELECT cliente_id FROM faturamento_unidades WHERE id=?")
+        .get(concorrente.id).cliente_id,
+    ),
+  );
   assert.equal(
     (await chamar("/documentos?lote=teste&nome=a.pdf", 1, "POST", arquivo))
       .status,
@@ -311,6 +763,51 @@ try {
     400,
   );
   let d = await ok("/documentos?lote=teste&nome=a.pdf", "POST", arquivo, 201);
+  await ok(`/unidades/${vinculada.id}`, "PATCH", {
+    ...unidade,
+    uc: "123456789012",
+    cliente_id: clientePortalId,
+    versao: 2,
+  });
+  assert.ok(
+    banco
+      .prepare(
+        "SELECT COUNT(*) AS n FROM faturamento_unidades WHERE cliente_id=?",
+      )
+      .get(clientePortalId).n >= 2,
+  );
+  const dadosVinculados = {
+    ...campos,
+    uc: "123456789012",
+    unidade_id: String(vinculada.id),
+    cliente_id: String(clientePortalId),
+  };
+  await ok(
+    `/documentos/${d.id}/previa`,
+    "POST",
+    {
+      versao: d.versao,
+      dados: dadosVinculados,
+    },
+    400,
+  );
+  await ok(`/documentos/${d.id}/previa`, "POST", {
+    versao: d.versao,
+    dados: { ...dadosVinculados, uc_divergente_confirmada: "sim" },
+  });
+  await ok(
+    `/documentos/${d.id}/previa`,
+    "POST",
+    {
+      versao: d.versao,
+      dados: {
+        ...dadosVinculados,
+        cliente_id: "999999",
+        uc_divergente_confirmada: "sim",
+      },
+    },
+    400,
+  );
   await ok("/documentos?lote=teste&nome=a.pdf", "POST", arquivo, 409);
   const recebimentos = await ok("/recebimentos");
   assert.deepEqual(
@@ -321,6 +818,92 @@ try {
   assert.equal(recebimentos[0].resultado, "Erro");
   assert.equal(recebimentos[1].documento_id, d.id);
   assert.ok(recebimentos.slice(0, 3).every((r) => r.origem === "manual"));
+
+  const renomearPdf = pdf([...linhas, "ARQUIVO PARA RENOMEAR"]);
+  const documentoRenomeavel = await ok(
+    "/documentos?lote=teste&nome=original.pdf",
+    "POST",
+    renomearPdf,
+    201,
+  );
+  const rotaRenomear = `/documentos/${documentoRenomeavel.id}/renomear`;
+  const novoNome = {
+    versao: documentoRenomeavel.versao,
+    nome: "Conta setembro - João.pdf",
+  };
+  assert.equal(
+    (await chamar(rotaRenomear, null, "POST", novoNome)).status,
+    401,
+  );
+  assert.equal((await chamar(rotaRenomear, 1, "POST", novoNome)).status, 403);
+  for (const invalido of [
+    "",
+    "../fatura.pdf",
+    "CON.pdf",
+    "fatura.txt",
+    "a?.pdf",
+  ])
+    await ok(rotaRenomear, "POST", { ...novoNome, nome: invalido }, 400);
+  await ok(rotaRenomear, "POST", { ...novoNome, versao: 99 }, 409);
+  banco.exec(`CREATE TEMP TRIGGER impedir_auditoria_nome
+    BEFORE INSERT ON faturamento_historico
+    WHEN NEW.documento_id=${documentoRenomeavel.id} AND NEW.acao='PDF renomeado'
+    BEGIN SELECT RAISE(ABORT,'falha simulada'); END`);
+  await ok(rotaRenomear, "POST", novoNome, 500);
+  banco.exec("DROP TRIGGER impedir_auditoria_nome");
+  assert.equal(
+    banco
+      .prepare("SELECT nome FROM faturamento_documentos WHERE id=?")
+      .get(documentoRenomeavel.id).nome,
+    "original.pdf",
+  );
+  const documentoRenomeado = await ok(rotaRenomear, "POST", novoNome);
+  assert.equal(documentoRenomeado.nome, "Conta setembro - João.pdf");
+  assert.equal(documentoRenomeado.versao, documentoRenomeavel.versao + 1);
+  assert.deepEqual(
+    Buffer.from(
+      banco
+        .prepare("SELECT pdf FROM faturamento_documentos WHERE id=?")
+        .get(documentoRenomeavel.id).pdf,
+    ),
+    renomearPdf,
+  );
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT nome FROM faturamento_recebimentos_pdf WHERE documento_id=?",
+      )
+      .get(documentoRenomeavel.id).nome,
+    "original.pdf",
+  );
+  assert.equal(
+    (await ok("/recebimentos")).find(
+      (r) => r.documento_id === documentoRenomeavel.id,
+    ).nome,
+    "Conta setembro - João.pdf",
+  );
+  const pdfRenomeado = await chamar(
+    `/documentos/${documentoRenomeavel.id}/pdf`,
+  );
+  assert.match(
+    pdfRenomeado.headers.get("content-disposition") ?? "",
+    /filename="Conta setembro - Joao\.pdf"; filename\*=UTF-8''Conta%20setembro%20-%20Jo%C3%A3o\.pdf/,
+  );
+  assert.deepEqual(Buffer.from(await pdfRenomeado.arrayBuffer()), renomearPdf);
+  await ok(rotaRenomear, "POST", novoNome, 409);
+  const semAlteracao = await ok(rotaRenomear, "POST", {
+    versao: documentoRenomeado.versao,
+    nome: documentoRenomeado.nome,
+  });
+  assert.equal(semAlteracao.versao, documentoRenomeado.versao);
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT COUNT(*) n FROM faturamento_historico WHERE documento_id=? AND acao='PDF renomeado'",
+      )
+      .get(documentoRenomeavel.id).n,
+    1,
+  );
 
   const atorGmail = { id: null, nome: "Integração Gmail" };
   const entradaGmail = (arquivo, nome) => ({
@@ -368,6 +951,205 @@ try {
       )
       .get(novoGmail.documentoId).origem,
     "gmail",
+  );
+
+  const termoPdf = pdf(["TERMO DE RECEBIMENTO DE FATURA POR E-MAIL"]);
+  const termo = await receberPdf(entradaGmail(termoPdf, "termo.pdf"));
+  assert.equal(termo.tipo, "novo");
+  const excluirTermo = `/documentos/${termo.documentoId}/excluir`;
+  const confirmacaoExclusao = { versao: 1, confirmacao: "EXCLUIR" };
+  assert.equal(
+    (await chamar(excluirTermo, 2, "POST", confirmacaoExclusao)).status,
+    403,
+  );
+  await ok(excluirTermo, "POST", { versao: 1 }, 400);
+  await ok(excluirTermo, "POST", { ...confirmacaoExclusao, versao: 2 }, 409);
+  banco.exec(`CREATE TEMP TRIGGER impedir_auditoria_exclusao
+    BEFORE INSERT ON faturamento_historico
+    WHEN NEW.documento_id=${termo.documentoId}
+      AND NEW.acao='Exclusão definitiva de PDF em Faturas'
+    BEGIN SELECT RAISE(ABORT,'falha simulada'); END`);
+  await ok(excluirTermo, "POST", confirmacaoExclusao, 500);
+  banco.exec("DROP TRIGGER impedir_auditoria_exclusao");
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT length(pdf) tamanho FROM faturamento_documentos WHERE id=?",
+      )
+      .get(termo.documentoId).tamanho,
+    termoPdf.length,
+  );
+  assert.deepEqual(await ok(excluirTermo, "POST", confirmacaoExclusao), {
+    excluido: true,
+  });
+  const termoExcluido = banco
+    .prepare(
+      "SELECT length(pdf) tamanho,texto,extracao,dados,classificacao,excluido_em,versao FROM faturamento_documentos WHERE id=?",
+    )
+    .get(termo.documentoId);
+  assert.equal(termoExcluido.tamanho, 0);
+  assert.equal(termoExcluido.texto, "");
+  assert.equal(termoExcluido.extracao, "{}");
+  assert.equal(termoExcluido.dados, "{}");
+  assert.equal(termoExcluido.classificacao, "nao_fatura");
+  assert.ok(termoExcluido.excluido_em);
+  assert.equal(termoExcluido.versao, 2);
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT COUNT(*) n FROM faturamento_historico WHERE documento_id=? AND acao='Exclusão definitiva de PDF em Faturas'",
+      )
+      .get(termo.documentoId).n,
+    1,
+  );
+  assert.ok(
+    !(await ok("/documentos")).some((item) => item.id === termo.documentoId),
+  );
+  assert.ok(
+    !(await ok("/recebimentos")).some(
+      (item) => item.documento_id === termo.documentoId,
+    ),
+  );
+  for (const caminho of [
+    `/documentos/${termo.documentoId}`,
+    `/documentos/${termo.documentoId}/pdf`,
+  ])
+    assert.equal((await chamar(caminho)).status, 404);
+  await ok(excluirTermo, "POST", confirmacaoExclusao, 404);
+  assert.equal(
+    (await receberPdf(entradaGmail(termoPdf, "termo-repetido.pdf"))).tipo,
+    "duplicado",
+  );
+
+  await ok(
+    "/unidades",
+    "POST",
+    { ...unidade, uc: "303025501263", nome: "UC sem injeção" },
+    201,
+  );
+  const semInjecaoPdf = pdf([
+    "NUMERO DA UC",
+    "3.030.255.012-63",
+    "REF: MES/ANO SET/2026",
+    "TOTAL A PAGAR R$ 128,69",
+    "VENCIMENTO 13/10/2026",
+    "FORNECIMENTO",
+    "ADC BANDEIRA AMARELA kWh 100,00 0,024217 2,42",
+    "VL MIN FAT CUSTO DISP kWh 100,00 1,145752 114,58",
+    "ITENS FINANCEIROS",
+    "CONTRIB. ILUM. PUBLICA - MUNICIPAL 11,69",
+  ]);
+  let faturaSemInjecao = await ok(
+    "/documentos?lote=sem-injecao&nome=sem-injecao.pdf",
+    "POST",
+    semInjecaoPdf,
+    201,
+  );
+  assert.equal(faturaSemInjecao.dados.injecao, "0");
+  assert.equal(faturaSemInjecao.dados.unitario, undefined);
+  const dadosSemInjecao = {
+    ...faturaSemInjecao.dados,
+    modalidade: "GDI",
+    ajuste_gdii: "",
+    vencimento_ecosol: "",
+  };
+  await ok(
+    `/documentos/${faturaSemInjecao.id}/previa`,
+    "POST",
+    {
+      versao: faturaSemInjecao.versao,
+      dados: { ...dadosSemInjecao, ajuste_gdii: "1" },
+    },
+    400,
+  );
+  faturaSemInjecao = await ok(`/documentos/${faturaSemInjecao.id}`, "PATCH", {
+    versao: faturaSemInjecao.versao,
+    dados: dadosSemInjecao,
+  });
+  assert.equal(faturaSemInjecao.dados.vencimento_ecosol, "");
+  const previaSemInjecao = await ok(
+    `/documentos/${faturaSemInjecao.id}/previa`,
+    "POST",
+    { versao: faturaSemInjecao.versao, dados: dadosSemInjecao },
+  );
+  assert.equal(previaSemInjecao.memoria.total_centavos, 12869);
+  assert.equal(previaSemInjecao.memoria.consumo_centavos, 0);
+  assert.equal(previaSemInjecao.memoria.entradas.desconto, "0");
+  assert.equal(
+    previaSemInjecao.memoria.contrato.origem,
+    "sem_injecao_sem_desconto",
+  );
+  assert.equal(previaSemInjecao.memoria.fonte.tipo, "nao_aplicavel");
+  assert.equal(
+    previaSemInjecao.memoria.vencimento_ecosol,
+    faturaSemInjecao.dados.vencimento_equatorial,
+  );
+  assert.match(previaSemInjecao.hash, /^[a-f0-9]{64}$/);
+  faturaSemInjecao = await ok(
+    `/documentos/${faturaSemInjecao.id}/calcular`,
+    "POST",
+    {
+      versao: faturaSemInjecao.versao,
+      conferido: true,
+    },
+  );
+  assert.equal(faturaSemInjecao.memoria.total_centavos, 12869);
+  assert.equal(
+    faturaSemInjecao.dados.vencimento_ecosol,
+    faturaSemInjecao.dados.vencimento_equatorial,
+  );
+  faturaSemInjecao = await ok(
+    `/documentos/${faturaSemInjecao.id}/aprovar`,
+    "POST",
+    { versao: faturaSemInjecao.versao },
+  );
+  assert.match(faturaSemInjecao.status, /aguardando emissão/);
+
+  const clienteProvisorioId = Number(
+    banco
+      .prepare(
+        "INSERT INTO faturamento_clientes_provisorios(nome,chave_origem,origem) VALUES (?,?,?)",
+      )
+      .run("Cliente para conferência", "teste-provisorio-1", "Teste")
+      .lastInsertRowid,
+  );
+  banco
+    .prepare(
+      "INSERT INTO faturamento_unidades(uc,nome,documento,email,dia_vencimento,cliente_provisorio_id) VALUES (?,?,?,?,?,?)",
+    )
+    .run("999888777666", "UC para conferência", "", "", 0, clienteProvisorioId);
+  assert.equal(
+    (await ok("/clientes-provisorios", "GET")).find(
+      (item) => item.id === clienteProvisorioId,
+    ).unidades,
+    1,
+  );
+  assert.equal(
+    (await ok("/unidades", "GET")).find((item) => item.uc === "999888777666")
+      .cliente_nome,
+    "Cliente para conferência",
+  );
+  const pdfProvisorio = pdf([
+    "NUMERO DA UC",
+    "999.888.777-666",
+    "REF: MES/ANO SET/2026",
+    "TOTAL A PAGAR R$ 128,69",
+    "VENCIMENTO 13/10/2026",
+  ]);
+  const faturaProvisoria = await ok(
+    "/documentos?lote=provisorio&nome=provisorio.pdf",
+    "POST",
+    pdfProvisorio,
+    201,
+  );
+  await ok(
+    `/documentos/${faturaProvisoria.id}/previa`,
+    "POST",
+    {
+      versao: faturaProvisoria.versao,
+      dados: { ...faturaProvisoria.dados, modalidade: "GDI", injecao: "0" },
+    },
+    409,
   );
 
   const acessoInicial = await receberPdf({
@@ -469,7 +1251,7 @@ try {
     assert.equal(visualizacao.headers.get("content-type"), "application/pdf");
     assert.match(
       visualizacao.headers.get("content-disposition") ?? "",
-      /^inline; filename="fatura-\d+\.pdf"$/,
+      /^inline; filename="a\.pdf"; filename\*=UTF-8''a\.pdf$/,
     );
     assert.equal(visualizacao.headers.get("x-frame-options"), "SAMEORIGIN");
     assert.equal(visualizacao.headers.get("cache-control"), "no-store");
@@ -502,6 +1284,7 @@ try {
     1,
   );
   assert.equal(previa.memoria.total_centavos, 146830);
+  assert.equal(previa.memoria.vencimento_ecosol, campos.vencimento_ecosol);
   assert.equal(previa.memoria.tarifa_completa, "1.169969");
   assert.match(previa.hash, /^[a-f0-9]{64}$/);
   assert.deepEqual(
@@ -530,6 +1313,21 @@ try {
     `/documentos/${d.id}/previa`,
     "POST",
     { versao: d.versao, dados: { ...campos, unitario: "" } },
+    400,
+  );
+  await ok(
+    `/documentos/${d.id}/previa`,
+    "POST",
+    { versao: d.versao, dados: { ...campos, vencimento_ecosol: "2026-02-30" } },
+    400,
+  );
+  await ok(
+    `/documentos/${d.id}/previa`,
+    "POST",
+    {
+      versao: d.versao,
+      dados: { ...campos, vencimento_equatorial: "", vencimento_ecosol: "" },
+    },
     400,
   );
   await ok(`/documentos/${d.id}/calcular`, "POST", { versao: d.versao }, 400);
@@ -576,6 +1374,12 @@ try {
     dados: campos,
     previa_hash: previa.hash,
   });
+  await ok(
+    `/documentos/${d.id}/excluir`,
+    "POST",
+    { versao: d.versao, confirmacao: "EXCLUIR" },
+    409,
+  );
   assert.equal(d.memoria.total_centavos, 146830);
   assert.deepEqual(d.memoria, previa.memoria);
   assert.equal(d.versao, antesDaPrevia.versao + 1);
@@ -593,6 +1397,18 @@ try {
   });
   d = await ok(`/documentos/${d.id}/aprovar`, "POST", { versao: d.versao });
   assert.match(d.status, /aguardando emissão/);
+  await ok(
+    `/documentos/${d.id}/renomear`,
+    "POST",
+    { versao: d.versao, nome: "Aprovada.pdf" },
+    409,
+  );
+  await ok(
+    `/documentos/${d.id}/excluir`,
+    "POST",
+    { versao: d.versao, confirmacao: "EXCLUIR" },
+    409,
+  );
   await ok(
     `/documentos/${d.id}`,
     "PATCH",

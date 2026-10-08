@@ -1,6 +1,8 @@
 import { useState } from "react";
+import { useLocation } from "react-router-dom";
 import { DadosDaEquipe } from "../dadosDaAplicacao";
 import CampoDeCpf from "../componentes/CampoDeCpf";
+import CadastroIntegradoCliente from "./CadastroIntegradoCliente";
 import UnidadesDeCobranca from "./UnidadesDeCobranca";
 import { usarAdministrador } from "./EstruturaAdministrativa";
 import {
@@ -52,13 +54,47 @@ const secoesDosCadastros: {
 ];
 
 export default function Clientes() {
+  const location = useLocation();
+  const nomeInicialCliente =
+    location.state &&
+    typeof location.state === "object" &&
+    "nomeInicialCliente" in location.state &&
+    typeof location.state.nomeInicialCliente === "string"
+      ? location.state.nomeInicialCliente.slice(0, 120)
+      : "";
+  const clienteParaVincular =
+    location.state &&
+    typeof location.state === "object" &&
+    "clienteParaVincular" in location.state &&
+    Number.isSafeInteger(Number(location.state.clienteParaVincular)) &&
+    Number(location.state.clienteParaVincular) > 0
+      ? Number(location.state.clienteParaVincular)
+      : null;
+  const ucInicial =
+    location.state &&
+    typeof location.state === "object" &&
+    "ucInicial" in location.state &&
+    typeof location.state.ucInicial === "string"
+      ? location.state.ucInicial.slice(0, 30)
+      : "";
   const administrador = usarAdministrador();
-  const [secao, definirSecao] = useState<SecaoDosCadastros>("unidades");
+  const [secao, definirSecao] = useState<SecaoDosCadastros>(
+    nomeInicialCliente || clienteParaVincular ? "clientes" : "unidades",
+  );
   const consulta = usarConsulta<DadosDaEquipe>(
     secao === "unidades" ? null : `/api/equipe/dados?secao=${secao}`,
   );
+  const provisorios = usarConsulta<
+    { id: number; nome: string; unidades: number }[]
+  >(
+    secao === "clientes"
+      ? "/api/admin/faturamento/clientes-provisorios"
+      : null,
+  );
   const [busca, definirBusca] = useState("");
-  const [formulario, definirFormulario] = useState(false);
+  const [formulario, definirFormulario] = useState(
+    Boolean(nomeInicialCliente || clienteParaVincular),
+  );
   const [novoAcesso, definirNovoAcesso] = useState(false);
   const [clienteParaExcluir, definirClienteParaExcluir] = useState<
     number | null
@@ -200,36 +236,62 @@ export default function Clientes() {
       </nav>
       {formulario && secao === "clientes" && (
         <div className="admin-grade">
-          <FormularioAutomatico
-            titulo="Cadastrar cliente"
-            endereco="/api/equipe/clientes"
-            aoSalvar={consulta.atualizar}
-          >
-            <label>
-              Nome
-              <input name="name" maxLength={120} required />
-            </label>
-            <CampoDeCpf id="novo-cliente" gerarTeste={import.meta.env.DEV} />
-            <label>
-              Email
-              <input name="email" type="email" maxLength={180} required />
-            </label>
-            {import.meta.env.DEV && (
+          {administrador.nivel >= 2 ? (
+            <CadastroIntegradoCliente
+              nomeInicial={nomeInicialCliente}
+              clienteInicialId={clienteParaVincular}
+              ucInicial={ucInicial}
+              aoSalvar={(texto) => {
+                consulta.atualizar();
+                definirFormulario(false);
+                definirMensagem(texto);
+              }}
+            />
+          ) : (
+            <FormularioAutomatico
+              titulo="Cadastrar cliente"
+              endereco="/api/equipe/clientes"
+              aoSalvar={() => {
+                consulta.atualizar();
+                definirFormulario(false);
+                definirMensagem(
+                  "Cliente cadastrado. Solicite à equipe autorizada o vínculo da UC.",
+                );
+              }}
+            >
               <label>
-                Senha inicial (opcional)
+                Nome
                 <input
-                  name="test_password"
-                  type="password"
-                  minLength={8}
-                  maxLength={128}
-                  autoComplete="new-password"
+                  name="name"
+                  maxLength={120}
+                  defaultValue={nomeInicialCliente}
+                  required
                 />
               </label>
-            )}
-          </FormularioAutomatico>
+              <CampoDeCpf id="novo-cliente" gerarTeste={import.meta.env.DEV} />
+              <label>
+                Email
+                <input name="email" type="email" maxLength={180} required />
+              </label>
+              {import.meta.env.DEV && (
+                <label>
+                  Senha inicial (opcional)
+                  <input
+                    name="test_password"
+                    type="password"
+                    minLength={8}
+                    maxLength={128}
+                    autoComplete="new-password"
+                  />
+                </label>
+              )}
+            </FormularioAutomatico>
+          )}
         </div>
       )}
-      {secao === "unidades" && <UnidadesDeCobranca />}
+      {secao === "unidades" && (
+        <UnidadesDeCobranca clienteInicialId={clienteParaVincular} />
+      )}
       {secao !== "unidades" && (
         <section className="admin-cartao">
           <EstadoDaConsulta {...consulta} repetir={consulta.atualizar} />
@@ -245,6 +307,10 @@ export default function Clientes() {
           )}
           {secao === "clientes" && (
             <>
+              <EstadoDaConsulta
+                {...provisorios}
+                repetir={provisorios.atualizar}
+              />
               <div className="admin-barra">
                 <div>
                   <h2>Lista de clientes</h2>
@@ -331,6 +397,44 @@ export default function Clientes() {
                   <p>Nenhum cliente encontrado.</p>
                 )}
               </div>
+              {(provisorios.dados ?? []).some(
+                (item) =>
+                  item.unidades > 0 &&
+                  item.nome.toLowerCase().includes(busca.toLowerCase()),
+              ) && (
+                <div className="admin-tabela">
+                  <h3>Cadastros provisórios de teste</h3>
+                  <p>
+                    Sem CPF e e-mail confirmados e sem acesso ao portal. Para
+                    concluir, cadastre o cliente real e vincule cada UC em
+                    Unidades e contratos.
+                  </p>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Cliente identificado</th>
+                        <th>UCs vinculadas</th>
+                        <th>Situação</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(provisorios.dados ?? [])
+                        .filter(
+                          (item) =>
+                            item.unidades > 0 &&
+                            item.nome.toLowerCase().includes(busca.toLowerCase()),
+                        )
+                        .map((item) => (
+                          <tr key={item.id}>
+                            <td>{item.nome}</td>
+                            <td>{item.unidades}</td>
+                            <td>Cadastro pendente, sem acesso</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </>
           )}
           {secao === "acessos" && administrador.nivel === 3 && (

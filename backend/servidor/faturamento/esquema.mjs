@@ -6,6 +6,10 @@ export function prepararFaturamento(banco) {
       documento TEXT NOT NULL, email TEXT NOT NULL, dia_vencimento INTEGER NOT NULL,
       versao INTEGER NOT NULL DEFAULT 1, criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS faturamento_clientes_provisorios (
+      id INTEGER PRIMARY KEY, nome TEXT NOT NULL, chave_origem TEXT NOT NULL UNIQUE,
+      origem TEXT NOT NULL, criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
     CREATE TABLE IF NOT EXISTS faturamento_descontos_uc (
       id INTEGER PRIMARY KEY, unidade_id INTEGER NOT NULL, inicio TEXT NOT NULL,
       desconto TEXT NOT NULL, criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -101,6 +105,31 @@ export function prepararFaturamento(banco) {
   ) {
     banco.exec("ALTER TABLE faturamento_unidades ADD COLUMN usina_id INTEGER");
   }
+  if (
+    !banco
+      .prepare("PRAGMA table_info(faturamento_unidades)")
+      .all()
+      .some((c) => c.name === "cliente_id")
+  ) {
+    banco.exec(
+      "ALTER TABLE faturamento_unidades ADD COLUMN cliente_id INTEGER",
+    );
+  }
+  if (
+    !banco
+      .prepare("PRAGMA table_info(faturamento_unidades)")
+      .all()
+      .some((c) => c.name === "cliente_provisorio_id")
+  ) {
+    banco.exec(
+      "ALTER TABLE faturamento_unidades ADD COLUMN cliente_provisorio_id INTEGER",
+    );
+  }
+  banco.exec(`CREATE INDEX IF NOT EXISTS faturamento_unidades_cliente
+    ON faturamento_unidades(cliente_id) WHERE cliente_id IS NOT NULL`);
+  banco.exec(`CREATE INDEX IF NOT EXISTS faturamento_unidades_provisorio
+    ON faturamento_unidades(cliente_provisorio_id)
+    WHERE cliente_provisorio_id IS NOT NULL`);
   banco.exec(`CREATE TABLE IF NOT EXISTS faturamento_importacoes (
     id TEXT PRIMARY KEY, responsavel_id INTEGER, nome TEXT NOT NULL, hash TEXT NOT NULL,
     usina_id INTEGER NOT NULL, abas TEXT NOT NULL, previa TEXT, previa_id TEXT,

@@ -17,8 +17,35 @@ const meses = [
   "DEZ",
 ];
 
+// O título do quadro verde nem sempre está na camada de texto do PDF.
+// A posição do número, junto à linha RAMAL, identifica a UC de cobrança;
+// os números da seção SCEE ficam em outra região e não são candidatos.
+export function extrairUcDoQuadro(itens, largura, altura) {
+  if (!(largura > 0 && altura > 0)) return null;
+  const visiveis = itens.filter((item) => "str" in item);
+  const ramais = visiveis.filter(
+    (item) =>
+      /PERDAS DE TRANSFORMA[CÇ][AÃ]O\s*\/\s*RAMAL:/i.test(item.str) &&
+      item.transform[4] < largura * 0.3,
+  );
+  const formato = /^\d{1,3}(?:\.\d{3}){2,3}-\d{2}$/;
+  const candidatos = visiveis.filter((item) => {
+    const x = item.transform[4];
+    const y = item.transform[5];
+    return (
+      formato.test(item.str.trim()) &&
+      x >= largura * 0.3 &&
+      x <= largura * 0.6 &&
+      y >= altura * 0.72 &&
+      y <= altura * 0.9 &&
+      ramais.some((ramal) => Math.abs(ramal.transform[5] - y) <= 6)
+    );
+  });
+  return candidatos.length === 1 ? candidatos[0].str.trim() : null;
+}
+
 // Extração assistida: sugestões nunca liberam uma cobrança sem conferência.
-export function extrairCampos(texto) {
+export function extrairCampos(texto, { ucQuadro = null } = {}) {
   const normal = texto
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -59,13 +86,21 @@ export function extrairCampos(texto) {
     ...ucsCabecalho.map((item) => ucCanonica(item[1])),
     ...(ucExplicita ? [ucCanonica(ucExplicita[1])] : []),
   ];
-  if (
+  const ucDoQuadro =
+    ucQuadro && new RegExp(`^${formatoUc}$`).test(ucQuadro)
+      ? ucCanonica(ucQuadro)
+      : null;
+  const ucsDivergentes =
+    new Set(valoresUc).size > 1 ||
+    (ucDoQuadro && valoresUc.some((valor) => valor !== ucDoQuadro));
+  if (!ucsDivergentes && ucDoQuadro)
+    guardar("uc", ucDoQuadro, `Quadro verde da UC: ${ucQuadro}`);
+  else if (
+    !ucsDivergentes &&
     valoresUc.length &&
-    new Set(valoresUc).size === 1 &&
     (ucExplicita || ucsRodape.length)
-  ) {
+  )
     guardar("uc", valoresUc[0], ucExplicita?.[0] ?? ucsRodape[0][0]);
-  }
   const ref = normal.match(
     /\b(JAN|FEV|MAR|ABR|MAI|JUN|JUL|AGO|SET|OUT|NOV|DEZ)\s*\/\s*(20\d{2})\b/,
   );
@@ -136,7 +171,8 @@ export function extrairCampos(texto) {
     let linha = linhas[i];
     if (
       /INJECAO SCEE|PARC INJET|CONSUMO NAO COMPENSADO/.test(linha) &&
-      !/KWH/.test(linha)
+      !/KWH/.test(linha) &&
+      /^\s*KWH\b/.test(linhas[i + 1] || "")
     )
       linha += " " + (linhas[i + 1] || "");
     const depois = linha.split(/KWH\s*/)[1];
@@ -155,6 +191,32 @@ export function extrairCampos(texto) {
   if (injecoes.length === 1) {
     guardar("injecao", br(injecoes[0].valores[0]), injecoes[0].linha);
   }
+  // Ausência de linha não é o mesmo que falha de leitura. Só assumir zero
+  // quando a tabela de fornecimento estiver delimitada e contiver itens kWh.
+  const inicioFornecimento = linhas.findIndex((linha) =>
+    /^\s*FORNECIMENTO\s*$/.test(linha),
+  );
+  const fimFornecimento = linhas.findIndex(
+    (linha, indice) =>
+      indice > inicioFornecimento &&
+      /^\s*(?:ITENS FINANCEIROS|TIPOS DE)/.test(linha),
+  );
+  const tabelaFornecimentoLegivel =
+    inicioFornecimento >= 0 &&
+    fimFornecimento > inicioFornecimento &&
+    linhas
+      .slice(inicioFornecimento + 1, fimFornecimento)
+      .some((linha) => /\bKWH\b/.test(linha));
+  const injecaoZeroInferida =
+    injecoes.length === 0 &&
+    tabelaFornecimentoLegivel &&
+    !/\bINJECAO\b/.test(normal);
+  if (injecaoZeroInferida)
+    guardar(
+      "injecao",
+      "0",
+      "Inferência: tabela de fornecimento legível sem linha de injeção SCEE; 0 kWh.",
+    );
   if (consumosNaoCompensados.length === 1)
     guardar(
       "unitario",
@@ -168,6 +230,18 @@ export function extrairCampos(texto) {
   const avisos = [
     "Confira todos os campos com o PDF antes de calcular. A tarifa completa soma o preço do consumo não compensado e a bandeira, ambos em R$/kWh.",
   ];
+  if (ucsDivergentes)
+    avisos.push(
+      "Números de UC divergentes entre o quadro verde e outras áreas da fatura; confirme a UC no PDF antes de vincular o cliente.",
+    );
+  else if (!ucDoQuadro && dados.uc)
+    avisos.push(
+      "A posição da UC no quadro verde não pôde ser confirmada automaticamente; confira o número diretamente no PDF.",
+    );
+  if (injecaoZeroInferida)
+    avisos.push(
+      "Injeção SCEE assumida como 0 kWh pela ausência da linha na tabela de fornecimento; confirme no PDF.",
+    );
   if (!dados.bandeira)
     avisos.push(
       "Bandeira não identificada. Informe o componente em R$/kWh ou selecione uma GDI aprovada do lote.",
@@ -206,6 +280,7 @@ export function extrairCampos(texto) {
       (identificados.length / camposEsperados.length) * 100,
     ),
     pendencias,
+    ...(injecaoZeroInferida ? { campos_inferidos: ["Injeção SCEE"] } : {}),
   };
   return { dados, evidencias, avisos, qualidade };
 }
@@ -223,9 +298,16 @@ export async function lerPdf(buffer) {
     if (documento.numPages > 10)
       throw new Error("Envie uma fatura com até 10 páginas.");
     const paginas = [];
+    let ucQuadro = null;
     for (let p = 1; p <= documento.numPages; p++) {
       const pagina = await documento.getPage(p);
       const conteudo = await pagina.getTextContent();
+      if (p === 1)
+        ucQuadro = extrairUcDoQuadro(
+          conteudo.items,
+          pagina.view[2] - pagina.view[0],
+          pagina.view[3] - pagina.view[1],
+        );
       const linhas = new Map();
       for (const item of conteudo.items) {
         if (!("str" in item)) continue;
@@ -246,7 +328,11 @@ export async function lerPdf(buffer) {
       );
     }
     const texto = paginas.join("\n\n").slice(0, 200000);
-    return { texto, paginas: documento.numPages, ...extrairCampos(texto) };
+    return {
+      texto,
+      paginas: documento.numPages,
+      ...extrairCampos(texto, { ucQuadro }),
+    };
   } finally {
     await tarefa.destroy();
   }

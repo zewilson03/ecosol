@@ -121,13 +121,46 @@ export function calcularCobranca({
   modalidade,
 }) {
   if (!["GDI", "GDII"].includes(modalidade)) falhar("Modalidade inválida.");
+  const energiaInjetada = decimal(injecao, "a injeção SCEE");
+  const totalEquatorial = decimal(total_equatorial, "o total Equatorial", 2);
+  const semInjecao = new D(energiaInjetada).isZero();
+  const ajuste = decimal(
+    semInjecao && (ajuste_gdii === "" || ajuste_gdii == null)
+      ? "0"
+      : ajuste_gdii,
+    "o ajuste GDII",
+    2,
+  );
+  if (semInjecao) {
+    if (!new D(ajuste).isZero())
+      falhar("Sem injeção SCEE, o ajuste GDII deve ser zero.");
+    if (!new D(totalEquatorial).gt(0))
+      falhar("Total Equatorial zerado: não há cobrança a calcular.");
+    return {
+      regra: "ecosol-v1-sem-injecao",
+      entradas: {
+        injecao: "0",
+        unitario: "0",
+        bandeira: "0",
+        desconto: "0",
+        total_equatorial: totalEquatorial,
+        ajuste_gdii: "0",
+        modalidade,
+      },
+      tarifa_completa: "0",
+      consumo_centavos: 0,
+      equatorial_centavos: new D(totalEquatorial).times(100).toNumber(),
+      ajuste_centavos: 0,
+      total_centavos: new D(totalEquatorial).times(100).toNumber(),
+    };
+  }
   const entradas = {
-    injecao: decimal(injecao, "a injeção SCEE"),
+    injecao: energiaInjetada,
     unitario: decimal(unitario, "a tarifa unitária", 9, "100"),
     bandeira: decimal(bandeira, "a bandeira em R$/kWh", 9, "100"),
     desconto: decimal(desconto, "o desconto", 2, "100"),
-    total_equatorial: decimal(total_equatorial, "o total Equatorial", 2),
-    ajuste_gdii: decimal(ajuste_gdii, "o ajuste GDII", 2),
+    total_equatorial: totalEquatorial,
+    ajuste_gdii: ajuste,
     modalidade,
   };
   if (modalidade === "GDI" && !new D(entradas.ajuste_gdii).isZero())
