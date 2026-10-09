@@ -2,7 +2,11 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { sugerirVencimentoEcosol } from "./vencimentoEcosol";
 import { unidadeDaFatura } from "./vinculoAutomaticoFatura";
-import { pendenciasParaCalculo, situacaoParaEmissao } from "./prontidaoFatura";
+import {
+  modalidadeDaUcNaCompetencia,
+  pendenciasParaCalculo,
+  situacaoParaEmissao,
+} from "./prontidaoFatura";
 import {
   consultarServidor,
   formatarDinheiro,
@@ -217,7 +221,7 @@ export default function PreparacaoFaturas() {
   useEffect(() => {
     if (
       !selecionado ||
-      selecionado.memoria ||
+      (selecionado.memoria && !alterado) ||
       selecionado.status === aprovada ||
       alterado ||
       dados.unidade_id ||
@@ -700,6 +704,27 @@ export default function PreparacaoFaturas() {
             (u.cliente_id === Number(dados.cliente_id) ||
               (u.cliente_provisorio_id != null && !dados.cliente_id)),
         );
+  const modalidadeDaUsina = modalidadeDaUcNaCompetencia(
+    unidade,
+    dados.competencia ?? "",
+  );
+  useEffect(() => {
+    if (
+      !selecionado ||
+      (selecionado.memoria && !alterado) ||
+      selecionado.status === aprovada ||
+      !modalidadeDaUsina ||
+      dados.modalidade === modalidadeDaUsina.modalidade
+    )
+      return;
+    setDados((anterior) => ({
+      ...anterior,
+      modalidade: modalidadeDaUsina.modalidade,
+    }));
+    setPrevia(null);
+    setAlterado(true);
+    setConferido(false);
+  }, [selecionado, alterado, modalidadeDaUsina, dados.modalidade]);
   const termoCliente = normalizarBuscaCliente(buscaCliente);
   const sugestoesCliente = termoCliente
     ? (clientesPortal.dados ?? [])
@@ -720,7 +745,13 @@ export default function PreparacaoFaturas() {
         })
         .slice(0, 8)
     : [];
-  const modalidadeInformada = (dados.modalidade ?? "").trim();
+  const modalidadeInformada = (
+    selecionado?.memoria && !alterado
+      ? selecionado.memoria.contrato.modalidade
+      : unidade?.usina_id
+        ? (modalidadeDaUsina?.modalidade ?? dados.modalidade ?? "")
+        : (dados.modalidade ?? "")
+  ).trim();
   const injecaoInformada = String(dados.injecao ?? "").trim();
   const semInjecao =
     injecaoInformada !== "" && Number(injecaoInformada.replace(",", ".")) === 0;
@@ -969,9 +1000,9 @@ export default function PreparacaoFaturas() {
                   ? "incompleta"
                   : r.resultado === "Duplicada"
                     ? "duplicada"
-                  : r.resultado === "Requer atenção"
-                    ? "atencao"
-                    : "");
+                    : r.resultado === "Requer atenção"
+                      ? "atencao"
+                      : "");
               return (
                 <article
                   className={`faturamento-item ${cor} ${selecionado?.id === r.documento_id ? "selecionado" : ""}`}
@@ -983,11 +1014,11 @@ export default function PreparacaoFaturas() {
                       ? "!"
                       : r.resultado === "Recebida"
                         ? "○"
-                      : r.resultado === "Duplicada"
-                        ? "↺"
-                        : r.resultado === "Erro"
-                          ? "!"
-                          : "i"}
+                        : r.resultado === "Duplicada"
+                          ? "↺"
+                          : r.resultado === "Erro"
+                            ? "!"
+                            : "i"}
                   </span>
                   <div className="faturamento-item-arquivo">
                     {renomeando?.origem === "lista" &&
@@ -1020,9 +1051,7 @@ export default function PreparacaoFaturas() {
                           : "Origem anterior"}
                     </span>
                   </div>
-                  <span
-                    className={`faturamento-situacao ${cor}`}
-                  >
+                  <span className={`faturamento-situacao ${cor}`}>
                     {situacao?.texto ??
                       (r.resultado === "Recebida"
                         ? "Verificando dados"
@@ -1179,7 +1208,9 @@ export default function PreparacaoFaturas() {
                     <ul aria-label="Dados que faltam">
                       {faltantes.map((pendencia) => (
                         <li key={pendencia}>
-                          <a href={`#conferencia-${secaoDaPendencia(pendencia)}`}>
+                          <a
+                            href={`#conferencia-${secaoDaPendencia(pendencia)}`}
+                          >
                             {pendencia} <span aria-hidden="true">↗</span>
                           </a>
                         </li>
@@ -1214,7 +1245,10 @@ export default function PreparacaoFaturas() {
                 </details>
               )}
               <div className="faturamento-conferencia">
-                <section id="conferencia-cadastro" className="faturamento-grupo faturamento-grupo--cadastro">
+                <section
+                  id="conferencia-cadastro"
+                  className="faturamento-grupo faturamento-grupo--cadastro"
+                >
                   <div className="faturamento-grupo-titulo">
                     <span>01</span>
                     <div>
@@ -1223,7 +1257,10 @@ export default function PreparacaoFaturas() {
                       <p>Quem está vinculado a esta fatura.</p>
                     </div>
                   </div>
-                  <fieldset className="admin-campos faturamento-campos-unicos" disabled={bloqueado}>
+                  <fieldset
+                    className="admin-campos faturamento-campos-unicos"
+                    disabled={bloqueado}
+                  >
                     <div
                       className={`faturamento-cliente-busca ${faltantes.includes("cliente e UC") || faltantes.includes("cadastro definitivo do cliente") ? "faturamento-campo-pendente" : ""}`}
                       onBlur={(e) => {
@@ -1376,7 +1413,7 @@ export default function PreparacaoFaturas() {
                       </small>
                       {unidade?.cliente_provisorio_id != null && (
                         <small className="faturamento-pendente-ajuda">
-                          Cadastro provisório, sem acesso ao portal. {" "}
+                          Cadastro provisório, sem acesso ao portal.{" "}
                           <Link to="/admin/clientes">
                             Completar cadastro do cliente
                           </Link>
@@ -1385,7 +1422,10 @@ export default function PreparacaoFaturas() {
                     </div>
                   </fieldset>
                 </section>
-                <section id="conferencia-equatorial" className="faturamento-grupo faturamento-grupo--equatorial">
+                <section
+                  id="conferencia-equatorial"
+                  className="faturamento-grupo faturamento-grupo--equatorial"
+                >
                   <div className="faturamento-grupo-titulo">
                     <span>02</span>
                     <div>
@@ -1416,7 +1456,10 @@ export default function PreparacaoFaturas() {
                     </p>
                   )}
                 </section>
-                <section id="conferencia-ecosol" className="faturamento-grupo faturamento-grupo--ecosol">
+                <section
+                  id="conferencia-ecosol"
+                  className="faturamento-grupo faturamento-grupo--ecosol"
+                >
                   <div className="faturamento-grupo-titulo">
                     <span>03</span>
                     <div>
@@ -1427,18 +1470,32 @@ export default function PreparacaoFaturas() {
                   </div>
                   <fieldset className="admin-campos" disabled={bloqueado}>
                     <label
-                      className={!dados.modalidade ? "faturamento-campo-pendente" : ""}
+                      className={
+                        !modalidadeInformada ? "faturamento-campo-pendente" : ""
+                      }
                     >
-                      Modalidade desta fatura
+                      {unidade?.usina_id
+                        ? "Modalidade da usina nesta competência"
+                        : "Modalidade desta fatura (UC sem usina)"}
                       <select
-                        value={dados.modalidade ?? ""}
-                        aria-invalid={!dados.modalidade}
+                        value={modalidadeInformada}
+                        aria-invalid={!modalidadeInformada}
+                        disabled={Boolean(
+                          unidade?.usina_id && modalidadeDaUsina,
+                        )}
                         onChange={(e) => mudar("modalidade", e.target.value)}
                       >
                         <option value="">Selecione</option>
                         <option value="GDI">GDI</option>
                         <option value="GDII">GDII</option>
                       </select>
+                      {unidade?.usina_id && (
+                        <small>
+                          {modalidadeDaUsina
+                            ? `Definida pela usina desde ${modalidadeDaUsina.inicio}.`
+                            : "Competência anterior à vigência da usina: informe a modalidade desta fatura manualmente."}
+                        </small>
+                      )}
                     </label>
                     {campo(
                       "ajuste_gdii",
@@ -1503,7 +1560,10 @@ export default function PreparacaoFaturas() {
                     </p>
                   )}
                 </section>
-                <section id="conferencia-datas" className="faturamento-grupo faturamento-grupo--datas">
+                <section
+                  id="conferencia-datas"
+                  className="faturamento-grupo faturamento-grupo--datas"
+                >
                   <div className="faturamento-grupo-titulo">
                     <span>04</span>
                     <div>
@@ -1524,19 +1584,18 @@ export default function PreparacaoFaturas() {
                       "date",
                     )}
                   </fieldset>
-                  {!dados.vencimento_ecosol &&
-                    dados.vencimento_equatorial && (
-                      <p className="faturamento-ajuda-vencimento">
-                        Sem data Ecosol: será usado o vencimento Equatorial de{" "}
-                        <strong>
-                          {dados.vencimento_equatorial
-                            .split("-")
-                            .reverse()
-                            .join("/")}
-                        </strong>
-                        .
-                      </p>
-                    )}
+                  {!dados.vencimento_ecosol && dados.vencimento_equatorial && (
+                    <p className="faturamento-ajuda-vencimento">
+                      Sem data Ecosol: será usado o vencimento Equatorial de{" "}
+                      <strong>
+                        {dados.vencimento_equatorial
+                          .split("-")
+                          .reverse()
+                          .join("/")}
+                      </strong>
+                      .
+                    </p>
+                  )}
                 </section>
                 {selecionado.status !== aprovada && (
                   <section className="faturamento-grupo faturamento-grupo--resultado faturamento-previa">

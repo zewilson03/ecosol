@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "test:planilhas": "node backend/testes/planilhas.test.mjs",
+    "test:transferencias": "node backend/testes/transferenciasUsinas.test.mjs",
     "test:faturamento": "node backend/testes/faturamento.test.mjs",
     "test:gmail": "node backend/testes/gmailPersistencia.test.mjs && node backend/testes/gmailAceiteProcessos.test.mjs && node backend/testes/gmailGoogle.test.mjs && node backend/testes/gmailGoogleCaptura.test.mjs && node backend/testes/gmailOAuth.test.mjs && node backend/testes/gmailCaptura.test.mjs && node backend/testes/gmailTriagem.test.mjs",
     "test:permissoes": "node backend/testes/permissoesAdministrativas.test.mjs && node backend/testes/primeiroAdministrador.test.mjs && node backend/testes/hashesExportados.test.mjs",

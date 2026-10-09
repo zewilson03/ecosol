@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import EstruturaAdministrativa from "./admin/EstruturaAdministrativa";
 import Usinas from "./admin/Usinas";
+import DetalheDaUsina from "./admin/DetalheDaUsina";
 import Faturas from "./admin/Faturas";
 import Clientes from "./admin/Clientes";
 import Financeiro from "./admin/Financeiro";
@@ -24,6 +25,7 @@ export default function RotasDaAplicacao() {
         <Route path="/admin" element={<EstruturaAdministrativa />}>
           <Route index element={<Navigate to="usinas" replace />} />
           <Route path="usinas" element={<Usinas />} />
+          <Route path="usinas/:id" element={<DetalheDaUsina />} />
           <Route path="faturas" element={<Faturas />} />
           <Route path="clientes" element={<Clientes />} />
           <Route path="financeiro" element={<Financeiro />} />

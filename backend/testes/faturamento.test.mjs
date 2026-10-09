@@ -1986,6 +1986,225 @@ try {
     { versao: descartada.versao },
     404,
   );
+  const usinaModalidade = await ok(
+    "/usinas",
+    "POST",
+    {
+      nome: "Usina de modalidade",
+      localizacao: "Goiás",
+      modalidade: "GDI",
+      inicio: "2026-09",
+    },
+    201,
+  );
+  const cadastroNaUsina = await ok(
+    "/cadastro-integrado",
+    "POST",
+    {
+      nome: "Cliente da usina",
+      cpf: "16899535009",
+      email: "cliente-usina@example.test",
+      uc: "555222333444",
+      unidade_nome: "Cliente da usina",
+      unidade_documento: "16899535009",
+      unidade_email: "cliente-usina@example.test",
+      dia_vencimento: 10,
+      desconto: "15",
+      desconto_inicio: "2026-09",
+      usina_id: usinaModalidade.id,
+    },
+    201,
+    2,
+  );
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT usina_id,cliente_id FROM faturamento_unidades WHERE id=?",
+      )
+      .get(cadastroNaUsina.unidade_id).usina_id,
+    usinaModalidade.id,
+  );
+  const ucIntegradaExistente = await ok(
+    "/unidades",
+    "POST",
+    { ...unidade, uc: "771122334455", cliente_id: clientePortalId },
+    201,
+  );
+  await ok(
+    "/cadastro-integrado",
+    "POST",
+    {
+      cliente_id: clientePortalId,
+      uc: "771122334455",
+      usina_id: usinaModalidade.id,
+    },
+    400,
+    2,
+  );
+  const integradaVinculada = await ok(
+    "/cadastro-integrado",
+    "POST",
+    {
+      cliente_id: clientePortalId,
+      uc: "771122334455",
+      usina_id: usinaModalidade.id,
+      confirmar_vinculo: true,
+    },
+    201,
+    2,
+  );
+  assert.equal(integradaVinculada.estado, "vinculada_usina");
+  assert.equal(
+    banco
+      .prepare("SELECT usina_id FROM faturamento_unidades WHERE id=?")
+      .get(ucIntegradaExistente.id).usina_id,
+    usinaModalidade.id,
+  );
+  const ucModalidade = await ok(
+    "/unidades",
+    "POST",
+    { ...unidade, uc: "889900112233", cliente_id: clientePortalId },
+    201,
+  );
+  await ok(
+    `/usinas/${usinaModalidade.id}/unidades`,
+    "POST",
+    { unidade_id: ucModalidade.id, versao: 1 },
+    403,
+    1,
+  );
+  await ok(
+    `/usinas/${usinaModalidade.id}/unidades`,
+    "POST",
+    { unidade_id: ucModalidade.id, versao: 1 },
+    201,
+    2,
+  );
+  await ok(
+    `/usinas/${usinaModalidade.id}/unidades`,
+    "POST",
+    { unidade_id: ucModalidade.id, versao: 1 },
+    409,
+  );
+  const usinaDiferente = await ok(
+    "/usinas",
+    "POST",
+    {
+      nome: "Outra usina",
+      localizacao: "Goiás",
+      modalidade: "GDII",
+      inicio: "2026-09",
+    },
+    201,
+  );
+  await ok(
+    `/usinas/${usinaDiferente.id}/unidades`,
+    "POST",
+    { unidade_id: ucModalidade.id, versao: 2 },
+    409,
+  );
+  await ok(
+    "/cadastro-integrado",
+    "POST",
+    {
+      cliente_id: clientePortalId,
+      uc: "889900112233",
+      usina_id: usinaDiferente.id,
+      confirmar_vinculo: true,
+    },
+    409,
+    2,
+  );
+  await ok(
+    `/unidades/${ucModalidade.id}`,
+    "PATCH",
+    {
+      ...unidade,
+      uc: "889900112233",
+      cliente_id: clientePortalId,
+      usina_id: usinaDiferente.id,
+      versao: 2,
+    },
+    409,
+  );
+  assert.equal(
+    banco
+      .prepare("SELECT usina_id FROM faturamento_unidades WHERE id=?")
+      .get(ucModalidade.id).usina_id,
+    usinaModalidade.id,
+  );
+  const documentoUsina = await ok(
+    "/documentos?lote=usina&nome=modalidade-usina.pdf",
+    "POST",
+    pdf(["Documento sintético de modalidade por usina"]),
+    201,
+  );
+  const dadosUsina = {
+    ...campos,
+    uc: "889900112233",
+    unidade_id: String(ucModalidade.id),
+    cliente_id: String(clientePortalId),
+    competencia: "2026-10",
+    vencimento_equatorial: "2026-10-20",
+    vencimento_ecosol: "2026-10-25",
+    modalidade: "",
+    ajuste_gdii: "0",
+  };
+  const previaUsina = await ok(
+    `/documentos/${documentoUsina.id}/previa`,
+    "POST",
+    { versao: documentoUsina.versao, dados: dadosUsina },
+  );
+  assert.equal(previaUsina.memoria.contrato.modalidade, "GDI");
+  assert.equal(previaUsina.memoria.contrato.modalidade_inicio, "2026-09");
+  await ok(
+    `/documentos/${documentoUsina.id}/previa`,
+    "POST",
+    {
+      versao: documentoUsina.versao,
+      dados: { ...dadosUsina, modalidade: "GDII" },
+    },
+    409,
+  );
+  const calculadaUsina = await ok(
+    `/documentos/${documentoUsina.id}/calcular`,
+    "POST",
+    {
+      versao: documentoUsina.versao,
+      dados: dadosUsina,
+      previa_hash: previaUsina.hash,
+      conferido: true,
+    },
+  );
+  assert.equal(calculadaUsina.dados.modalidade, "GDI");
+  await ok(
+    `/usinas/${usinaModalidade.id}/modalidades`,
+    "POST",
+    { versao: 1, modalidade: "GDII", inicio: "2026-11" },
+    201,
+  );
+  const documentoNovembro = await ok(
+    "/documentos?lote=usina&nome=modalidade-novembro.pdf",
+    "POST",
+    pdf(["Documento sintético de novembro por usina"]),
+    201,
+  );
+  const previaNovembro = await ok(
+    `/documentos/${documentoNovembro.id}/previa`,
+    "POST",
+    {
+      versao: documentoNovembro.versao,
+      dados: {
+        ...dadosUsina,
+        competencia: "2026-11",
+        vencimento_equatorial: "2026-11-20",
+        vencimento_ecosol: "2026-11-25",
+        ajuste_gdii: "290.71",
+      },
+    },
+  );
+  assert.equal(previaNovembro.memoria.contrato.modalidade, "GDII");
+  assert.equal(previaNovembro.memoria.contrato.modalidade_inicio, "2026-11");
   assert.equal(banco.prepare("SELECT COUNT(*) AS n FROM faturas").get().n, 0);
   assert.equal(
     banco.prepare("SELECT COUNT(*) AS n FROM contas_a_pagar").get().n,

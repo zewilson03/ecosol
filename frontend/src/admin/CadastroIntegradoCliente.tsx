@@ -17,11 +17,15 @@ export default function CadastroIntegradoCliente({
   nomeInicial = "",
   clienteInicialId = null,
   ucInicial = "",
+  usinaInicialId = null,
+  usinaNome = "",
   aoSalvar,
 }: {
   nomeInicial?: string;
   clienteInicialId?: number | null;
   ucInicial?: string;
+  usinaInicialId?: number | null;
+  usinaNome?: string;
   aoSalvar: (mensagem: string) => void;
 }) {
   const clientes = usarConsulta<DadosDaEquipe>(
@@ -55,6 +59,14 @@ export default function CadastroIntegradoCliente({
       ? (unidadeExistente.cliente_nome ??
         `cliente #${unidadeExistente.cliente_id}`)
       : null;
+  const outraUsina =
+    usinaInicialId !== null &&
+    unidadeExistente?.usina_id != null &&
+    unidadeExistente.usina_id !== usinaInicialId;
+  const precisaConfirmarUsina =
+    usinaInicialId !== null &&
+    !!unidadeExistente &&
+    unidadeExistente.usina_id === null;
   const correspondencias = nome.trim()
     ? (clientes.dados?.clientes ?? [])
         .filter((item) =>
@@ -96,6 +108,12 @@ export default function CadastroIntegradoCliente({
       );
       return;
     }
+    if (outraUsina) {
+      setErro(
+        "Esta UC já pertence a outra usina. Confira o vínculo existente.",
+      );
+      return;
+    }
     setOcupado(true);
     setErro("");
     try {
@@ -110,6 +128,7 @@ export default function CadastroIntegradoCliente({
             cpf: selecionado?.cpf ?? cpf,
             email,
             uc,
+            ...(usinaInicialId !== null ? { usina_id: usinaInicialId } : {}),
             confirmar_vinculo: confirmarVinculo,
             ...(!unidadeExistente
               ? {
@@ -130,9 +149,11 @@ export default function CadastroIntegradoCliente({
           ? "Cliente e UC já estavam vinculados; nenhum cadastro foi duplicado."
           : resultado.estado === "vinculada"
             ? "UC existente vinculada ao cliente. Confira a fatura novamente."
-            : resultado.estado === "desconto_iniciado"
-              ? "Desconto inicial registrado para a UC existente. Confira a fatura novamente."
-              : "Cliente e UC cadastrados no mesmo fluxo. Confira a fatura novamente.",
+            : resultado.estado === "vinculada_usina"
+              ? "UC existente vinculada à usina. Confira a fatura novamente."
+              : resultado.estado === "desconto_iniciado"
+                ? "Desconto inicial registrado para a UC existente. Confira a fatura novamente."
+                : "Cliente e UC cadastrados no mesmo fluxo. Confira a fatura novamente.",
       );
     } catch (falha) {
       setErro((falha as Error).message);
@@ -150,6 +171,12 @@ export default function CadastroIntegradoCliente({
         Selecione um cliente encontrado pelo nome ou preencha um novo. O vínculo
         só é salvo após conferir a UC.
       </p>
+      {usinaInicialId !== null && (
+        <p className="admin-aviso cadastro-integrado-largura">
+          Usina selecionada: <strong>{usinaNome}</strong>. A modalidade será
+          definida pela competência da fatura.
+        </p>
+      )}
       <EstadoDaConsulta {...clientes} repetir={clientes.atualizar} />
       <EstadoDaConsulta {...unidades} repetir={unidades.atualizar} />
       {erro && (
@@ -261,6 +288,8 @@ export default function CadastroIntegradoCliente({
             {unidadeExistente.descontos
               .map((item) => `${item.desconto}% desde ${item.inicio}`)
               .join(", ") || "não informado"}
+            <br />
+            Usina: {unidadeExistente.usina_nome ?? "sem vínculo"}
           </div>
         ) : (
           <>
@@ -334,15 +363,16 @@ export default function CadastroIntegradoCliente({
           </>
         )}
       </fieldset>
-      {outroCliente ? (
+      {outroCliente || outraUsina ? (
         <p className="admin-aviso erro" role="alert">
-          Atenção: esta UC está vinculada a {outroCliente}. Um cliente pode ter
-          várias UCs, mas esta já pertence a outro cadastro. Confira antes de
-          qualquer transferência; o vínculo não será alterado aqui.
+          {outraUsina
+            ? "Esta UC já pertence a outra usina. Transferências exigem um fluxo histórico separado."
+            : `Atenção: esta UC está vinculada a ${outroCliente}. Um cliente pode ter várias UCs, mas esta já pertence a outro cadastro.`}
         </p>
       ) : unidadeExistente &&
         clienteId !== null &&
-        unidadeExistente.cliente_id === clienteId ? (
+        unidadeExistente.cliente_id === clienteId &&
+        !precisaConfirmarUsina ? (
         <p className="admin-aviso sucesso">
           Esta UC já está vinculada ao cliente selecionado.
         </p>
@@ -353,8 +383,8 @@ export default function CadastroIntegradoCliente({
             checked={confirmarVinculo}
             onChange={(evento) => setConfirmarVinculo(evento.target.checked)}
           />
-          Conferi os dados da UC existente e confirmo o vínculo com este
-          cliente.
+          Conferi os dados da UC existente e confirmo o vínculo com este cliente
+          {precisaConfirmarUsina ? " e com a usina selecionada" : ""}.
         </label>
       ) : null}
       <button
@@ -364,9 +394,12 @@ export default function CadastroIntegradoCliente({
           !clientes.dados ||
           !unidades.dados ||
           !!outroCliente ||
+          !!outraUsina ||
           (!!unidadeExistente &&
             !(
-              clienteId !== null && unidadeExistente.cliente_id === clienteId
+              clienteId !== null &&
+              unidadeExistente.cliente_id === clienteId &&
+              !precisaConfirmarUsina
             ) &&
             !confirmarVinculo)
         }

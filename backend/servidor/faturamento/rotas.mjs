@@ -7,6 +7,14 @@ import { receberPdf } from "./receberPdf.mjs";
 import { reanalisarFatura } from "./reanalisar.mjs";
 import { registrarHistorico } from "./registros.mjs";
 import { rotasPlanilhas } from "./rotasPlanilhas.mjs";
+import { rotasVinculosUsinas } from "./rotasVinculosUsinas.mjs";
+import { rotasTransferenciasUsinas } from "./rotasTransferenciasUsinas.mjs";
+import {
+  chaveUsina,
+  conferirVinculoComAprovadas,
+  modalidadeVigenteDaUsina,
+  usinaDaUnidadeNaCompetencia,
+} from "./vinculosUsinas.mjs";
 import {
   calcularCobranca,
   competencia,
@@ -118,19 +126,53 @@ function listarUnidades() {
       "SELECT u.*, s.nome AS usina_nome, COALESCE(c.name,p.nome) AS cliente_nome FROM faturamento_unidades u LEFT JOIN usinas s ON s.id=u.usina_id LEFT JOIN customers c ON c.id=u.cliente_id LEFT JOIN faturamento_clientes_provisorios p ON p.id=u.cliente_provisorio_id ORDER BY u.nome, u.uc",
     )
     .all()
-    .map((u) => ({
-      ...u,
-      descontos: banco
+    .map((u) => {
+      const vinculos = banco
         .prepare(
-          "SELECT id,inicio,desconto FROM faturamento_descontos_uc WHERE unidade_id=? ORDER BY inicio DESC",
+          `SELECT v.inicio,v.usina_id,s.nome AS usina_nome
+           FROM faturamento_vinculos_usina v JOIN usinas s ON s.id=v.usina_id
+           WHERE v.unidade_id=? ORDER BY v.inicio DESC`,
         )
-        .all(u.id),
-      contratos: banco
-        .prepare(
-          "SELECT * FROM faturamento_contratos WHERE unidade_id=? ORDER BY inicio DESC",
-        )
-        .all(u.id),
-    }));
+        .all(u.id);
+      if (!vinculos.length && u.usina_id !== null)
+        vinculos.push({
+          inicio: "0000-01",
+          usina_id: u.usina_id,
+          usina_nome: u.usina_nome,
+        });
+      return {
+        ...u,
+        vinculos_usina: vinculos.map((v) => ({
+          ...v,
+          modalidades:
+            chaveUsina(v.usina_nome) === "ecosol"
+              ? []
+              : banco
+                  .prepare(
+                    "SELECT inicio,modalidade FROM usinas_modalidades WHERE usina_id=? ORDER BY inicio DESC",
+                  )
+                  .all(v.usina_id),
+        })),
+        descontos: banco
+          .prepare(
+            "SELECT id,inicio,desconto FROM faturamento_descontos_uc WHERE unidade_id=? ORDER BY inicio DESC",
+          )
+          .all(u.id),
+        contratos: banco
+          .prepare(
+            "SELECT * FROM faturamento_contratos WHERE unidade_id=? ORDER BY inicio DESC",
+          )
+          .all(u.id),
+        modalidades_usina:
+          u.usina_id === null || chaveUsina(u.usina_nome) === "ecosol"
+            ? []
+            : banco
+                .prepare(
+                  "SELECT inicio,modalidade FROM usinas_modalidades WHERE usina_id=? ORDER BY inicio DESC",
+                )
+                .all(u.usina_id),
+      };
+    });
 }
 
 router.get("/unidades", (_req, res) => res.json(listarUnidades()));
@@ -165,6 +207,7 @@ function clienteInformado(valor) {
 router.post("/cadastro-integrado", exigirNivel(2), (req, res) => {
   const entrada = req.body ?? {};
   const clienteExistenteId = clienteInformado(entrada.cliente_id);
+  const usinaId = clienteInformado(entrada.usina_id);
   const uc = normalizarUc(entrada.uc);
   let novoCliente = null;
   if (clienteExistenteId === null) {
@@ -183,6 +226,18 @@ router.post("/cadastro-integrado", exigirNivel(2), (req, res) => {
   }
   const resultado = transacao(() => {
     const banco = obterBanco();
+    if (usinaId !== null) {
+      conferirUsinaReal(usinaId);
+      if (
+        !banco
+          .prepare("SELECT 1 FROM usinas_modalidades WHERE usina_id=? LIMIT 1")
+          .get(usinaId)
+      )
+        falhar(
+          "Defina a modalidade da usina antes de cadastrar clientes nela.",
+          409,
+        );
+    }
     let clienteId = clienteExistenteId;
     if (clienteId !== null) {
       const cliente = banco
@@ -212,12 +267,14 @@ router.post("/cadastro-integrado", exigirNivel(2), (req, res) => {
       );
     }
     const unidadeExistente = banco
-      .prepare("SELECT id,cliente_id,cliente_provisorio_id FROM faturamento_unidades WHERE uc=?")
+      .prepare(
+        "SELECT id,cliente_id,cliente_provisorio_id,usina_id FROM faturamento_unidades WHERE uc=?",
+      )
       .get(uc);
     if (unidadeExistente) {
       if (unidadeExistente.cliente_provisorio_id !== null)
         falhar(
-          "Esta UC pertence a um cadastro provisório de teste. Complete e confira os dados antes de vinculá-la ao portal.",
+          "Esta UC pertence a um cadastro provisório. Complete e confira os dados antes de vinculá-la ao portal.",
           409,
         );
       if (
@@ -227,6 +284,21 @@ router.post("/cadastro-integrado", exigirNivel(2), (req, res) => {
         falhar(
           "Esta UC já pertence a outro cliente do portal. Confira o cadastro antes de prosseguir.",
           409,
+        );
+      if (
+        usinaId !== null &&
+        unidadeExistente.usina_id !== null &&
+        unidadeExistente.usina_id !== usinaId
+      )
+        falhar(
+          "Esta UC já pertence a outra usina. Confira o vínculo antes de prosseguir.",
+          409,
+        );
+      const vincularUsina =
+        usinaId !== null && unidadeExistente.usina_id === null;
+      if (vincularUsina && entrada.confirmar_vinculo !== true)
+        falhar(
+          "Confirme os dados da UC existente antes de vinculá-la à usina.",
         );
       const temDesconto = Boolean(
         banco
@@ -246,7 +318,11 @@ router.post("/cadastro-integrado", exigirNivel(2), (req, res) => {
             ),
             inicio: competencia(entrada.desconto_inicio),
           };
-      if (unidadeExistente.cliente_id === clienteId && temDesconto)
+      if (
+        unidadeExistente.cliente_id === clienteId &&
+        temDesconto &&
+        !vincularUsina
+      )
         return {
           cliente_id: clienteId,
           unidade_id: unidadeExistente.id,
@@ -266,6 +342,19 @@ router.post("/cadastro-integrado", exigirNivel(2), (req, res) => {
           )
           .run(clienteId, unidadeExistente.id);
         if (atualizado.changes !== 1)
+          falhar(
+            "A UC mudou durante o cadastro. Atualize e confira novamente.",
+            409,
+          );
+      }
+      if (vincularUsina) {
+        conferirVinculoComAprovadas(banco, unidadeExistente.id, usinaId);
+        const vinculo = banco
+          .prepare(
+            "UPDATE faturamento_unidades SET usina_id=?,versao=versao+1 WHERE id=? AND usina_id IS NULL",
+          )
+          .run(usinaId, unidadeExistente.id);
+        if (vinculo.changes !== 1)
           falhar(
             "A UC mudou durante o cadastro. Atualize e confira novamente.",
             409,
@@ -292,10 +381,13 @@ router.post("/cadastro-integrado", exigirNivel(2), (req, res) => {
         req,
         unidadeExistente.cliente_id === null
           ? "Vínculo de UC existente ao cliente do portal"
-          : "Desconto inicial de UC vinculada",
+          : vincularUsina
+            ? "Vínculo de UC existente à usina"
+            : "Desconto inicial de UC vinculada",
         {
           cliente_id: clienteId,
           uc,
+          ...(usinaId !== null ? { usina_id: usinaId } : {}),
           ...(descontoInicial ? { desconto: descontoInicial } : {}),
         },
         null,
@@ -307,7 +399,9 @@ router.post("/cadastro-integrado", exigirNivel(2), (req, res) => {
         estado:
           unidadeExistente.cliente_id === null
             ? "vinculada"
-            : "desconto_iniciado",
+            : vincularUsina
+              ? "vinculada_usina"
+              : "desconto_iniciado",
       };
     }
     const unidade = validarUnidade({
@@ -327,7 +421,7 @@ router.post("/cadastro-integrado", exigirNivel(2), (req, res) => {
     const unidadeId = Number(
       banco
         .prepare(
-          "INSERT INTO faturamento_unidades (uc,nome,documento,email,dia_vencimento,cliente_id) VALUES (?,?,?,?,?,?)",
+          "INSERT INTO faturamento_unidades (uc,nome,documento,email,dia_vencimento,cliente_id,usina_id) VALUES (?,?,?,?,?,?,?)",
         )
         .run(
           unidade.uc,
@@ -336,6 +430,7 @@ router.post("/cadastro-integrado", exigirNivel(2), (req, res) => {
           unidade.email,
           unidade.dia_vencimento,
           clienteId,
+          usinaId,
         ).lastInsertRowid,
     );
     banco
@@ -349,6 +444,7 @@ router.post("/cadastro-integrado", exigirNivel(2), (req, res) => {
       {
         cliente_id: clienteId,
         uc,
+        ...(usinaId !== null ? { usina_id: usinaId } : {}),
         desconto: { inicio, valor: desconto },
       },
       null,
@@ -365,9 +461,28 @@ function conferirUsina(numero) {
   )
     falhar("Usina não encontrada.");
 }
+function conferirUsinaReal(numero) {
+  conferirUsina(numero);
+  if (
+    numero !== null &&
+    chaveUsina(
+      obterBanco().prepare("SELECT nome FROM usinas WHERE id=?").get(numero)
+        ?.nome,
+    ) === "ecosol"
+  )
+    falhar(
+      "Ecosol é um vínculo provisório, não uma usina. Identifique a usina real.",
+      409,
+    );
+}
 router.post("/usinas", exigirNivel(3), (req, res) => {
-  const nome = texto(req.body.nome, "o nome da usina", 120),
-    localizacao = texto(req.body.localizacao, "a localização", 160);
+  const entrada = req.body ?? {};
+  const nome = texto(entrada.nome, "o nome da usina", 120),
+    localizacao = texto(entrada.localizacao, "a localização", 160),
+    modalidade = modalidadeUsina(entrada.modalidade),
+    inicio = competencia(entrada.inicio);
+  if (chaveUsina(nome) === "ecosol")
+    falhar("Ecosol não é uma usina. Informe a usina real.", 409);
   const numero = transacao(() => {
     const banco = obterBanco();
     if (
@@ -385,10 +500,173 @@ router.post("/usinas", exigirNivel(3), (req, res) => {
         )
         .run(nome, localizacao).lastInsertRowid,
     );
-    historico(req, "Cadastro de usina", { id: numero, nome, localizacao });
+    banco
+      .prepare(
+        "INSERT INTO usinas_modalidades(usina_id,inicio,modalidade) VALUES(?,?,?)",
+      )
+      .run(numero, inicio, modalidade);
+    historico(req, "Cadastro de usina", {
+      id: numero,
+      nome,
+      localizacao,
+      modalidade,
+      inicio,
+    });
     return numero;
   });
   res.status(201).json({ id: numero });
+});
+router.patch("/usinas/:id", exigirNivel(3), (req, res) => {
+  const usinaId = id(req.params.id);
+  const localizacao = texto(req.body?.localizacao, "a localização", 160);
+  const versao = Number(req.body?.versao);
+  if (!Number.isSafeInteger(versao) || versao < 1)
+    falhar("Versão da usina inválida.");
+  transacao(() => {
+    const banco = obterBanco();
+    const anterior = banco
+      .prepare("SELECT nome,localizacao,versao FROM usinas WHERE id=?")
+      .get(usinaId);
+    if (!anterior) falhar("Usina não encontrada.", 404);
+    if (anterior.versao !== versao)
+      falhar("Usina alterada. Atualize a lista antes de continuar.", 409);
+    if (anterior.localizacao === localizacao) return;
+    const atualizada = banco
+      .prepare(
+        "UPDATE usinas SET localizacao=?,versao=versao+1 WHERE id=? AND versao=?",
+      )
+      .run(localizacao, usinaId, versao);
+    if (atualizada.changes !== 1)
+      falhar("Usina alterada. Atualize a lista antes de continuar.", 409);
+    historico(req, "Localização da usina atualizada", {
+      usina_id: usinaId,
+      nome: anterior.nome,
+      anterior: anterior.localizacao,
+      atual: localizacao,
+    });
+  });
+  res.json({ sucesso: true });
+});
+function modalidadeUsina(valor) {
+  if (valor !== "GDI" && valor !== "GDII")
+    falhar("Selecione a modalidade GDI ou GDII da usina.");
+  return valor;
+}
+router.post("/usinas/:id/modalidades", exigirNivel(3), (req, res) => {
+  const entrada = req.body ?? {};
+  const usinaId = id(req.params.id);
+  const modalidade = modalidadeUsina(entrada.modalidade);
+  const inicio = competencia(entrada.inicio);
+  const versao = Number(entrada.versao);
+  if (!Number.isSafeInteger(versao) || versao < 1)
+    falhar("Versão da usina inválida.");
+  transacao(() => {
+    const banco = obterBanco();
+    const usina = banco
+      .prepare("SELECT id,versao FROM usinas WHERE id=?")
+      .get(usinaId);
+    if (!usina) falhar("Usina não encontrada.", 404);
+    if (usina.versao !== versao)
+      falhar("Usina alterada. Atualize a lista antes de continuar.", 409);
+    if (
+      banco
+        .prepare(
+          "SELECT 1 FROM usinas_modalidades WHERE usina_id=? AND inicio=?",
+        )
+        .get(usinaId, inicio)
+    )
+      falhar("Já existe modalidade para esta competência inicial.", 409);
+    const proxima = banco
+      .prepare(
+        "SELECT MIN(inicio) AS inicio FROM usinas_modalidades WHERE usina_id=? AND inicio>?",
+      )
+      .get(usinaId, inicio).inicio;
+    const aprovadaDivergente = banco
+      .prepare(
+        `SELECT d.id FROM faturamento_documentos d
+         JOIN faturamento_unidades u ON u.id=d.unidade_id
+         WHERE COALESCE(
+           (SELECT v.usina_id FROM faturamento_vinculos_usina v
+            WHERE v.unidade_id=u.id AND v.inicio<=d.competencia
+            ORDER BY v.inicio DESC LIMIT 1), u.usina_id
+         )=? AND d.status=? AND d.competencia>=?
+           AND (? IS NULL OR d.competencia<?)
+           AND COALESCE(json_extract(d.memoria,'$.contrato.modalidade'),'')<>?
+         LIMIT 1`,
+      )
+      .get(usinaId, APROVADA, inicio, proxima, proxima, modalidade);
+    if (aprovadaDivergente)
+      falhar(
+        "Esta vigência mudaria a modalidade de uma fatura aprovada. Escolha uma competência posterior.",
+        409,
+      );
+    banco
+      .prepare(
+        "INSERT INTO usinas_modalidades(usina_id,inicio,modalidade) VALUES(?,?,?)",
+      )
+      .run(usinaId, inicio, modalidade);
+    banco
+      .prepare("UPDATE usinas SET versao=versao+1 WHERE id=? AND versao=?")
+      .run(usinaId, versao);
+    historico(req, "Nova vigência de modalidade da usina", {
+      usina_id: usinaId,
+      inicio,
+      modalidade,
+    });
+  });
+  res.status(201).json({ sucesso: true });
+});
+router.post("/usinas/:id/unidades", exigirNivel(2), (req, res) => {
+  const usinaId = id(req.params.id);
+  const unidadeId = id(req.body?.unidade_id);
+  const versao = Number(req.body?.versao);
+  if (!Number.isSafeInteger(versao) || versao < 1)
+    falhar("Versão da UC inválida.");
+  transacao(() => {
+    const banco = obterBanco();
+    conferirUsinaReal(usinaId);
+    if (
+      !banco
+        .prepare("SELECT 1 FROM usinas_modalidades WHERE usina_id=? LIMIT 1")
+        .get(usinaId)
+    )
+      falhar("Defina a modalidade da usina antes de vincular UCs.", 409);
+    const unidade = banco
+      .prepare(
+        "SELECT id,uc,versao,usina_id FROM faturamento_unidades WHERE id=?",
+      )
+      .get(unidadeId);
+    if (!unidade) falhar("UC não encontrada.", 404);
+    if (unidade.versao !== versao)
+      falhar("UC alterada. Atualize a lista antes de continuar.", 409);
+    if (unidade.usina_id !== null)
+      falhar(
+        unidade.usina_id === usinaId
+          ? "Esta UC já está vinculada à usina."
+          : "Esta UC já pertence a outra usina. Transferências exigem um fluxo com histórico próprio.",
+        409,
+      );
+    conferirVinculoComAprovadas(banco, unidadeId, usinaId);
+    const atualizado = banco
+      .prepare(
+        "UPDATE faturamento_unidades SET usina_id=?,versao=versao+1 WHERE id=? AND versao=? AND usina_id IS NULL",
+      )
+      .run(usinaId, unidadeId, versao);
+    if (atualizado.changes !== 1)
+      falhar("UC alterada. Atualize a lista antes de continuar.", 409);
+    historico(
+      req,
+      "Vínculo de UC à usina",
+      {
+        usina_id: usinaId,
+        unidade_id: unidadeId,
+        uc: unidade.uc,
+      },
+      null,
+      unidadeId,
+    );
+  });
+  res.status(201).json({ sucesso: true });
 });
 router.post("/unidades", exigirNivel(2), (req, res) => {
   const u = validarUnidade(req.body);
@@ -410,7 +688,17 @@ router.post("/unidades", exigirNivel(2), (req, res) => {
   const c = informouContrato ? validarContrato(req.body) : null;
   const numero = transacao(() => {
     const banco = obterBanco();
-    conferirUsina(u.usina_id);
+    conferirUsinaReal(u.usina_id);
+    if (
+      u.usina_id !== null &&
+      !banco
+        .prepare("SELECT 1 FROM usinas_modalidades WHERE usina_id=? LIMIT 1")
+        .get(u.usina_id)
+    )
+      falhar(
+        "Defina a modalidade da usina antes de cadastrar uma UC nela.",
+        409,
+      );
     conferirCliente(clienteId);
     const numero = Number(
       banco
@@ -471,6 +759,21 @@ router.patch("/unidades/:id", exigirNivel(2), (req, res) => {
       falhar("Cadastro alterado. Atualize a lista.", 409);
     if (anterior.uc !== u.uc)
       falhar("O número da UC não pode ser alterado. Cadastre outra unidade.");
+    if (anterior.usina_id !== null && anterior.usina_id !== u.usina_id)
+      falhar(
+        "Esta UC já pertence a uma usina. Transferências exigem um fluxo com histórico próprio.",
+        409,
+      );
+    if (anterior.usina_id === null && u.usina_id !== null) {
+      conferirUsinaReal(u.usina_id);
+      if (
+        !banco
+          .prepare("SELECT 1 FROM usinas_modalidades WHERE usina_id=? LIMIT 1")
+          .get(u.usina_id)
+      )
+        falhar("Defina a modalidade da usina antes de vincular UCs.", 409);
+      conferirVinculoComAprovadas(banco, numero, u.usina_id);
+    }
     banco
       .prepare(
         "UPDATE faturamento_unidades SET nome=?,documento=?,email=?,dia_vencimento=?,usina_id=?,cliente_id=?,cliente_provisorio_id=?,versao=versao+1 WHERE id=?",
@@ -811,7 +1114,7 @@ function montarCalculo(d, dados = d.dados) {
     falhar("Cadastre esta unidade em Clientes → Unidades e contratos.");
   if (unidade.cliente_provisorio_id !== null)
     falhar(
-      "Cadastro provisório de teste: confirme CPF/CNPJ, e-mail e cliente do portal antes de calcular uma cobrança.",
+      "Cadastro provisório: confirme CPF/CNPJ, e-mail e cliente do portal antes de calcular uma cobrança.",
       409,
     );
   if (dados.unidade_id) {
@@ -844,7 +1147,26 @@ function montarCalculo(d, dados = d.dados) {
       );
   }
   const modalidadeInformada = String(dados.modalidade ?? "").trim();
-  if (!modalidadeInformada)
+  const usinaIdDaCompetencia = usinaDaUnidadeNaCompetencia(
+    banco,
+    unidade.id,
+    mes,
+  );
+  const modalidadeDaUsina =
+    usinaIdDaCompetencia === null
+      ? null
+      : modalidadeVigenteDaUsina(banco, usinaIdDaCompetencia, mes);
+  if (
+    modalidadeDaUsina &&
+    modalidadeInformada &&
+    modalidadeInformada !== modalidadeDaUsina.modalidade
+  )
+    falhar(
+      "A modalidade informada difere da modalidade vigente da usina nesta competência.",
+      409,
+    );
+  const modalidade = modalidadeDaUsina?.modalidade ?? modalidadeInformada;
+  if (!modalidade)
     falhar("Informe a modalidade nesta fatura antes de calcular.");
   const desconto = semInjecao
     ? null
@@ -859,13 +1181,21 @@ function montarCalculo(d, dados = d.dados) {
     );
   const contrato = {
     ...validarContrato({
-      modalidade: modalidadeInformada,
+      modalidade,
       desconto: semInjecao ? "0" : desconto.desconto,
       inicio: mes,
     }),
     origem: semInjecao
       ? "sem_injecao_sem_desconto"
-      : "modalidade_na_fatura_desconto_na_uc",
+      : modalidadeDaUsina
+        ? "modalidade_da_usina_desconto_na_uc"
+        : "modalidade_na_fatura_desconto_na_uc",
+    ...(modalidadeDaUsina
+      ? {
+          usina_id: usinaIdDaCompetencia,
+          modalidade_inicio: modalidadeDaUsina.inicio,
+        }
+      : {}),
     ...(desconto ? { desconto_inicio: desconto.inicio } : {}),
   };
   const vencimento_equatorial = dataValida(dados.vencimento_equatorial);
@@ -910,7 +1240,16 @@ function montarCalculo(d, dados = d.dados) {
   });
   return {
     ...resultado,
-    unidade,
+    unidade: {
+      ...unidade,
+      usina_id: usinaIdDaCompetencia,
+      usina_nome:
+        usinaIdDaCompetencia === null
+          ? null
+          : banco
+              .prepare("SELECT nome FROM usinas WHERE id=?")
+              .get(usinaIdDaCompetencia)?.nome,
+    },
     contrato,
     competencia: mes,
     vencimento_equatorial,
@@ -947,6 +1286,7 @@ router.post("/documentos/:id/calcular", exigirNivel(2), (req, res) => {
     const memoria = montarCalculo(d, dados);
     const dadosPersistidos = {
       ...dados,
+      modalidade: memoria.contrato.modalidade,
       vencimento_ecosol:
         String(dados.vencimento_ecosol ?? "").trim() ||
         memoria.vencimento_ecosol,
@@ -1013,6 +1353,8 @@ router.post("/documentos/:id/aprovar", exigirNivel(3), (req, res) => {
 });
 
 router.use("/planilhas", rotasPlanilhas);
+router.use("/usinas/vinculos", rotasVinculosUsinas);
+router.use("/usinas/transferencias", rotasTransferenciasUsinas);
 router.use((erro, _req, res, _next) => {
   if (/UNIQUE constraint failed/.test(erro.message))
     return res.status(409).json({

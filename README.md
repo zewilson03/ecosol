@@ -11,17 +11,44 @@ Após atualizar as dependências (`pnpm install`), reinicie o servidor. A migra�
 adiciona tabelas ao SQLite existente sem remover registros. Faça backup consistente
 do banco antes de atualizar uma instalação em uso.
 
-1. Em **Clientes → Unidades e contratos**, cadastre a UC, CPF/CNPJ numérico,
+1. Em **Usinas**, cadastre nome, localização, modalidade GDI/GDII e a primeira
+   competência de vigência. Uma alteração futura cria nova vigência, sem
+   reescrever as anteriores. Na configuração inicial de outubro/2026,
+   São Francisco, Solar Green e 2000 Solar são GDII. O nome “ecosol” em
+   registros importados é uma pendência de identificação, não uma usina real.
+   A localização das três usinas novas fica “A confirmar” até conferência;
+   o nível 3 pode corrigi-la na própria aba **Usinas**.
+2. Em **Clientes → Unidades e contratos**, cadastre a UC, CPF/CNPJ numérico,
    nome, e-mail, dia preferido, desconto percentual da UC e sua competência
-   inicial. Não é necessário cadastrar contrato nem
-   associar usina nesta fase. Este é o cadastro financeiro; não cria acesso ao
-   portal. Várias UCs podem compartilhar o mesmo CPF/CNPJ. As contas de acesso
-   existentes são preservadas.
-2. Em **Faturas**, informe um lote e importe o PDF Equatorial (máximo 10 MB e
+   inicial. Vincule cada UC à usina que a atende, na própria ficha ou na aba
+   **Usinas**. Um cliente pode ter UCs em usinas diferentes. UCs sem usina
+   continuam no fluxo manual. Os cards de **Usinas** abrem a página de cada
+   usina, onde é possível conferir, cadastrar e editar suas UCs. Nessa página,
+   um administrador de nível 3 pode selecionar até 100 UCs e transferi-las
+   para outra usina existente, após conferir a prévia e confirmar. A mudança
+   vale a partir da próxima competência ainda não faturada de cada UC;
+   competências anteriores preservam a usina e a modalidade originais.
+   Este é o
+   cadastro financeiro; não cria acesso ao portal. Na aba **Usinas**, também é
+   possível cadastrar cliente do portal e UC juntos, já vinculados à usina,
+   ou associar uma UC existente após confirmação. Várias UCs podem compartilhar
+   o mesmo CPF/CNPJ. As contas de acesso existentes são preservadas.
+   Em **Usinas → Identificar UCs e usinas por planilha**, um administrador de
+   nível 3 pode enviar `.xlsx` de até 5 MB. O sistema identifica UC atual,
+   UC antiga, cliente e usina por coluna, nome da aba ou nome do arquivo,
+   e mostra uma prévia antes da gravação. Usinas desconhecidas precisam ser
+   associadas ou cadastradas explicitamente; quando cadastradas após confirmação,
+   as não especificadas como GDII recebem GDI a partir de outubro/2026.
+   UCs novas ficam provisórias, sem
+   acesso ao portal e sem cálculo até completar os dados. Transferências entre
+   usinas ficam para conferência manual e não são aplicadas pela planilha.
+   O arquivo original não é alterado nem armazenado pelo importador; apenas
+   os campos necessários são retidos temporariamente para a confirmação.
+3. Em **Faturas**, informe um lote e importe o PDF Equatorial (máximo 10 MB e
    10 páginas). O arquivo original fica privado no banco e pode ser baixado pela
    equipe. PDFs com senha ou inválidos são recusados. A assinatura do arquivo
    impede importar o mesmo PDF novamente.
-3. Confira os campos sugeridos e complete os ausentes. Esta etapa extrai texto,
+4. Confira os campos sugeridos e complete os ausentes. Esta etapa extrai texto,
    mas não faz OCR: documentos digitalizados exigem preenchimento manual.
    A tarifa unitária sugerida vem da linha **Consumo não compensado**, não da
    linha **Injeção SCEE**; a bandeira é somada separadamente. Confira ambas
@@ -33,7 +60,11 @@ do banco antes de atualizar uma instalação em uso.
    mas preserva todos os dados informados pela equipe. Faturas calculadas,
    aprovadas, excluídas ou não classificadas como fatura não são reanalisadas.
    A reanálise não calcula, aprova nem emite cobranças.
-4. Na própria fatura, informe a **modalidade (GDI/GDII)** e confira o desconto
+5. Na própria fatura, confira a modalidade GDI/GDII herdada da usina da UC,
+   conforme a competência. O servidor recusa uma modalidade diferente ou uma
+   usina com vigência aplicável. Para competências anteriores à primeira
+   vigência e para UCs sem usina, informe a modalidade manualmente. Confira
+   também o desconto
    da UC vigente naquela competência. Informe os componentes unitário +
    bandeira em R$/kWh, ou selecione uma GDI **aprovada do mesmo lote**.
    Referências não são escolhidas automaticamente. Informe zero explicitamente
@@ -43,18 +74,18 @@ do banco antes de atualizar uma instalação em uso.
    cadastrado. Uma alteração de desconto exige nova competência inicial e
    preserva os percentuais anteriores. Cobranças ainda não aprovadas que forem
    afetadas exigem novo cálculo; as aprovadas preservam o desconto usado e
-   impedem uma alteração retroativa que as alcance. Mesmo nas faturas antigas,
-   a modalidade precisa ser confirmada manualmente antes de um novo cálculo.
-5. Confirme o vencimento Ecosol manualmente, observando o dia preferido. A regra
+   impedem uma alteração retroativa que as alcance. Faturas antigas sem usina
+   ainda exigem confirmação manual da modalidade antes de um novo cálculo.
+6. Confirme o vencimento Ecosol manualmente, observando o dia preferido. A regra
    para chegada tardia, feriados e meses curtos ainda precisa ser definida.
-6. Use **Calcular prévia** para conferir energia, tarifa, desconto e parcelas
+7. Use **Calcular prévia** para conferir energia, tarifa, desconto e parcelas
    do valor Ecosol antes de salvar; a prévia não altera a fatura. Qualquer
    mudança nos campos exige nova prévia. Marque a conferência e escolha
    **Salvar e calcular**. O servidor recalcula e só grava se o resultado ainda
    corresponder à prévia. O demonstrativo mostra
    `ARRED(injecao × (unitario + bandeira) × (1 − desconto/100); 2)
    - total_equatorial − ajuste_gdii`. Não soma mínimo ou iluminação novamente.
-7. O nível 3 pode **Aprovar para emissão futura**. A memória fica protegida contra
+8. O nível 3 pode **Aprovar para emissão futura**. A memória fica protegida contra
    edição e guarda as condições informadas, dados cadastrais e fonte da tarifa. Esta aprovação
    não emite boleto, não envia e-mail e não cria pagamento bancário.
 
@@ -112,14 +143,16 @@ Objetos visuais, mesclagens e referências de tabelas não participam da leitura
 os valores e formatos numéricos das células são preservados na interpretação.
 No mapeamento de cadastros, `NOVA UC` tem preferência quando também existe `UC`.
 
-1. Um administrador nível 3 pode cadastrar nome e localização em **Usinas**.
+1. Um administrador nível 3 pode cadastrar nome, localização, modalidade e
+   competência inicial em **Usinas**.
 2. Em **Clientes → Unidades e contratos → Importar planilha**, selecione a
    usina e um arquivo `.xlsx` de até 5 MB.
 3. Escolha a aba, a linha dos títulos (entre 1 e 30) e associe pelo menos nome e UC.
    Associe também CPF/CNPJ, e-mail, dia preferido, modalidade, desconto e vigência
    quando existirem; use **Preencher no sistema** nos demais campos.
-   Modalidade e vigência podem ser informadas para as linhas sem essas colunas;
-   não são inferidas a partir do nome da usina ou da data mensal da planilha.
+   Modalidade e vigência podem ser informadas para as linhas sem essas colunas.
+   A modalidade da linha precisa coincidir com a vigência da usina escolhida;
+   divergências são recusadas na prévia e verificadas novamente na confirmação.
 4. Confira a prévia. Fórmulas em campos selecionados são recusadas; use valores
    conferidos. Percentuais formatados pelo Excel são convertidos corretamente.
    CPF/CNPJ e UC devem ser texto para preservar zeros à esquerda.

@@ -375,6 +375,27 @@ export function prepararImportacao(abas, config, banco) {
       if (errosLeitura.length) throw new Error(errosLeitura.join(" "));
       item.unidade = validarUnidade({ ...raw, usina_id: config.usina_id });
       item.contrato = validarContrato(raw);
+      const modalidadeUsina = banco
+        .prepare(
+          "SELECT modalidade FROM usinas_modalidades WHERE usina_id=? AND inicio<=? ORDER BY inicio DESC LIMIT 1",
+        )
+        .get(item.unidade.usina_id, item.contrato.inicio)?.modalidade;
+      const primeiraVigencia = banco
+        .prepare(
+          "SELECT MIN(inicio) AS inicio FROM usinas_modalidades WHERE usina_id=?",
+        )
+        .get(item.unidade.usina_id)?.inicio;
+      if (
+        !modalidadeUsina &&
+        (!primeiraVigencia || item.contrato.inicio >= primeiraVigencia)
+      )
+        throw new Error(
+          "A usina não tem modalidade vigente nesta competência.",
+        );
+      if (modalidadeUsina && item.contrato.modalidade !== modalidadeUsina)
+        throw new Error(
+          `A modalidade da planilha (${item.contrato.modalidade}) difere da usina (${modalidadeUsina}) nesta competência.`,
+        );
       const existente = banco
         .prepare("SELECT * FROM faturamento_unidades WHERE uc=?")
         .get(item.unidade.uc);

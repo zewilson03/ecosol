@@ -59,11 +59,13 @@ export function FormularioAutomatico({
   aoSalvar,
   children,
   titulo,
+  metodo = "POST",
 }: {
   endereco: string;
   aoSalvar: () => void;
   children: ReactNode;
   titulo: string;
+  metodo?: "POST" | "PATCH";
 }) {
   const [enviando, definirEnviando] = useState(false);
   const [mensagem, definirMensagem] = useState("");
@@ -79,7 +81,7 @@ export function FormularioAutomatico({
       corpo.set(chave, String(valor)),
     );
     try {
-      await consultarServidor(endereco, { method: "POST", body: corpo });
+      await consultarServidor(endereco, { method: metodo, body: corpo });
       definirErro(false);
       definirMensagem("Cadastro realizado com sucesso.");
       definirVersao((valor) => valor + 1);

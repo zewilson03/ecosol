@@ -18,8 +18,33 @@ rotasAdministrativas.use("/api/admin", (requisicao, resposta, proximo) => {
 });
 
 rotasAdministrativas.get("/api/admin/usinas", (_requisicao, resposta) => {
+  const banco = obterBanco();
+  const partes = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+  }).formatToParts(new Date());
+  const mesAtual = `${partes.find((p) => p.type === "year").value}-${partes.find((p) => p.type === "month").value}`;
   resposta.json(
-    obterBanco().prepare("SELECT * FROM usinas ORDER BY nome").all(),
+    banco
+      .prepare(
+        `SELECT s.*,
+          (SELECT COUNT(*) FROM faturamento_unidades u WHERE u.usina_id=s.id) AS unidades,
+          (SELECT modalidade FROM usinas_modalidades m WHERE m.usina_id=s.id AND m.inicio<=?
+           ORDER BY inicio DESC LIMIT 1) AS modalidade_atual,
+          (SELECT inicio FROM usinas_modalidades m WHERE m.usina_id=s.id AND m.inicio<=?
+           ORDER BY inicio DESC LIMIT 1) AS modalidade_inicio
+         FROM usinas s ORDER BY s.nome,s.id`,
+      )
+      .all(mesAtual, mesAtual)
+      .map((usina) => ({
+        ...usina,
+        modalidades: banco
+          .prepare(
+            "SELECT inicio,modalidade FROM usinas_modalidades WHERE usina_id=? ORDER BY inicio DESC",
+          )
+          .all(usina.id),
+      })),
   );
 });
 

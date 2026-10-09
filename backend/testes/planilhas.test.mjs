@@ -16,10 +16,18 @@ import {
 } from "../servidor/faturamento/planilhas.mjs";
 import { calcularCobranca } from "../servidor/faturamento/regras.mjs";
 import { nomeUsinaDoArquivo } from "../servidor/faturamento/catalogoPlanilhas.mjs";
+import {
+  chaveCanonicaUsina,
+  extrairVinculosDaAba,
+  modalidadeInicialDaUsina,
+  modalidadeVigenteDaUsina,
+} from "../servidor/faturamento/vinculosUsinas.mjs";
 
 process.env.ECOSOL_DATA_DIR = mkdtempSync(join(tmpdir(), "ecosol-excel-"));
 const { obterBanco } = await import("../servidor/bancoDeDados.mjs");
 const { rotasFaturamento } = await import("../servidor/faturamento/rotas.mjs");
+const { rotasAdministrativas } =
+  await import("../servidor/rotasAdministrativas.mjs");
 const banco = obterBanco(),
   cookies = {};
 for (const n of [1, 2, 3]) {
@@ -45,7 +53,11 @@ for (const n of [1, 2, 3]) {
   cookies[n] = `ecosol_session=${token}`;
 }
 const app = express();
-app.use(express.json({ limit: "20kb" }), rotasFaturamento);
+app.use(
+  express.json({ limit: "20kb" }),
+  rotasFaturamento,
+  rotasAdministrativas,
+);
 const server = app.listen(0, "127.0.0.1");
 await new Promise((r) => server.once("listening", r));
 const base = `http://127.0.0.1:${server.address().port}/api/admin/faturamento`;
@@ -88,6 +100,62 @@ const linha = [
   "2026-09",
 ];
 try {
+  for (const [apelido, nome] of [
+    ["CLAU", "CLAUDIO"],
+    ["CARLOS", "CARLOS UNIÃO"],
+    ["BOLT", "BOLT ENERGIA"],
+    ["JB C", "JB Carvalho"],
+    ["PEDRO H", "PEDRO HENRIQUE"],
+    ["SOLAR", "Solar Green"],
+    ["TG SILVA", "TG Silva Danielle"],
+  ])
+    assert.equal(chaveCanonicaUsina(apelido), chaveCanonicaUsina(nome));
+  assert.equal(modalidadeInicialDaUsina("SOLAR"), "GDII");
+  const celula = (valor) => ({ valor, tipo: "texto" });
+  const colisaoInterna = extrairVinculosDaAba(
+    [
+      {
+        nome: "Consulta",
+        linhas: [
+          ["UC antiga", "UC Nova", "Cliente", "Usina"].map(celula),
+          ["200", "100", "Cliente A", "Solar Green"].map(celula),
+          ["300", "200", "Cliente B", "São Francisco"].map(celula),
+        ],
+      },
+    ],
+    "Consulta",
+  );
+  assert.equal(colisaoInterna.linhas.filter((l) => l.erro).length, 2);
+  const semColunaUsina = (nome) => ({
+    nome,
+    linhas: [
+      ["UC Nova", "Cliente"].map(celula),
+      ["900001111", "Cliente conferido"].map(celula),
+    ],
+  });
+  assert.equal(
+    extrairVinculosDaAba(
+      [semColunaUsina("São Francisco")],
+      "São Francisco",
+      "vinculos.xlsx",
+    ).linhas[0].usina,
+    "São Francisco",
+  );
+  assert.equal(
+    extrairVinculosDaAba(
+      [semColunaUsina("Consulta")],
+      "Consulta",
+      "Usina Solar Green.xlsx",
+    ).linhas[0].usina,
+    "Solar Green",
+  );
+  assert.throws(() =>
+    extrairVinculosDaAba(
+      [semColunaUsina("Consulta")],
+      "Consulta",
+      "vinculos.xlsx",
+    ),
+  );
   const atuais = sugerirMapeamento(
     ["Clientes", "UC", "NOVA UC", "% desconto"].map((valor) => ({
       valor,
@@ -110,23 +178,126 @@ try {
   await ok(
     "/usinas",
     "POST",
-    { nome: "Usina A", localizacao: "Goiás" },
+    {
+      nome: "Usina A",
+      localizacao: "Goiás",
+      modalidade: "GDII",
+      inicio: "2026-09",
+    },
     403,
     2,
+  );
+  await ok(
+    "/usinas",
+    "POST",
+    { nome: "Usina A", localizacao: "Goiás", inicio: "2026-09" },
+    400,
+    3,
   );
   const usina = await ok(
     "/usinas",
     "POST",
-    { nome: "Usina A", localizacao: "Goiás" },
+    {
+      nome: "Usina A",
+      localizacao: "Goiás",
+      modalidade: "GDII",
+      inicio: "2026-09",
+    },
     201,
     3,
   );
   const outra = await ok(
     "/usinas",
     "POST",
-    { nome: "Usina B", localizacao: "Goiás" },
+    {
+      nome: "Usina B",
+      localizacao: "Goiás",
+      modalidade: "GDII",
+      inicio: "2026-09",
+    },
     201,
     3,
+  );
+  assert.deepEqual(
+    banco
+      .prepare(
+        "SELECT inicio,modalidade FROM usinas_modalidades WHERE usina_id=?",
+      )
+      .all(usina.id)
+      .map(({ inicio, modalidade }) => ({ inicio, modalidade })),
+    [{ inicio: "2026-09", modalidade: "GDII" }],
+  );
+  const listaUsinas = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/admin/usinas`,
+    { headers: { Cookie: cookies[3] } },
+  );
+  assert.equal(listaUsinas.status, 200);
+  const cadastradas = await listaUsinas.json();
+  assert.deepEqual(
+    cadastradas.find((item) => item.id === usina.id).modalidades,
+    [{ inicio: "2026-09", modalidade: "GDII" }],
+  );
+  assert.equal(
+    cadastradas.find((item) => item.id === outra.id).modalidade_atual,
+    "GDII",
+  );
+  const usinaFutura = await ok(
+    "/usinas",
+    "POST",
+    {
+      nome: "Usina futura",
+      localizacao: "Goiás",
+      modalidade: "GDI",
+      inicio: "2099-01",
+    },
+    201,
+    3,
+  );
+  const respostaFutura = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/admin/usinas`,
+    { headers: { Cookie: cookies[3] } },
+  );
+  const cadastradasComFutura = await respostaFutura.json();
+  assert.equal(
+    cadastradasComFutura.find((item) => item.id === usinaFutura.id)
+      .modalidade_atual,
+    null,
+  );
+  assert.deepEqual(
+    cadastradasComFutura.find((item) => item.id === usinaFutura.id).modalidades,
+    [{ inicio: "2099-01", modalidade: "GDI" }],
+  );
+  await ok(
+    `/usinas/${usina.id}/modalidades`,
+    "POST",
+    { versao: 1, modalidade: "GDI", inicio: "2026-10" },
+    403,
+    2,
+  );
+  await ok(
+    `/usinas/${usina.id}/modalidades`,
+    "POST",
+    { versao: 1, modalidade: "GDI", inicio: "2026-10" },
+    201,
+    3,
+  );
+  await ok(
+    `/usinas/${usina.id}/modalidades`,
+    "POST",
+    { versao: 1, modalidade: "GDI", inicio: "2026-11" },
+    409,
+    3,
+  );
+  await ok(
+    `/usinas/${usina.id}/modalidades`,
+    "POST",
+    { versao: 2, modalidade: "GDI", inicio: "2026-10" },
+    409,
+    3,
+  );
+  assert.equal(
+    banco.prepare("SELECT versao FROM usinas WHERE id=?").get(usina.id).versao,
+    2,
   );
   const original = await arquivo([
     linha,
@@ -201,6 +372,36 @@ try {
   const previa = prepararImportacao(abas, configuracao, banco);
   assert.equal(previa.validas, 1);
   assert.equal(previa.problemas, 1);
+  const historicas = await lerExcel(
+    await arquivo([
+      [
+        "Cliente histórico",
+        "11.222.333/0001-81",
+        "000423652401253",
+        "historico@example.test",
+        10,
+        "GDII",
+        0.25,
+        "2026-09",
+      ],
+    ]),
+  );
+  const previaHistorica = prepararImportacao(
+    historicas,
+    { ...configuracao, usina_id: usinaFutura.id },
+    banco,
+  );
+  assert.equal(previaHistorica.validas, 1);
+  const modalidadeIncorreta = await lerExcel(
+    await arquivo([[...linha.slice(0, 5), "GDI", ...linha.slice(6)]]),
+  );
+  const previaIncorreta = prepararImportacao(
+    modalidadeIncorreta,
+    configuracao,
+    banco,
+  );
+  assert.equal(previaIncorreta.validas, 0);
+  assert.match(previaIncorreta.linhas[0].mensagem, /difere da usina/);
   assert.equal(previa.linhas[0].contrato.desconto, "25");
   assert.equal(previa.linhas[0].unidade.uc, "423652401252");
   assert.equal(previa.linhas[0].unidade.usina_id, usina.id);
@@ -353,7 +554,7 @@ try {
       "123456",
       "segundo@example.test",
       15,
-      "GDI",
+      "GDII",
       0.15,
       "2026-09",
     ],
@@ -546,6 +747,468 @@ try {
   assert.deepEqual(
     readFileSync(join(process.env.ECOSOL_PLANILHAS_DIR, nomeMensal)),
     mensalBuffer,
+  );
+  const arquivoFuturo = await arquivo([
+    [
+      "Cliente futuro",
+      "52998224725",
+      "888888888888",
+      "futuro@example.test",
+      10,
+      "GDI",
+      0.15,
+      "2026-11",
+    ],
+  ]);
+  const sessaoFutura = await ok(
+    `/planilhas/analisar?nome=futuro.xlsx&usina_id=${usina.id}`,
+    "POST",
+    arquivoFuturo,
+    201,
+  );
+  const previaFutura = await ok(
+    `/planilhas/${sessaoFutura.id}/previa`,
+    "POST",
+    configuracao,
+  );
+  assert.equal(previaFutura.validas, 1);
+  await ok(
+    `/usinas/${usina.id}/modalidades`,
+    "POST",
+    { versao: 2, modalidade: "GDII", inicio: "2026-11" },
+    201,
+    3,
+  );
+  await ok(
+    `/planilhas/${sessaoFutura.id}/confirmar`,
+    "POST",
+    { previa_id: previaFutura.previa_id, confirmado: true },
+    409,
+  );
+  const ucAprovada = Number(
+    banco
+      .prepare(
+        "INSERT INTO faturamento_unidades(uc,nome,documento,email,dia_vencimento,usina_id) VALUES(?,?,?,?,?,?)",
+      )
+      .run(
+        "999999999999",
+        "UC de teste",
+        "11222333000181",
+        "uc@example.test",
+        10,
+        outra.id,
+      ).lastInsertRowid,
+  );
+  banco
+    .prepare(
+      "INSERT INTO faturamento_documentos(hash,nome,pdf,lote,texto,extracao,dados,memoria,unidade_id,competencia,status) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+    )
+    .run(
+      "hash-usina-aprovada",
+      "usina-aprovada.pdf",
+      Buffer.from("%PDF-1.4"),
+      "teste",
+      "",
+      "{}",
+      "{}",
+      JSON.stringify({ contrato: { modalidade: "GDII" } }),
+      ucAprovada,
+      "2026-10",
+      "Aprovada — aguardando emissão",
+    );
+  await ok(
+    `/usinas/${outra.id}/modalidades`,
+    "POST",
+    { versao: 1, modalidade: "GDI", inicio: "2026-10" },
+    409,
+    3,
+  );
+  await ok(
+    `/usinas/${outra.id}/modalidades`,
+    "POST",
+    { versao: 1, modalidade: "GDI", inicio: "2026-11" },
+    201,
+    3,
+  );
+  const ucSemUsina = Number(
+    banco
+      .prepare(
+        "INSERT INTO faturamento_unidades(uc,nome,documento,email,dia_vencimento) VALUES(?,?,?,?,?)",
+      )
+      .run(
+        "900001111",
+        "Cliente existente",
+        "11222333000181",
+        "existente@example.test",
+        10,
+      ).lastInsertRowid,
+  );
+  const ucSemAntiga = Number(
+    banco
+      .prepare(
+        "INSERT INTO faturamento_unidades(uc,nome,documento,email,dia_vencimento,usina_id) VALUES(?,?,?,?,?,?)",
+      )
+      .run(
+        "900005555",
+        "Cliente vinculado",
+        "11222333000181",
+        "vinculado@example.test",
+        10,
+        usina.id,
+      ).lastInsertRowid,
+  );
+  const ucHistorica = Number(
+    banco
+      .prepare(
+        "INSERT INTO faturamento_unidades(uc,nome,documento,email,dia_vencimento) VALUES(?,?,?,?,?)",
+      )
+      .run(
+        "900007777",
+        "Cliente histórico",
+        "11222333000181",
+        "historico@example.test",
+        10,
+      ).lastInsertRowid,
+  );
+  banco
+    .prepare(
+      "INSERT INTO faturamento_documentos(hash,nome,pdf,lote,texto,extracao,dados,memoria,unidade_id,competencia,status) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+    )
+    .run(
+      "hash-aprovada-antes-vigencia",
+      "historica.pdf",
+      Buffer.from("%PDF-1.4"),
+      "teste",
+      "",
+      "{}",
+      "{}",
+      JSON.stringify({ contrato: { modalidade: "GDI" } }),
+      ucHistorica,
+      "2026-09",
+      "Aprovada — aguardando emissão",
+    );
+  const vinculos = new ExcelJS.Workbook();
+  const consulta = vinculos.addWorksheet("Consulta");
+  consulta.addRow([
+    "UC antiga",
+    "UC Nova",
+    "Cliente",
+    "Usina",
+    "senha interna",
+  ]);
+  consulta.addRow([
+    "12345",
+    "900001111",
+    "Cliente existente",
+    "Usina A",
+    "nao-importar",
+  ]);
+  consulta.addRow([
+    "22222",
+    "900002222",
+    "Cliente novo",
+    "São Francisco",
+    "nao-importar",
+  ]);
+  consulta.addRow([
+    "33333",
+    "900003333",
+    "Outro cliente",
+    "2000 Solar DF",
+    "nao-importar",
+  ]);
+  consulta.addRow([
+    "44444",
+    "900004444",
+    "Cliente em outra",
+    "Solar Green",
+    "nao-importar",
+  ]);
+  consulta.addRow([
+    "",
+    "999999999999",
+    "UC já vinculada",
+    "São Francisco",
+    "nao-importar",
+  ]);
+  consulta.addRow([
+    "55555",
+    "900005555",
+    "Cliente vinculado",
+    "Usina A",
+    "nao-importar",
+  ]);
+  consulta.addRow(["66666", "", "Sem UC atual", "Solar Green", "nao-importar"]);
+  consulta.addRow([
+    "77777",
+    "900007777",
+    "Cliente histórico",
+    "São Francisco",
+    "nao-importar",
+  ]);
+  const bufferVinculos = Buffer.from(await vinculos.xlsx.writeBuffer());
+  await ok(
+    "/usinas/vinculos/analisar?nome=ucs.xlsx",
+    "POST",
+    bufferVinculos,
+    403,
+    2,
+  );
+  const analiseVinculos = await ok(
+    "/usinas/vinculos/analisar?nome=ucs.xlsx",
+    "POST",
+    bufferVinculos,
+    201,
+    3,
+  );
+  assert.equal(analiseVinculos.aba, "Consulta");
+  assert.equal(analiseVinculos.linhas, 8);
+  assert.equal(JSON.stringify(analiseVinculos).includes("nao-importar"), false);
+  assert.equal(
+    banco
+      .prepare("SELECT linhas FROM usinas_importacoes_vinculos WHERE id=?")
+      .get(analiseVinculos.id)
+      .linhas.includes("nao-importar"),
+    false,
+  );
+  const nomesVinculos = Object.fromEntries(
+    analiseVinculos.nomes.map((item) => [item.chave, item]),
+  );
+  assert.equal(nomesVinculos.saofrancisco.modalidade_sugerida, "GDII");
+  assert.equal(nomesVinculos["2000solardf"].modalidade_sugerida, "GDI");
+  const previaVinculos = await ok(
+    `/usinas/vinculos/${analiseVinculos.id}/previa`,
+    "POST",
+    {
+      escolhas: {
+        usinaa: String(usina.id),
+        saofrancisco: "criar",
+        "2000solardf": "criar_distinta",
+        solargreen: "criar",
+      },
+    },
+    200,
+    3,
+  );
+  assert.equal(previaVinculos.resumo.vincular, 2);
+  assert.equal(previaVinculos.resumo.criar_uc, 3);
+  assert.equal(previaVinculos.resumo.conferencia, 1);
+  assert.equal(previaVinculos.resumo.pendentes, 1);
+  assert.equal(previaVinculos.resumo.atualizar_uc_antiga, 1);
+  const confirmadaVinculos = await ok(
+    `/usinas/vinculos/${analiseVinculos.id}/confirmar`,
+    "POST",
+    { previa_id: previaVinculos.previa_id, confirmado: true },
+    200,
+    3,
+  );
+  assert.equal(confirmadaVinculos.quantidade, 6);
+  assert.equal(confirmadaVinculos.usinas_criadas, 3);
+  assert.equal(
+    banco
+      .prepare("SELECT usina_id,uc_antiga FROM faturamento_unidades WHERE id=?")
+      .get(ucSemUsina).uc_antiga,
+    "12345",
+  );
+  assert.equal(
+    banco
+      .prepare("SELECT uc_antiga FROM faturamento_unidades WHERE id=?")
+      .get(ucSemAntiga).uc_antiga,
+    "55555",
+  );
+  assert.equal(
+    banco
+      .prepare("SELECT usina_id FROM faturamento_unidades WHERE id=?")
+      .get(ucHistorica).usina_id,
+    banco.prepare("SELECT id FROM usinas WHERE nome='São Francisco'").get().id,
+  );
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT nome,uc_antiga,cliente_provisorio_id FROM faturamento_unidades WHERE uc=?",
+      )
+      .get("900002222").uc_antiga,
+    "22222",
+  );
+  assert.equal(
+    banco
+      .prepare("SELECT uc_antiga FROM faturamento_unidades WHERE uc=?")
+      .get("999999999999").uc_antiga,
+    null,
+  );
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT modalidade FROM usinas_modalidades WHERE usina_id=(SELECT id FROM usinas WHERE nome='São Francisco')",
+      )
+      .get().modalidade,
+    "GDII",
+  );
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT modalidade FROM usinas_modalidades WHERE usina_id=(SELECT id FROM usinas WHERE nome='2000 Solar DF')",
+      )
+      .get().modalidade,
+    "GDI",
+  );
+  const saoFranciscoId = banco
+    .prepare("SELECT id FROM usinas WHERE nome='São Francisco'")
+    .get().id;
+  await ok(
+    `/usinas/${saoFranciscoId}`,
+    "PATCH",
+    { localizacao: "Goiás", versao: 1 },
+    403,
+    2,
+  );
+  await ok(
+    `/usinas/${saoFranciscoId}`,
+    "PATCH",
+    { localizacao: "Goiás", versao: 1 },
+    200,
+    3,
+  );
+  await ok(
+    `/usinas/${saoFranciscoId}`,
+    "PATCH",
+    { localizacao: "Outra", versao: 1 },
+    409,
+    3,
+  );
+  assert.equal(
+    banco
+      .prepare("SELECT localizacao FROM usinas WHERE id=?")
+      .get(saoFranciscoId).localizacao,
+    "Goiás",
+  );
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT usina_id FROM faturamento_unidades WHERE uc='999999999999'",
+      )
+      .get().usina_id,
+    outra.id,
+  );
+  const repetidaVinculos = await ok(
+    `/usinas/vinculos/${analiseVinculos.id}/confirmar`,
+    "POST",
+    { previa_id: previaVinculos.previa_id, confirmado: true },
+    200,
+    3,
+  );
+  assert.equal(repetidaVinculos.ja_concluida, true);
+  const idEcosolProvisorio = Number(
+    banco
+      .prepare("INSERT INTO usinas(nome,localizacao) VALUES(?,?)")
+      .run("ecosol", "A confirmar").lastInsertRowid,
+  );
+  banco
+    .prepare(
+      "INSERT INTO usinas_modalidades(usina_id,inicio,modalidade) VALUES(?,?,?)",
+    )
+    .run(idEcosolProvisorio, "2026-10", "GDI");
+  assert.equal(
+    modalidadeVigenteDaUsina(banco, idEcosolProvisorio, "2026-10"),
+    null,
+  );
+  banco
+    .prepare(
+      "INSERT INTO faturamento_unidades(uc,nome,documento,email,dia_vencimento,usina_id) VALUES(?,?,?,?,?,?)",
+    )
+    .run("900009998", "UC pendente", "", "", 0, idEcosolProvisorio);
+  const unidadesComPlaceholder = await ok(
+    "/unidades",
+    "GET",
+    undefined,
+    200,
+    3,
+  );
+  assert.deepEqual(
+    unidadesComPlaceholder.find((u) => u.uc === "900009998").modalidades_usina,
+    [],
+  );
+  const arquivoEcosol = new ExcelJS.Workbook();
+  const abaEcosol = arquivoEcosol.addWorksheet("Consulta");
+  abaEcosol.addRow(["UC Nova", "Cliente", "Usina"]);
+  abaEcosol.addRow(["900009999", "Cliente provisório", "ECOSOL"]);
+  const analiseEcosol = await ok(
+    "/usinas/vinculos/analisar?nome=ucs-ecosol.xlsx",
+    "POST",
+    Buffer.from(await arquivoEcosol.xlsx.writeBuffer()),
+    201,
+    3,
+  );
+  assert.equal(analiseEcosol.nomes[0].usina_id_sugerida, null);
+  assert.equal(analiseEcosol.nomes[0].modalidade_sugerida, null);
+  const previaEcosol = await ok(
+    `/usinas/vinculos/${analiseEcosol.id}/previa`,
+    "POST",
+    { escolhas: {} },
+    200,
+    3,
+  );
+  assert.equal(previaEcosol.resumo.pendentes, 1);
+  await ok(
+    `/usinas/vinculos/${analiseEcosol.id}/previa`,
+    "POST",
+    { escolhas: { ecosol: String(idEcosolProvisorio) } },
+    409,
+    3,
+  );
+  await ok(
+    `/usinas/vinculos/${analiseEcosol.id}/previa`,
+    "POST",
+    { escolhas: { ecosol: "criar" } },
+    409,
+    3,
+  );
+  const ucConcorrente = Number(
+    banco
+      .prepare(
+        "INSERT INTO faturamento_unidades(uc,nome,documento,email,dia_vencimento) VALUES(?,?,?,?,?)",
+      )
+      .run(
+        "900006666",
+        "Cliente concorrente",
+        "11222333000181",
+        "concorrente@example.test",
+        10,
+      ).lastInsertRowid,
+  );
+  const arquivoConcorrente = new ExcelJS.Workbook();
+  const abaConcorrente = arquivoConcorrente.addWorksheet("UCs");
+  abaConcorrente.addRow(["UC", "Cliente", "Usina"]);
+  abaConcorrente.addRow(["900006666", "Cliente concorrente", "Nova Solar"]);
+  const analiseConcorrente = await ok(
+    "/usinas/vinculos/analisar?nome=concorrencia.xlsx",
+    "POST",
+    Buffer.from(await arquivoConcorrente.xlsx.writeBuffer()),
+    201,
+    3,
+  );
+  const previaConcorrente = await ok(
+    `/usinas/vinculos/${analiseConcorrente.id}/previa`,
+    "POST",
+    { escolhas: { novasolar: "criar" } },
+    200,
+    3,
+  );
+  banco
+    .prepare("UPDATE faturamento_unidades SET versao=versao+1 WHERE id=?")
+    .run(ucConcorrente);
+  await ok(
+    `/usinas/vinculos/${analiseConcorrente.id}/confirmar`,
+    "POST",
+    { previa_id: previaConcorrente.previa_id, confirmado: true },
+    409,
+    3,
+  );
+  assert.equal(
+    banco
+      .prepare("SELECT COUNT(*) AS total FROM usinas WHERE nome='Nova Solar'")
+      .get().total,
+    0,
   );
   console.log(
     "OK: Excel por usina, percentuais, cabeçalhos, duplicidades, conflitos, concorrência, confirmação, exportação e preservação da origem.",

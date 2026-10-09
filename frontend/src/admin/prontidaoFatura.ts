@@ -13,6 +13,19 @@ const ucNormalizada = (valor: unknown) =>
     .replace(/\D/g, "")
     .replace(/^0+(?=\d)/, "");
 
+export function modalidadeDaUcNaCompetencia(
+  unidade: Unidade | undefined,
+  mes: string,
+) {
+  if (!unidade?.usina_id) return null;
+  const historico = unidade.vinculos_usina;
+  if (historico?.length) {
+    const vinculo = historico.find((item) => item.inicio <= mes);
+    return vinculo?.modalidades.find((item) => item.inicio <= mes) ?? null;
+  }
+  return unidade.modalidades_usina?.find((item) => item.inicio <= mes) ?? null;
+}
+
 export function pendenciasParaCalculo(
   fatura: FaturaDaFila,
   unidades: Unidade[],
@@ -34,7 +47,17 @@ export function pendenciasParaCalculo(
     pendencias.push("cadastro definitivo do cliente");
   if (!preenchido(dados.competencia)) pendencias.push("competência");
   if (!preenchido(dados.injecao)) pendencias.push("energia injetada");
-  if (!preenchido(dados.modalidade)) pendencias.push("modalidade");
+  if (unidade?.usina_id) {
+    const vigente = modalidadeDaUcNaCompetencia(unidade, dados.competencia);
+    if (!vigente && !preenchido(dados.modalidade))
+      pendencias.push("modalidade anterior à vigência da usina");
+    else if (
+      vigente &&
+      preenchido(dados.modalidade) &&
+      dados.modalidade !== vigente.modalidade
+    )
+      pendencias.push("modalidade divergente da usina");
+  } else if (!preenchido(dados.modalidade)) pendencias.push("modalidade");
   if (!semInjecao && !preenchido(dados.origem_tarifa))
     pendencias.push("origem da tarifa");
   if (!preenchido(dados.total_equatorial)) pendencias.push("total Equatorial");

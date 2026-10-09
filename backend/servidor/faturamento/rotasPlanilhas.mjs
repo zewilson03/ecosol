@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { obterBanco } from "../bancoDeDados.mjs";
 import { exigirNivel } from "../permissoesDaEquipe.mjs";
 import { falhar, texto } from "./regras.mjs";
+import { chaveUsina } from "./vinculosUsinas.mjs";
 import { listarPlanilhas, lerPlanilhaLocal } from "./catalogoPlanilhas.mjs";
 import {
   camposImportacao,
@@ -101,6 +102,11 @@ function usina(valor) {
     falhar("Selecione a usina desta planilha.");
   const u = obterBanco().prepare("SELECT * FROM usinas WHERE id=?").get(numero);
   if (!u) falhar("Usina não encontrada.");
+  if (chaveUsina(u.nome) === "ecosol")
+    falhar(
+      "Ecosol é um vínculo provisório. Identifique a usina real antes de importar planilhas.",
+      409,
+    );
   return u;
 }
 function sessao(req) {
@@ -238,6 +244,25 @@ rotasPlanilhas.post("/:id/confirmar", exigirNivel(2), (req, res) => {
     for (const l of validas) {
       const u = l.unidade,
         c = l.contrato;
+      const modalidadeUsina = banco
+        .prepare(
+          "SELECT modalidade FROM usinas_modalidades WHERE usina_id=? AND inicio<=? ORDER BY inicio DESC LIMIT 1",
+        )
+        .get(u.usina_id, c.inicio)?.modalidade;
+      const primeiraVigencia = banco
+        .prepare(
+          "SELECT MIN(inicio) AS inicio FROM usinas_modalidades WHERE usina_id=?",
+        )
+        .get(u.usina_id)?.inicio;
+      if (
+        (modalidadeUsina && c.modalidade !== modalidadeUsina) ||
+        (!modalidadeUsina &&
+          (!primeiraVigencia || c.inicio >= primeiraVigencia))
+      )
+        falhar(
+          "A modalidade da usina mudou desde a prévia. Gere uma nova prévia antes de importar.",
+          409,
+        );
       if (
         banco
           .prepare("SELECT id FROM faturamento_unidades WHERE uc=?")

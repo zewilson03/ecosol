@@ -1,6 +1,37 @@
 export function prepararFaturamento(banco) {
   // Migração aditiva: preserva cadastros, sessões e o financeiro existente.
   banco.exec(`
+    CREATE TABLE IF NOT EXISTS usinas_modalidades (
+      id INTEGER PRIMARY KEY, usina_id INTEGER NOT NULL,
+      inicio TEXT NOT NULL, modalidade TEXT NOT NULL
+        CHECK(modalidade IN ('GDI','GDII')),
+      criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(usina_id,inicio)
+    );
+    CREATE INDEX IF NOT EXISTS usinas_modalidades_vigencia
+      ON usinas_modalidades(usina_id,inicio DESC);
+    CREATE TABLE IF NOT EXISTS usinas_importacoes_vinculos (
+      id TEXT PRIMARY KEY, responsavel_id INTEGER NOT NULL,
+      nome TEXT NOT NULL, hash TEXT NOT NULL, aba TEXT NOT NULL,
+      linhas TEXT NOT NULL, previa TEXT, previa_id TEXT,
+      status TEXT NOT NULL DEFAULT 'Pendente'
+        CHECK(status IN ('Pendente','Concluída','Expirada')),
+      expira_em INTEGER NOT NULL, quantidade INTEGER NOT NULL DEFAULT 0,
+      criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS faturamento_vinculos_usina (
+      id INTEGER PRIMARY KEY, unidade_id INTEGER NOT NULL,
+      inicio TEXT NOT NULL, usina_id INTEGER NOT NULL,
+      origem_usina_id INTEGER, transferencia_id TEXT,
+      criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(unidade_id,inicio)
+    );
+    CREATE INDEX IF NOT EXISTS faturamento_vinculos_usina_vigencia
+      ON faturamento_vinculos_usina(unidade_id,inicio DESC);
+    CREATE TABLE IF NOT EXISTS faturamento_transferencias_usina (
+      id TEXT PRIMARY KEY, payload_hash TEXT NOT NULL,
+      resultado TEXT NOT NULL, criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
     CREATE TABLE IF NOT EXISTS faturamento_unidades (
       id INTEGER PRIMARY KEY, uc TEXT NOT NULL UNIQUE, nome TEXT NOT NULL,
       documento TEXT NOT NULL, email TEXT NOT NULL, dia_vencimento INTEGER NOT NULL,
@@ -54,6 +85,21 @@ export function prepararFaturamento(banco) {
       criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
   `);
+  const colunasUsinas = banco.prepare("PRAGMA table_info(usinas)").all();
+  if (colunasUsinas.length && !colunasUsinas.some((c) => c.name === "versao")) {
+    banco.exec(
+      "ALTER TABLE usinas ADD COLUMN versao INTEGER NOT NULL DEFAULT 1",
+    );
+  }
+  const colunasUnidades = banco
+    .prepare("PRAGMA table_info(faturamento_unidades)")
+    .all();
+  if (!colunasUnidades.some((c) => c.name === "uc_antiga")) {
+    banco.exec("ALTER TABLE faturamento_unidades ADD COLUMN uc_antiga TEXT");
+  }
+  banco.exec(
+    "CREATE UNIQUE INDEX IF NOT EXISTS faturamento_unidades_uc_antiga_unica ON faturamento_unidades(uc_antiga) WHERE uc_antiga IS NOT NULL AND uc_antiga<>''",
+  );
   if (
     !banco
       .prepare("PRAGMA table_info(faturamento_documentos)")

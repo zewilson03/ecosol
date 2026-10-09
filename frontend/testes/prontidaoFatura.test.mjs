@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  modalidadeDaUcNaCompetencia,
   pendenciasParaCalculo,
   situacaoParaEmissao,
 } from "../src/admin/prontidaoFatura.ts";
@@ -32,6 +33,82 @@ const pendente = {
   dados,
 };
 assert.deepEqual(pendenciasParaCalculo(pendente, [unidade], [pendente]), []);
+const unidadeComUsina = {
+  ...unidade,
+  usina_id: 7,
+  modalidades_usina: [
+    { inicio: "2026-11", modalidade: "GDII" },
+    { inicio: "2026-09", modalidade: "GDI" },
+  ],
+};
+const unidadeTransferida = {
+  ...unidadeComUsina,
+  vinculos_usina: [
+    {
+      inicio: "2026-10",
+      usina_id: 7,
+      usina_nome: "Destino",
+      modalidades: [{ inicio: "2026-10", modalidade: "GDII" }],
+    },
+    {
+      inicio: "0000-01",
+      usina_id: 6,
+      usina_nome: "Origem",
+      modalidades: [{ inicio: "2026-09", modalidade: "GDI" }],
+    },
+  ],
+};
+assert.equal(
+  modalidadeDaUcNaCompetencia(unidadeTransferida, "2026-09").modalidade,
+  "GDI",
+);
+assert.equal(
+  modalidadeDaUcNaCompetencia(unidadeTransferida, "2026-10").modalidade,
+  "GDII",
+);
+assert.deepEqual(
+  pendenciasParaCalculo(
+    { ...pendente, dados: { ...dados, modalidade: "GDII" } },
+    [unidadeTransferida],
+    [pendente],
+  ),
+  ["modalidade divergente da usina"],
+);
+assert.deepEqual(
+  pendenciasParaCalculo(
+    { ...pendente, dados: { ...dados, modalidade: "" } },
+    [unidadeComUsina],
+    [pendente],
+  ),
+  [],
+);
+assert.deepEqual(
+  pendenciasParaCalculo(
+    { ...pendente, dados: { ...dados, modalidade: "GDII" } },
+    [unidadeComUsina],
+    [pendente],
+  ),
+  ["modalidade divergente da usina"],
+);
+assert.deepEqual(
+  pendenciasParaCalculo(
+    { ...pendente, dados: { ...dados, competencia: "2026-08" } },
+    [unidadeComUsina],
+    [pendente],
+  ),
+  ["desconto vigente da UC"],
+);
+assert.deepEqual(
+  pendenciasParaCalculo(
+    {
+      ...pendente,
+      dados: { ...dados, competencia: "2026-08", modalidade: "" },
+    },
+    [unidadeComUsina],
+    [pendente],
+  ),
+  ["modalidade anterior à vigência da usina", "desconto vigente da UC"],
+);
 assert.equal(
   situacaoParaEmissao(pendente, [unidade], [pendente]).cor,
   "aguardando",

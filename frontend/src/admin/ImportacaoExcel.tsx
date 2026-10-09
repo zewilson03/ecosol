@@ -404,7 +404,7 @@ export default function ImportacaoExcel({
               </fieldset>
               <fieldset className="admin-campos" disabled={ocupado}>
                 <label>
-                  Modalidade quando não houver coluna
+                  Modalidade da planilha quando não houver coluna
                   <select
                     value={padroes.modalidade}
                     onChange={(e) => {
@@ -417,6 +417,10 @@ export default function ImportacaoExcel({
                     <option>GDI</option>
                     <option>GDII</option>
                   </select>
+                  <small>
+                    Deve corresponder à modalidade vigente da usina na
+                    competência informada.
+                  </small>
                 </label>
                 <label>
                   Vigência contratual quando não houver coluna

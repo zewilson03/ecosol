@@ -1098,6 +1098,53 @@
   border-radius: 16px;
   background: linear-gradient(145deg, #f8fcfb, #eef7f6);
 }
+.admin-usina-clicavel {
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+.admin-usina-clicavel:hover,
+.admin-usina-clicavel:focus-visible {
+  border-color: #4aa8a7;
+  box-shadow: 0 12px 28px rgba(14, 76, 92, 0.14);
+  transform: translateY(-2px);
+  outline: none;
+}
+.admin-transferencia-acoes,
+.admin-transferencia-previa {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 14px;
+  margin: 18px 0;
+  padding: 18px;
+  border: 1px solid #bedfdc;
+  border-radius: 16px;
+  background: linear-gradient(125deg, #f3fbf9, #f5f9ff);
+}
+.admin-transferencia-acoes label {
+  display: grid;
+  gap: 6px;
+  min-width: min(100%, 260px);
+}
+.admin-transferencia-previa {
+  display: block;
+  border-color: #e7cf8d;
+  background: #fffbef;
+}
+.admin-transferencia-previa ul {
+  max-height: 240px;
+  overflow-y: auto;
+  margin: 12px 0;
+  padding-left: 20px;
+}
+.admin-transferencia-previa .admin-acoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
 .admin-usina > span {
   width: 43px;
   height: 43px;
@@ -1120,6 +1167,31 @@
   min-height: 20px;
   color: #718790;
   font-size: 12px;
+}
+.admin-usina-modalidade {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(19, 91, 112, 0.14);
+}
+.admin-usina-modalidade > strong {
+  color: #126576;
+  font-size: 17px;
+}
+.admin-usina-modalidade > small {
+  margin: 0;
+}
+.admin-usina-modalidade > button {
+  justify-self: start;
+}
+.admin-usina-modalidade details ul {
+  margin: 10px 0;
+  padding-left: 20px;
+}
+.admin-usina-modalidade .admin-formulario {
+  margin-top: 8px;
+  background: rgba(255, 255, 255, 0.85);
 }
 .admin-menu-mobile {
   display: none;
@@ -2259,7 +2331,9 @@
   padding: 22px 24px 24px;
   border: 1px solid #dce9ec;
   border-radius: 18px;
-  background: radial-gradient(circle at 96% 0, var(--grupo-brilho), transparent 210px), #fff;
+  background:
+    radial-gradient(circle at 96% 0, var(--grupo-brilho), transparent 210px),
+    #fff;
   box-shadow: 0 10px 28px rgba(13, 59, 74, 0.055);
 }
 .faturamento-grupo::before {
@@ -2269,7 +2343,12 @@
   right: 0;
   left: 0;
   height: 3px;
-  background: linear-gradient(90deg, var(--grupo-acento), #e7bf55 82%, transparent);
+  background: linear-gradient(
+    90deg,
+    var(--grupo-acento),
+    #e7bf55 82%,
+    transparent
+  );
 }
 .faturamento-grupo--equatorial {
   --grupo-acento: #1788ab;
@@ -2605,4 +2684,34 @@
   .faturamento-acoes .admin-botao {
     flex: 1;
   }
+}
+.admin-importacao-usinas {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 12px;
+}
+
+.admin-importacao-usinas label {
+  display: grid;
+  gap: 7px;
+}
+
+.admin-importacao-linhas {
+  max-height: 420px;
+  overflow: auto;
+  border: 1px solid var(--linha, #dbe5e8);
+  border-radius: 12px;
+}
+
+.admin-importacao-linhas table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.admin-importacao-linhas th,
+.admin-importacao-linhas td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #e4ecee;
+  text-align: left;
+  vertical-align: top;
 }
