@@ -29,9 +29,15 @@ const banco = obterBanco();
 try {
   banco
     .prepare(
-      "INSERT INTO customers (name, cpf, email, password_hash) VALUES (?, ?, ?, ?)",
+      "INSERT INTO customers (name, cpf, email, phone, password_hash) VALUES (?, ?, ?, ?, ?)",
     )
-    .run("Cliente teste", "52998224725", "cliente@teste.local", primeiroHash);
+    .run(
+      "Cliente teste",
+      "52998224725",
+      "cliente@teste.local",
+      "11999998888",
+      primeiroHash,
+    );
   banco
     .prepare(
       "INSERT INTO staff_users (name, email, password_hash, access_level) VALUES (?, ?, ?, ?)",
@@ -47,6 +53,7 @@ try {
     readFileSync(join(pasta, "administradores.json"), "utf8"),
   );
   assert.equal(clientes[0].senha_hash, primeiroHash);
+  assert.equal(clientes[0].telefone, "11999998888");
   assert.equal(administradores[0].senha_hash, segundoHash);
   const exportados = JSON.stringify({ clientes, administradores });
   assert.equal(exportados.includes(senha), false);

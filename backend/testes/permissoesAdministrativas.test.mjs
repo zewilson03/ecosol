@@ -15,6 +15,12 @@ const antigo = new DatabaseSync(join(process.env.ECOSOL_DATA_DIR, "ecosol.db"));
 antigo.exec(
   "CREATE TABLE staff_users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, cpf TEXT UNIQUE, email TEXT UNIQUE, password_hash TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)",
 );
+antigo.exec(
+  "CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, cpf TEXT NOT NULL UNIQUE, email TEXT NOT NULL, password_hash TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+);
+antigo
+  .prepare("INSERT INTO customers(name,cpf,email) VALUES(?,?,?)")
+  .run("Cliente anterior", "39053344705", "anterior@teste.local");
 antigo
   .prepare(
     "INSERT INTO staff_users (name, email, password_hash) VALUES (?, ?, ?)",
@@ -28,6 +34,11 @@ const { rotas } = await import("../servidor/rotasDaAplicacao.mjs");
 const { rotasAdministrativas } =
   await import("../servidor/rotasAdministrativas.mjs");
 const banco = obterBanco();
+assert.equal(
+  banco.prepare("SELECT phone FROM customers WHERE cpf=?").get("39053344705")
+    .phone,
+  "",
+);
 assert.equal(
   banco
     .prepare("SELECT access_level FROM staff_users WHERE email = ?")
@@ -421,6 +432,64 @@ try {
     },
   );
   assert.equal(criarCliente.status, 200);
+  const cpfComTelefone = cpfDeTeste(100000097);
+  assert.equal(
+    (
+      await chamar("/api/equipe/clientes", cookies[2], "POST", {
+        name: "Cliente só com telefone",
+        cpf: cpfComTelefone,
+        phone: "+55 (11) 99999-8888",
+      })
+    ).status,
+    200,
+  );
+  assert.deepEqual(
+    {
+      ...banco
+        .prepare("SELECT email,phone,password_hash FROM customers WHERE cpf=?")
+        .get(cpfComTelefone),
+    },
+    { email: "", phone: "11999998888", password_hash: null },
+  );
+  assert.equal(
+    (
+      await chamar("/api/clientes/login", null, "POST", {
+        cpf: cpfComTelefone,
+        password: senha,
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await chamar("/api/clientes/cadastro", null, "POST", {
+        name: "Tentativa de acesso só com telefone",
+        cpf: cpfDeTeste(100000094),
+        phone: "(11) 99999-8888",
+        password: senha,
+        confirm: senha,
+      })
+    ).status,
+    400,
+  );
+  for (const dadosInvalidos of [
+    { phone: "" },
+    { phone: "123" },
+    { email: "invalido", phone: "(11) 99999-8888" },
+    { email: "valido@teste.local", phone: "invalido" },
+    { phone: "(11) 99999-8888", test_password: senha },
+  ]) {
+    assert.equal(
+      (
+        await chamar("/api/equipe/clientes", cookies[2], "POST", {
+          name: "Contato inválido",
+          cpf: cpfDeTeste(100000096),
+          ...dadosInvalidos,
+        })
+      ).status,
+      400,
+    );
+  }
 
   for (const nivel of [1, 2, 3]) {
     const cpf = cpfDeTeste(100000000 + nivel);
@@ -484,7 +553,9 @@ try {
     if (nivel === 1) {
       assert.equal(
         banco
-          .prepare("SELECT cliente_id FROM faturamento_unidades WHERE uc='900001'")
+          .prepare(
+            "SELECT cliente_id FROM faturamento_unidades WHERE uc='900001'",
+          )
           .get().cliente_id,
         null,
       );

@@ -201,9 +201,10 @@ export function prepararPrevia(s, escolhas, banco) {
   const ucs = banco
     .prepare(
       `SELECT u.id,u.uc,u.uc_antiga,u.usina_id,u.versao,
-      COALESCE(c.name,p.nome,u.nome) AS cliente_nome
+      COALESCE(c.name,o.nome,p.nome,u.nome) AS cliente_nome
      FROM faturamento_unidades u
      LEFT JOIN customers c ON c.id=u.cliente_id
+     LEFT JOIN faturamento_clientes_operacionais o ON o.id=u.cliente_operacional_id
      LEFT JOIN faturamento_clientes_provisorios p ON p.id=u.cliente_provisorio_id`,
     )
     .all();

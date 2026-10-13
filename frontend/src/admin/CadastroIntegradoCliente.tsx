@@ -36,6 +36,7 @@ export default function CadastroIntegradoCliente({
   const [clienteId, setClienteId] = useState<number | null>(clienteInicialId);
   const [cpf, setCpf] = useState("");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [uc, setUc] = useState(ucInicial);
   const [unidadeNome, setUnidadeNome] = useState("");
   const [unidadeDocumento, setUnidadeDocumento] = useState("");
@@ -79,6 +80,7 @@ export default function CadastroIntegradoCliente({
     setNome((atual) => atual || selecionado.name);
     setCpf((atual) => atual || selecionado.cpf);
     setEmail((atual) => atual || selecionado.email);
+    setPhone((atual) => atual || selecionado.phone);
     setUnidadeNome((atual) => atual || selecionado.name);
     setUnidadeDocumento((atual) => atual || selecionado.cpf);
     setUnidadeEmail((atual) => atual || selecionado.email);
@@ -89,6 +91,7 @@ export default function CadastroIntegradoCliente({
     setNome(cliente.name);
     setCpf(cliente.cpf);
     setEmail(cliente.email);
+    setPhone(cliente.phone);
     setUnidadeNome(cliente.name);
     setUnidadeDocumento(cliente.cpf);
     setUnidadeEmail(cliente.email);
@@ -127,6 +130,7 @@ export default function CadastroIntegradoCliente({
             nome,
             cpf: selecionado?.cpf ?? cpf,
             email,
+            phone,
             uc,
             ...(usinaInicialId !== null ? { usina_id: usinaInicialId } : {}),
             confirmar_vinculo: confirmarVinculo,
@@ -200,6 +204,7 @@ export default function CadastroIntegradoCliente({
               if (selecionado) {
                 setCpf("");
                 setEmail("");
+                setPhone("");
                 setUnidadeDocumento("");
                 setUnidadeEmail("");
               }
@@ -231,7 +236,7 @@ export default function CadastroIntegradoCliente({
         )}
         {selecionado && (
           <p className="admin-aviso sucesso cadastro-integrado-largura">
-            Cliente existente selecionado: {selecionado.name}. CPF e e-mail
+            Cliente existente selecionado: {selecionado.name}. CPF e contato
             preenchidos pelo cadastro.
           </p>
         )}
@@ -250,17 +255,31 @@ export default function CadastroIntegradoCliente({
           />
         </label>
         <label>
-          E-mail do cliente
+          E-mail do cliente (ou informe telefone)
           <input
             type="email"
             value={selecionado?.email ?? email}
             readOnly={!!selecionado}
             maxLength={180}
-            required
+            required={!phone && !selecionado?.phone}
             onChange={(evento) => {
               setEmail(evento.target.value);
               if (!unidadeExistente) setUnidadeEmail(evento.target.value);
             }}
+          />
+        </label>
+        <label>
+          Telefone do cliente (ou informe e-mail)
+          <input
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
+            value={selecionado?.phone ?? phone}
+            readOnly={!!selecionado}
+            maxLength={30}
+            required={!email && !selecionado?.email}
+            placeholder="(11) 99999-9999"
+            onChange={(evento) => setPhone(evento.target.value)}
           />
         </label>
         <label>
@@ -312,12 +331,12 @@ export default function CadastroIntegradoCliente({
               />
             </label>
             <label>
-              E-mail de cobrança
+              E-mail de cobrança (opcional com telefone do cliente)
               <input
                 type="email"
                 value={unidadeEmail}
                 maxLength={180}
-                required
+                required={!phone && !selecionado?.phone}
                 onChange={(evento) => setUnidadeEmail(evento.target.value)}
               />
             </label>
@@ -383,8 +402,11 @@ export default function CadastroIntegradoCliente({
             checked={confirmarVinculo}
             onChange={(evento) => setConfirmarVinculo(evento.target.checked)}
           />
-          Conferi os dados da UC existente e confirmo o vínculo com este cliente
-          {precisaConfirmarUsina ? " e com a usina selecionada" : ""}.
+          <span>
+            Conferi os dados da UC existente e confirmo o vínculo com este
+            cliente
+            {precisaConfirmarUsina ? " e com a usina selecionada" : ""}.
+          </span>
         </label>
       ) : null}
       <button

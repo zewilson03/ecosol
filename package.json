@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test:calculos": "node frontend/testes/calculos.test.mjs",
     "test:planilhas": "node backend/testes/planilhas.test.mjs",
     "test:transferencias": "node backend/testes/transferenciasUsinas.test.mjs",
     "test:faturamento": "node backend/testes/faturamento.test.mjs",

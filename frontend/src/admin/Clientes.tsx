@@ -36,7 +36,7 @@ const secoesDosCadastros: {
     id: "clientes",
     numero: "02",
     titulo: "Clientes",
-    descricao: "Acesso ao portal",
+    descricao: "Cadastro e acesso ao portal",
   },
   {
     id: "contatos",
@@ -52,6 +52,41 @@ const secoesDosCadastros: {
     nivelMinimo: 3,
   },
 ];
+
+function ContatoObrigatorioDoCliente() {
+  const [email, definirEmail] = useState("");
+  const [telefone, definirTelefone] = useState("");
+  return (
+    <>
+      <label>
+        E-mail (ou informe telefone)
+        <input
+          name="email"
+          type="email"
+          maxLength={180}
+          value={email}
+          required={!telefone.trim()}
+          onChange={(evento) => definirEmail(evento.target.value)}
+        />
+      </label>
+      <label>
+        Telefone (ou informe e-mail)
+        <input
+          name="phone"
+          type="tel"
+          inputMode="tel"
+          autoComplete="tel"
+          maxLength={30}
+          placeholder="(11) 99999-9999"
+          value={telefone}
+          required={!email.trim()}
+          onChange={(evento) => definirTelefone(evento.target.value)}
+        />
+      </label>
+      <p>Informe pelo menos um contato. O acesso ao portal exige e-mail.</p>
+    </>
+  );
+}
 
 export default function Clientes() {
   const location = useLocation();
@@ -91,6 +126,9 @@ export default function Clientes() {
       ? "/api/admin/faturamento/clientes-provisorios"
       : null,
   );
+  const operacionais = usarConsulta<
+    { id: number; referencia_interna: string; nome: string; situacao: string; unidades: number }[]
+  >(secao === "clientes" ? "/api/admin/faturamento/clientes-operacionais" : null);
   const [busca, definirBusca] = useState("");
   const [formulario, definirFormulario] = useState(
     Boolean(nomeInicialCliente || clienteParaVincular),
@@ -109,7 +147,7 @@ export default function Clientes() {
   const administradores = consulta.dados?.administradores ?? [];
   const contatos = consulta.dados?.contatos ?? [];
   const clientes = todosClientes.filter((cliente) =>
-    (cliente.name + cliente.cpf + cliente.email)
+    (cliente.name + cliente.cpf + cliente.email + cliente.phone)
       .toLowerCase()
       .includes(busca.toLowerCase()),
   );
@@ -269,10 +307,7 @@ export default function Clientes() {
                 />
               </label>
               <CampoDeCpf id="novo-cliente" gerarTeste={import.meta.env.DEV} />
-              <label>
-                Email
-                <input name="email" type="email" maxLength={180} required />
-              </label>
+              <ContatoObrigatorioDoCliente />
               {import.meta.env.DEV && (
                 <label>
                   Senha inicial (opcional)
@@ -311,6 +346,10 @@ export default function Clientes() {
                 {...provisorios}
                 repetir={provisorios.atualizar}
               />
+              <EstadoDaConsulta
+                {...operacionais}
+                repetir={operacionais.atualizar}
+              />
               <div className="admin-barra">
                 <div>
                   <h2>Lista de clientes</h2>
@@ -318,7 +357,7 @@ export default function Clientes() {
                 </div>
                 <input
                   aria-label="Buscar clientes"
-                  placeholder="Nome, CPF ou email"
+                  placeholder="Nome, CPF, e-mail ou telefone"
                   value={busca}
                   onChange={(evento) => definirBusca(evento.target.value)}
                 />
@@ -337,7 +376,7 @@ export default function Clientes() {
                     <tr>
                       <th>Cliente</th>
                       <th>CPF</th>
-                      <th>Email</th>
+                      <th>Contato</th>
                       <th>Acesso</th>
                       <th>Ações</th>
                     </tr>
@@ -349,10 +388,19 @@ export default function Clientes() {
                           <strong>{cliente.name}</strong>
                         </td>
                         <td>{cliente.cpf}</td>
-                        <td>{cliente.email}</td>
+                        <td>
+                          {cliente.email || "Sem e-mail"}
+                          {cliente.phone && (
+                            <small> · Tel. {cliente.phone}</small>
+                          )}
+                        </td>
                         <td>
                           <span className="admin-status">
-                            {cliente.ready ? "Ativo" : "Aguardando ativação"}
+                            {cliente.ready
+                              ? "Ativo"
+                              : cliente.email
+                                ? "Aguardando ativação"
+                                : "Sem acesso ao portal"}
                           </span>
                         </td>
                         <td>
@@ -397,17 +445,51 @@ export default function Clientes() {
                   <p>Nenhum cliente encontrado.</p>
                 )}
               </div>
+              {(operacionais.dados ?? []).length > 0 && (
+                <details className="admin-tabela">
+                  <summary>
+                    Clientes operacionais de teste: {operacionais.dados?.length} ·
+                    documentação pendente, sem acesso e sem cobrança
+                  </summary>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Referência interna (não é CPF/CNPJ)</th>
+                        <th>Nome informado</th>
+                        <th>UCs</th>
+                        <th>Situação</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(operacionais.dados ?? [])
+                        .filter((item) =>
+                          `${item.nome} ${item.referencia_interna}`
+                            .toLowerCase()
+                            .includes(busca.toLowerCase()),
+                        )
+                        .map((item) => (
+                          <tr key={item.id}>
+                            <td>{item.referencia_interna}</td>
+                            <td>{item.nome}</td>
+                            <td>{item.unidades}</td>
+                            <td>{item.situacao}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </details>
+              )}
               {(provisorios.dados ?? []).some(
                 (item) =>
                   item.unidades > 0 &&
                   item.nome.toLowerCase().includes(busca.toLowerCase()),
               ) && (
                 <div className="admin-tabela">
-                  <h3>Cadastros provisórios de teste</h3>
+                  <h3>Cadastros provisórios</h3>
                   <p>
-                    Sem CPF e e-mail confirmados e sem acesso ao portal. Para
-                    concluir, cadastre o cliente real e vincule cada UC em
-                    Unidades e contratos.
+                    Apenas nome, sem CPF e e-mail confirmados e sem acesso ao
+                    portal. Para concluir, cadastre o cliente real e vincule
+                    cada UC em Unidades e contratos.
                   </p>
                   <table>
                     <thead>

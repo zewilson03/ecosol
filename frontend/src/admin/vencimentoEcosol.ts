@@ -32,3 +32,15 @@ export function sugerirVencimentoEcosol(
     String(data.getDate()).padStart(2, "0"),
   ].join("-");
 }
+
+/** UC sem dia preferido usa o vencimento Equatorial da fatura. */
+export function sugerirVencimentoEcosolSeDefinido(
+  diaPreferido: number,
+  hoje?: Date,
+): string {
+  return Number.isInteger(diaPreferido) &&
+    diaPreferido >= 1 &&
+    diaPreferido <= 31
+    ? sugerirVencimentoEcosol(diaPreferido, hoje)
+    : "";
+}

@@ -30,6 +30,12 @@ function IconeModulo({ modulo }: { modulo: string }) {
         <path d="M9 8h6M9 12h6M9 16h4" />
       </>
     ),
+    calculos: (
+      <>
+        <rect x="5" y="2" width="14" height="20" rx="2" />
+        <path d="M8 6h8M8 10h2m4 0h2M8 14h2m4 0h2M8 18h2m4-4v4" />
+      </>
+    ),
     clientes: (
       <>
         <circle cx="9" cy="8" r="3" />
@@ -118,6 +124,7 @@ export default function EstruturaAdministrativa() {
   const itens = [
     { rota: "usinas", nome: "Usinas" },
     { rota: "faturas", nome: "Faturas" },
+    { rota: "calculos", nome: "Cálculos" },
     { rota: "clientes", nome: "Cadastros" },
     ...(administrador.nivel >= 2
       ? [{ rota: "financeiro", nome: "Financeiro" }]

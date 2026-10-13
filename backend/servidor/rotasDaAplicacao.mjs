@@ -21,6 +21,7 @@ import {
   cpfValido,
   cpfValidoParaCadastro,
 } from "./validacaoDeCpf.mjs";
+import { validarContatoCliente } from "./validacaoDeContato.mjs";
 
 export const rotas = express.Router();
 const formatoDeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -94,7 +95,8 @@ const mensagensDeCadastro = {
   "cliente-existente": "Este CPF já está cadastrado.",
   "admin-cpf-existente": "Este CPF já está cadastrado.",
   "admin-existente": "Este email já está cadastrado.",
-  "cliente-erro": "Confira nome, email e senha de 8 a 128 caracteres.",
+  "cliente-erro":
+    "Confira nome, e-mail ou telefone e, se informada, a senha de 8 a 128 caracteres. O acesso ao portal exige e-mail.",
   "admin-erro": "Confira nome, email, nível e senha de 8 a 128 caracteres.",
 };
 function exigirEquipe(requisicao, resposta, proximo) {
@@ -110,7 +112,7 @@ rotas.get("/api/sessao", (requisicao, resposta) => {
 
   if (sessao.role === "customer") {
     const cliente = obterBanco()
-      .prepare("SELECT name, email, cpf FROM customers WHERE id = ?")
+      .prepare("SELECT name, email, phone, cpf FROM customers WHERE id = ?")
       .get(sessao.customer_id);
     return resposta.json({ perfil: cliente ? "cliente" : null, cliente });
   }
@@ -135,7 +137,7 @@ rotas.get("/api/equipe/dados", exigirEquipe, (_requisicao, resposta) => {
   if (todasAsSecoes || secao === "clientes") {
     dados.clientes = banco
       .prepare(
-        "SELECT id, name, cpf, email, (password_hash IS NOT NULL) AS ready FROM customers ORDER BY id DESC",
+        "SELECT id, name, cpf, email, phone, (password_hash IS NOT NULL AND email <> '') AS ready FROM customers ORDER BY id DESC",
       )
       .all();
   }
@@ -253,9 +255,10 @@ rotas.post("/api/clientes/login", async (requisicao, resposta) => {
   }
 
   const cliente = obterBanco()
-    .prepare("SELECT id, password_hash FROM customers WHERE cpf = ?")
+    .prepare("SELECT id, email, password_hash FROM customers WHERE cpf = ?")
     .get(cpf);
   if (
+    !cliente?.email ||
     !cliente?.password_hash ||
     !(await senhaConfere(senha, cliente.password_hash))
   ) {
@@ -450,7 +453,10 @@ rotas.post(
     const nome = campo(requisicao, "name", 120);
     const cpfInformado = campo(requisicao, "cpf", 14);
     const cpf = apenasDigitos(cpfInformado);
-    const email = campo(requisicao, "email", 180).toLowerCase();
+    const contato = validarContatoCliente(
+      requisicao.body?.email,
+      requisicao.body?.phone,
+    );
     const senha = campoSenha(requisicao, "test_password");
     const retorno = "/equipe/cadastros?status=";
 
@@ -460,7 +466,8 @@ rotas.post(
       return redirecionar(resposta, retorno + "cliente-existente");
     if (
       !nome ||
-      !emailValido(email) ||
+      !contato ||
+      (senha && !contato.email) ||
       (senha && (!emDesenvolvimento || !senhaValida(senha)))
     ) {
       return redirecionar(resposta, retorno + "cliente-erro");
@@ -469,9 +476,9 @@ rotas.post(
       const hash = senha ? await protegerSenha(senha) : null;
       obterBanco()
         .prepare(
-          "INSERT INTO customers (name, cpf, email, password_hash) VALUES (?, ?, ?, ?)",
+          "INSERT INTO customers (name, cpf, email, phone, password_hash) VALUES (?, ?, ?, ?, ?)",
         )
-        .run(nome, cpf, email, hash);
+        .run(nome, cpf, contato.email, contato.phone, hash);
     } catch {
       return redirecionar(resposta, retorno + "cliente-existente");
     }

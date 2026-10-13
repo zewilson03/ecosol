@@ -41,6 +41,15 @@ export function prepararFaturamento(banco) {
       id INTEGER PRIMARY KEY, nome TEXT NOT NULL, chave_origem TEXT NOT NULL UNIQUE,
       origem TEXT NOT NULL, criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS faturamento_clientes_operacionais (
+      id INTEGER PRIMARY KEY,
+      referencia_interna TEXT NOT NULL UNIQUE,
+      nome TEXT NOT NULL,
+      origem_provisorio_id INTEGER NOT NULL UNIQUE,
+      situacao TEXT NOT NULL DEFAULT 'Documentação pendente'
+        CHECK(situacao='Documentação pendente'),
+      criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
     CREATE TABLE IF NOT EXISTS faturamento_descontos_uc (
       id INTEGER PRIMARY KEY, unidade_id INTEGER NOT NULL, inicio TEXT NOT NULL,
       desconto TEXT NOT NULL, criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -171,11 +180,53 @@ export function prepararFaturamento(banco) {
       "ALTER TABLE faturamento_unidades ADD COLUMN cliente_provisorio_id INTEGER",
     );
   }
+  if (
+    !banco
+      .prepare("PRAGMA table_info(faturamento_unidades)")
+      .all()
+      .some((c) => c.name === "cliente_operacional_id")
+  ) {
+    banco.exec(
+      "ALTER TABLE faturamento_unidades ADD COLUMN cliente_operacional_id INTEGER REFERENCES faturamento_clientes_operacionais(id)",
+    );
+  }
+  if (
+    !banco
+      .prepare("PRAGMA table_info(faturamento_unidades)")
+      .all()
+      .some((c) => c.name === "pendencia_cadastro")
+  ) {
+    banco.exec("ALTER TABLE faturamento_unidades ADD COLUMN pendencia_cadastro TEXT");
+  }
   banco.exec(`CREATE INDEX IF NOT EXISTS faturamento_unidades_cliente
     ON faturamento_unidades(cliente_id) WHERE cliente_id IS NOT NULL`);
   banco.exec(`CREATE INDEX IF NOT EXISTS faturamento_unidades_provisorio
     ON faturamento_unidades(cliente_provisorio_id)
     WHERE cliente_provisorio_id IS NOT NULL`);
+  banco.exec(`CREATE INDEX IF NOT EXISTS faturamento_unidades_operacional
+    ON faturamento_unidades(cliente_operacional_id)
+    WHERE cliente_operacional_id IS NOT NULL`);
+  // A proteção persiste no banco, inclusive se um processo antigo ainda estiver ativo.
+  banco.exec(`
+    CREATE TRIGGER IF NOT EXISTS faturamento_operacional_sem_calculo_insert
+    BEFORE INSERT ON faturamento_documentos
+    WHEN NEW.unidade_id IS NOT NULL
+      AND (NEW.memoria IS NOT NULL OR NEW.status='Calculada' OR NEW.status LIKE 'Aprovada%')
+      AND EXISTS (SELECT 1 FROM faturamento_unidades u
+                  WHERE u.id=NEW.unidade_id AND u.cliente_operacional_id IS NOT NULL)
+    BEGIN
+      SELECT RAISE(ABORT, 'Cadastro operacional de teste não pode gerar cobrança');
+    END;
+    CREATE TRIGGER IF NOT EXISTS faturamento_operacional_sem_calculo_update
+    BEFORE UPDATE ON faturamento_documentos
+    WHEN NEW.unidade_id IS NOT NULL
+      AND (NEW.memoria IS NOT NULL OR NEW.status='Calculada' OR NEW.status LIKE 'Aprovada%')
+      AND EXISTS (SELECT 1 FROM faturamento_unidades u
+                  WHERE u.id=NEW.unidade_id AND u.cliente_operacional_id IS NOT NULL)
+    BEGIN
+      SELECT RAISE(ABORT, 'Cadastro operacional de teste não pode gerar cobrança');
+    END;
+  `);
   banco.exec(`CREATE TABLE IF NOT EXISTS faturamento_importacoes (
     id TEXT PRIMARY KEY, responsavel_id INTEGER, nome TEXT NOT NULL, hash TEXT NOT NULL,
     usina_id INTEGER NOT NULL, abas TEXT NOT NULL, previa TEXT, previa_id TEXT,

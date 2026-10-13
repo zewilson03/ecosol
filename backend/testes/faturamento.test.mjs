@@ -73,6 +73,14 @@ try {
   );
   assert.equal(
     bancoAntigo
+      .prepare(
+        "SELECT cliente_operacional_id,pendencia_cadastro FROM faturamento_unidades WHERE uc='123'",
+      )
+      .get().cliente_operacional_id,
+    null,
+  );
+  assert.equal(
+    bancoAntigo
       .prepare("SELECT COUNT(*) n FROM faturamento_clientes_provisorios")
       .get().n,
     0,
@@ -112,6 +120,19 @@ assert.equal(
   calcularCobranca({ ...entrada, modalidade: "GDI", ajuste_gdii: "0" })
     .total_centavos,
   175901,
+);
+const gdiComAjusteAutomatico = calcularCobranca({
+  ...entrada,
+  modalidade: "GDI",
+  ajuste_gdii: "",
+});
+assert.equal(gdiComAjusteAutomatico.entradas.ajuste_gdii, "0");
+assert.equal(gdiComAjusteAutomatico.total_centavos, 175901);
+assert.throws(() =>
+  calcularCobranca({ ...entrada, modalidade: "GDI", ajuste_gdii: "1" }),
+);
+assert.throws(() =>
+  calcularCobranca({ ...entrada, modalidade: "GDII", ajuste_gdii: "" }),
 );
 const semEnergiaInjetada = calcularCobranca({
   injecao: "0",
@@ -321,6 +342,62 @@ assert.match(
   /Quadro verde/,
 );
 assert.equal(extrairUcDoQuadro(itensQuadroVerde.slice(1), 909, 1211), null);
+const itensQuadroCorrompido = [
+  itemPdf("PERDAS DE TRANSFORMA��O / RAMAL: 0%", 18, 1017),
+  itemPdf("3.046.242.012-43", 333, 1017),
+  itemPdf("INJE��O SCEE - UC 000408047401296 - GD I", 19, 724),
+];
+assert.equal(
+  extrairUcDoQuadro(itensQuadroCorrompido, 909, 1211),
+  "3.046.242.012-43",
+);
+assert.equal(
+  extrairCampos(
+    "PERDAS DE TRANSFORMA��O / RAMAL: 0% 3.046.242.012-43\n" +
+      "INJE��O SCEE - UC 000408047401296 - GD I",
+    { ucQuadro: extrairUcDoQuadro(itensQuadroCorrompido, 909, 1211) },
+  ).dados.uc,
+  "304624201243",
+);
+assert.equal(
+  extrairCampos(
+    "PERDAS DE TRANSFORMA��O / RAMAL: 0% 3.046.242.012-43\n" +
+      "INJE��O SCEE - UC 000408047401296 - GD I",
+  ).dados.uc,
+  undefined,
+);
+assert.equal(
+  extrairCampos(
+    "PERDAS DE TRANSFORMA��O / RAMAL: 0% 3.046.242.012-43\n" +
+      "EQUATORIAL GOIAS DISTRIBUIDORA DE ENERGIA S/A 9.999.999.012-00 SET/2026",
+    { ucQuadro: extrairUcDoQuadro(itensQuadroCorrompido, 909, 1211) },
+  ).dados.uc,
+  undefined,
+);
+assert.equal(
+  extrairUcDoQuadro(itensQuadroCorrompido.slice(1), 909, 1211),
+  null,
+);
+assert.equal(
+  extrairUcDoQuadro(
+    [...itensQuadroCorrompido, itemPdf("3.046.242.012-44", 335, 1017)],
+    909,
+    1211,
+  ),
+  null,
+);
+assert.equal(
+  extrairUcDoQuadro(
+    [
+      itensQuadroCorrompido[0],
+      itemPdf("3.046.242.012-43", 333, 800),
+      itensQuadroCorrompido[2],
+    ],
+    909,
+    1211,
+  ),
+  null,
+);
 assert.equal(
   extrairUcDoQuadro(
     [...itensQuadroVerde, itemPdf("3.046.242.012-44", 335, 1017)],
@@ -504,7 +581,77 @@ try {
     cadastroIntegrado,
     201,
   );
+  await ok(
+    "/unidades",
+    "POST",
+    {
+      uc: "987654321096",
+      nome: "UC sem canal de cobrança",
+      documento: cadastroIntegrado.cpf,
+      email: "",
+      dia_vencimento: 5,
+      cliente_id: integrado.cliente_id,
+      desconto: "25",
+      desconto_inicio: "2026-10",
+    },
+    400,
+  );
   assert.equal(integrado.estado, "criada");
+  const cadastroSoTelefone = {
+    ...cadastroIntegrado,
+    nome: "Cliente sem e-mail",
+    cpf: "10000009580",
+    email: "",
+    phone: "(62) 99999-1234",
+    uc: "987654321099",
+    unidade_documento: "10000009580",
+    unidade_email: "",
+  };
+  const integradoSoTelefone = await ok(
+    "/cadastro-integrado",
+    "POST",
+    cadastroSoTelefone,
+    201,
+  );
+  assert.deepEqual(
+    {
+      ...banco
+        .prepare("SELECT email,phone,password_hash FROM customers WHERE id=?")
+        .get(integradoSoTelefone.cliente_id),
+    },
+    { email: "", phone: "62999991234", password_hash: null },
+  );
+  assert.equal(
+    banco
+      .prepare("SELECT email FROM faturamento_unidades WHERE id=?")
+      .get(integradoSoTelefone.unidade_id).email,
+    "",
+  );
+  const unidadeSemEmail = banco
+    .prepare("SELECT * FROM faturamento_unidades WHERE id=?")
+    .get(integradoSoTelefone.unidade_id);
+  await ok(`/unidades/${unidadeSemEmail.id}`, "PATCH", unidadeSemEmail);
+  await ok(
+    "/unidades",
+    "POST",
+    {
+      uc: "987654321097",
+      nome: "Outra UC do cliente sem e-mail",
+      documento: cadastroSoTelefone.cpf,
+      email: "",
+      dia_vencimento: 5,
+      cliente_id: integradoSoTelefone.cliente_id,
+      desconto: "25",
+      desconto_inicio: "2026-10",
+    },
+    201,
+  );
+  await ok(
+    "/cadastro-integrado",
+    "POST",
+    { ...cadastroSoTelefone, cpf: "10000009580", uc: "987654321098", phone: "" },
+    400,
+  );
   assert.equal(
     banco
       .prepare("SELECT cliente_id FROM faturamento_unidades WHERE id=?")
@@ -1150,6 +1297,54 @@ try {
       dados: { ...faturaProvisoria.dados, modalidade: "GDI", injecao: "0" },
     },
     409,
+  );
+  const operacaoId = Number(
+    banco
+      .prepare(
+        "INSERT INTO faturamento_clientes_operacionais(referencia_interna,nome,origem_provisorio_id) VALUES(?,?,?)",
+      )
+      .run("TESTE-OP-000001", "Cliente para conferência", clienteProvisorioId)
+      .lastInsertRowid,
+  );
+  banco
+    .prepare(
+      "UPDATE faturamento_unidades SET cliente_provisorio_id=NULL,cliente_operacional_id=?,pendencia_cadastro=? WHERE uc=?",
+    )
+    .run(operacaoId, "CPF/CNPJ não comprovado", "999888777666");
+  assert.equal(
+    (await ok("/clientes-operacionais", "GET")).find(
+      (item) => item.id === operacaoId,
+    ).unidades,
+    1,
+  );
+  assert.equal(
+    (await ok("/unidades", "GET")).find((item) => item.uc === "999888777666")
+      .cliente_referencia_interna,
+    "TESTE-OP-000001",
+  );
+  const bloqueioOperacional = await ok(
+    `/documentos/${faturaProvisoria.id}/previa`,
+    "POST",
+    {
+      versao: faturaProvisoria.versao,
+      dados: { ...faturaProvisoria.dados, modalidade: "GDI", injecao: "0" },
+    },
+    409,
+  );
+  assert.match(bloqueioOperacional.erro, /cadastro operacional de teste/i);
+  assert.throws(
+    () =>
+      banco
+        .prepare(
+          "UPDATE faturamento_documentos SET unidade_id=?,status='Calculada',memoria='{}' WHERE id=?",
+        )
+        .run(
+          banco
+            .prepare("SELECT id FROM faturamento_unidades WHERE uc=?")
+            .get("999888777666").id,
+          faturaProvisoria.id,
+        ),
+    /Cadastro operacional de teste não pode gerar cobrança/,
   );
 
   const acessoInicial = await receberPdf({
@@ -2148,7 +2343,7 @@ try {
     vencimento_equatorial: "2026-10-20",
     vencimento_ecosol: "2026-10-25",
     modalidade: "",
-    ajuste_gdii: "0",
+    ajuste_gdii: "",
   };
   const previaUsina = await ok(
     `/documentos/${documentoUsina.id}/previa`,
@@ -2156,7 +2351,17 @@ try {
     { versao: documentoUsina.versao, dados: dadosUsina },
   );
   assert.equal(previaUsina.memoria.contrato.modalidade, "GDI");
+  assert.equal(previaUsina.memoria.entradas.ajuste_gdii, "0");
   assert.equal(previaUsina.memoria.contrato.modalidade_inicio, "2026-09");
+  await ok(
+    `/documentos/${documentoUsina.id}/previa`,
+    "POST",
+    {
+      versao: documentoUsina.versao,
+      dados: { ...dadosUsina, ajuste_gdii: "1" },
+    },
+    400,
+  );
   await ok(
     `/documentos/${documentoUsina.id}/previa`,
     "POST",
@@ -2177,6 +2382,7 @@ try {
     },
   );
   assert.equal(calculadaUsina.dados.modalidade, "GDI");
+  assert.equal(calculadaUsina.dados.ajuste_gdii, "0");
   await ok(
     `/usinas/${usinaModalidade.id}/modalidades`,
     "POST",

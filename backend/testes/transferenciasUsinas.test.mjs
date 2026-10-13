@@ -64,6 +64,14 @@ const unidade = (uc, usinaId = origem) =>
   );
 const uc1 = unidade("900001001");
 const uc2 = unidade("900001002");
+const ucComInicio = unidade("900001099");
+banco
+  .prepare(
+    "INSERT INTO faturamento_vinculos_usina(unidade_id,inicio,usina_id) VALUES(?,?,?)",
+  )
+  .run(ucComInicio, "2026-10", origem);
+assert.equal(usinaDaUnidadeNaCompetencia(banco, ucComInicio, "2026-09"), null);
+assert.equal(usinaDaUnidadeNaCompetencia(banco, ucComInicio, "2026-10"), origem);
 const dataAtual = new Intl.DateTimeFormat("en-US", {
   timeZone: "America/Sao_Paulo",
   year: "numeric",

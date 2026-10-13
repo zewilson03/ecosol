@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { sugerirVencimentoEcosol } from "../src/admin/vencimentoEcosol.ts";
+import {
+  sugerirVencimentoEcosol,
+  sugerirVencimentoEcosolSeDefinido,
+} from "../src/admin/vencimentoEcosol.ts";
 
 const dia = (ano, mes, numero) => new Date(Date.UTC(ano, mes - 1, numero, 15));
 assert.equal(sugerirVencimentoEcosol(5, dia(2026, 10, 1)), "2026-10-05");
@@ -14,4 +17,10 @@ assert.equal(
   "2026-10-05",
 );
 assert.throws(() => sugerirVencimentoEcosol(0), RangeError);
+assert.equal(sugerirVencimentoEcosolSeDefinido(0), "");
+assert.equal(sugerirVencimentoEcosolSeDefinido(32), "");
+assert.equal(
+  sugerirVencimentoEcosolSeDefinido(5, dia(2026, 10, 1)),
+  "2026-10-05",
+);
 console.log("Vencimentos Ecosol: testes concluídos.");

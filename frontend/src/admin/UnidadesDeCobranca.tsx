@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { consultarServidor, usarConsulta } from "./comunicacaoComServidor";
 import { EstadoDaConsulta } from "./ComponentesDoPainel";
 import { usarAdministrador } from "./EstruturaAdministrativa";
@@ -15,6 +15,9 @@ export type Contrato = {
 export type Unidade = {
   cliente_id?: number | null;
   cliente_provisorio_id?: number | null;
+  cliente_operacional_id?: number | null;
+  cliente_referencia_interna?: string | null;
+  pendencia_cadastro?: string | null;
   cliente_nome?: string | null;
   usina_id?: number | null;
   usina_nome?: string | null;
@@ -65,7 +68,7 @@ export default function UnidadesDeCobranca({
   aoAtualizar?: () => void;
 }) {
   const consulta = usarConsulta<Unidade[]>(base);
-  const clientes = usarConsulta<{ id: number; name: string }[]>(
+  const clientes = usarConsulta<{ id: number; name: string; phone: string }[]>(
     "/api/admin/faturamento/clientes",
   );
   const usinas =
@@ -74,6 +77,7 @@ export default function UnidadesDeCobranca({
     >("/api/admin/usinas");
   const { nivel } = usarAdministrador();
   const [edicao, setEdicao] = useState<Unidade | "nova" | null>(null);
+  const [clienteEscolhido, setClienteEscolhido] = useState<string | null>(null);
   const [descontoPara, setDescontoPara] = useState<Unidade | null>(null);
   const [erro, setErro] = useState("");
   const [mensagem, setMensagem] = useState("");
@@ -95,6 +99,15 @@ export default function UnidadesDeCobranca({
   } | null>(null);
   const [chaveTransferencia, setChaveTransferencia] = useState("");
   const atual = edicao && edicao !== "nova" ? edicao : null;
+  useEffect(() => setClienteEscolhido(null), [edicao]);
+  const clienteIdNoFormulario =
+    clienteEscolhido === null
+      ? (atual?.cliente_id ?? clienteInicialId)
+      : Number(clienteEscolhido) || null;
+  const clienteTemTelefone = Boolean(
+    clientes.dados?.find((cliente) => cliente.id === clienteIdNoFormulario)
+      ?.phone,
+  );
   const unidadesFiltradas = (consulta.dados ?? []).filter(
     (u) =>
       (usinaFiltroId === null || usinaVigente(u) === usinaFiltroId) &&
@@ -460,10 +473,18 @@ export default function UnidadesDeCobranca({
                     <small>UC {u.uc}</small>
                     {u.uc_antiga && <small>UC antiga {u.uc_antiga}</small>}
                     <small>
-                      {u.cliente_provisorio_id
-                        ? `Cadastro provisório: ${u.cliente_nome ?? "a conferir"}`
-                        : `Portal: ${u.cliente_nome ?? "sem vínculo"}`}
+                      {u.cliente_operacional_id
+                        ? `Teste operacional ${u.cliente_referencia_interna}: ${u.cliente_nome ?? "a conferir"}`
+                        : u.cliente_provisorio_id
+                          ? `Cadastro provisório: ${u.cliente_nome ?? "a conferir"}`
+                          : `Cliente: ${u.cliente_nome ?? "sem vínculo"}`}
                     </small>
+                    {u.cliente_operacional_id && (
+                      <small className="faturamento-pendente-ajuda">
+                        Documentação pendente · {u.pendencia_cadastro}. Sem acesso
+                        ao portal nem liberação de cobrança.
+                      </small>
+                    )}
                     <small>
                       Usina:{" "}
                       {u.vinculos_usina
@@ -567,11 +588,12 @@ export default function UnidadesDeCobranca({
             disabled={ocupado || !clientes.dados}
           >
             <label>
-              Cliente do portal vinculado
+              Cliente cadastrado vinculado
               <select
                 key={`${atual?.id ?? "nova"}-${clientes.dados?.length ?? "loading"}`}
                 name="cliente_id"
                 defaultValue={atual?.cliente_id ?? clienteInicialId ?? ""}
+                onChange={(evento) => setClienteEscolhido(evento.target.value)}
               >
                 <option value="">Sem vínculo — selecionar depois</option>
                 {clientes.dados?.map((cliente) => (
@@ -631,13 +653,13 @@ export default function UnidadesDeCobranca({
               />
             </label>
             <label>
-              E-mail de cobrança
+              E-mail de cobrança (opcional se o cliente tem telefone)
               <input
                 name="email"
                 type="email"
                 defaultValue={atual?.email}
                 maxLength={180}
-                required
+                required={!clienteTemTelefone}
               />
             </label>
             <label>

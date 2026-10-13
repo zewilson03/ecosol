@@ -21,12 +21,19 @@ export function usinaDaUnidadeNaCompetencia(banco, unidadeId, mes) {
       "SELECT usina_id FROM faturamento_vinculos_usina WHERE unidade_id=? AND inicio<=? ORDER BY inicio DESC LIMIT 1",
     )
     .get(unidadeId, mes);
+  if (historico) return historico.usina_id;
+  // Se há histórico, uma competência anterior ao primeiro vínculo não pode
+  // herdar a usina atual (especialmente após uma transferência).
+  if (
+    banco
+      .prepare("SELECT 1 FROM faturamento_vinculos_usina WHERE unidade_id=? LIMIT 1")
+      .get(unidadeId)
+  )
+    return null;
   return (
-    historico?.usina_id ??
     banco
       .prepare("SELECT usina_id FROM faturamento_unidades WHERE id=?")
-      .get(unidadeId)?.usina_id ??
-    null
+      .get(unidadeId)?.usina_id ?? null
   );
 }
 

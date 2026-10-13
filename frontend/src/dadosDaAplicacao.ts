@@ -5,6 +5,7 @@ export type Cliente = {
   name: string;
   cpf: string;
   email: string;
+  phone: string;
   ready: number;
 };
 

@@ -33,6 +33,14 @@ const pendente = {
   dados,
 };
 assert.deepEqual(pendenciasParaCalculo(pendente, [unidade], [pendente]), []);
+const gdiSemAjuste = {
+  ...pendente,
+  dados: { ...dados, ajuste_gdii: "" },
+};
+assert.deepEqual(
+  pendenciasParaCalculo(gdiSemAjuste, [unidade], [gdiSemAjuste]),
+  [],
+);
 const unidadeComUsina = {
   ...unidade,
   usina_id: 7,
@@ -41,6 +49,19 @@ const unidadeComUsina = {
     { inicio: "2026-09", modalidade: "GDI" },
   ],
 };
+const gdiiSemAjuste = {
+  ...pendente,
+  dados: {
+    ...dados,
+    competencia: "2026-11",
+    modalidade: "",
+    ajuste_gdii: "",
+  },
+};
+assert.deepEqual(
+  pendenciasParaCalculo(gdiiSemAjuste, [unidadeComUsina], [gdiiSemAjuste]),
+  ["ajuste GDII"],
+);
 const unidadeTransferida = {
   ...unidadeComUsina,
   vinculos_usina: [

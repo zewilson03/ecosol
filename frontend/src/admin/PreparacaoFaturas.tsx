@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { sugerirVencimentoEcosol } from "./vencimentoEcosol";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { sugerirVencimentoEcosolSeDefinido } from "./vencimentoEcosol";
 import { unidadeDaFatura } from "./vinculoAutomaticoFatura";
 import {
   modalidadeDaUcNaCompetencia,
@@ -9,62 +9,14 @@ import {
 } from "./prontidaoFatura";
 import {
   consultarServidor,
-  formatarDinheiro,
   usarConsulta,
 } from "./comunicacaoComServidor";
 import { EstadoDaConsulta } from "./ComponentesDoPainel";
 import { usarAdministrador } from "./EstruturaAdministrativa";
-import type { Unidade, Contrato } from "./UnidadesDeCobranca";
+import type { Unidade } from "./UnidadesDeCobranca";
+import type { Documento, Memoria, PreviaCalculo } from "./tiposFaturamento";
+import DemonstrativoCalculo from "./DemonstrativoCalculo";
 
-type Memoria = {
-  regra: string;
-  entradas: {
-    injecao: string;
-    unitario: string;
-    bandeira: string;
-    desconto: string;
-    total_equatorial: string;
-    ajuste_gdii: string;
-    modalidade: string;
-  };
-  tarifa_completa: string;
-  consumo_centavos: number;
-  equatorial_centavos: number;
-  ajuste_centavos: number;
-  total_centavos: number;
-  unidade: Unidade;
-  contrato: Pick<Contrato, "modalidade" | "desconto" | "inicio"> & {
-    origem?: string;
-    desconto_inicio?: string;
-  };
-  vencimento_ecosol: string;
-  fonte: { tipo: string; documento_id: number };
-};
-type PreviaCalculo = { memoria: Memoria; hash: string; versao: number };
-type Documento = {
-  id: number;
-  nome: string;
-  lote: string;
-  status: string;
-  versao: number;
-  dados: Record<string, string>;
-  extracao: {
-    dados?: Record<string, string>;
-    avisos: string[];
-    evidencias: Record<string, string>;
-    paginas?: number;
-    qualidade?: {
-      modo: string;
-      campos_identificados: number;
-      campos_esperados: number;
-      percentual: number;
-      pendencias: string[];
-    };
-  };
-  memoria: Memoria | null;
-  texto?: string;
-  historico?: { acao: string; responsavel: string; criado_em: string }[];
-};
 type Recebimento = {
   id: number;
   nome: string;
@@ -94,91 +46,31 @@ const secaoDaPendencia = (pendencia: string) => {
   if (/vencimento/.test(pendencia)) return "datas";
   return "ecosol";
 };
+const campoDaPendencia: Record<string, string> = {
+  "cliente e UC": "faturamento-cliente",
+  "cadastro definitivo do cliente": "faturamento-cadastro-definitivo",
+  "documentação real do cliente": "faturamento-cliente",
+  competência: "faturamento-competencia",
+  "energia injetada": "faturamento-injecao",
+  "total Equatorial": "faturamento-total_equatorial",
+  modalidade: "faturamento-modalidade",
+  "modalidade anterior à vigência da usina": "faturamento-modalidade",
+  "modalidade divergente da usina": "faturamento-modalidade",
+  "origem da tarifa": "faturamento-origem_tarifa",
+  "ajuste GDII": "faturamento-ajuste_gdii",
+  "vencimento Equatorial": "faturamento-vencimento_equatorial",
+  "vencimento Ecosol ou Equatorial": "faturamento-vencimento_equatorial",
+  "GDI de referência aprovada do mesmo lote": "faturamento-referencia_id",
+  "unitário com tributos": "faturamento-unitario",
+  "bandeira (informe zero se não houver)": "faturamento-bandeira",
+  "desconto vigente da UC": "faturamento-desconto",
+};
 
-function DemonstrativoCalculo({
-  memoria,
-  previa = false,
-}: {
-  memoria: Memoria;
-  previa?: boolean;
-}) {
-  const entrada = memoria.entradas;
-  const decimalBr = (valor: string) => valor.replace(".", ",");
-  const semInjecao = memoria.regra === "ecosol-v1-sem-injecao";
-  return (
-    <div className="faturamento-demonstrativo">
-      <h3>
-        {previa
-          ? "Prévia do cálculo — não salva"
-          : "Demonstrativo interno — sem validade para pagamento"}
-      </h3>
-      {semInjecao && (
-        <p>
-          Sem injeção SCEE: não há cobrança de energia Ecosol, tarifa, desconto
-          ou ajuste GDII. O total é somente o valor Equatorial.
-        </p>
-      )}
-      <dl>
-        <div>
-          <dt>Energia injetada</dt>
-          <dd>{decimalBr(entrada.injecao)} kWh</dd>
-        </div>
-        {!semInjecao && (
-          <>
-            <div>
-              <dt>Unitário com tributos</dt>
-              <dd>R$ {decimalBr(entrada.unitario)}/kWh</dd>
-            </div>
-            <div>
-              <dt>+ Bandeira</dt>
-              <dd>R$ {decimalBr(entrada.bandeira)}/kWh</dd>
-            </div>
-            <div>
-              <dt>= Tarifa completa</dt>
-              <dd>R$ {decimalBr(memoria.tarifa_completa)}/kWh</dd>
-            </div>
-            <div>
-              <dt>Desconto da UC</dt>
-              <dd>{decimalBr(entrada.desconto)}%</dd>
-            </div>
-          </>
-        )}
-        <div>
-          <dt>{semInjecao ? "Energia Ecosol" : "Consumo com desconto"}</dt>
-          <dd>{formatarDinheiro(memoria.consumo_centavos)}</dd>
-        </div>
-        <div>
-          <dt>+ Total Equatorial</dt>
-          <dd>{formatarDinheiro(memoria.equatorial_centavos)}</dd>
-        </div>
-        {!semInjecao && (
-          <div>
-            <dt>− Ajuste GDII</dt>
-            <dd>{formatarDinheiro(memoria.ajuste_centavos)}</dd>
-          </div>
-        )}
-        <div className="faturamento-total">
-          <dt>Valor Ecosol</dt>
-          <dd>{formatarDinheiro(memoria.total_centavos)}</dd>
-        </div>
-      </dl>
-      <p>
-        {entrada.modalidade} · Vencimento Ecosol:{" "}
-        {memoria.vencimento_ecosol.split("-").reverse().join("/")} · Fonte da
-        tarifa:{" "}
-        {semInjecao ? "não aplicável" : `fatura #${memoria.fonte.documento_id}`}
-      </p>
-      <small>
-        {semInjecao
-          ? "Cálculo: 0 kWh injetado; total Ecosol igual ao total Equatorial, sem desconto ou ajuste."
-          : "Cálculo: energia injetada × tarifa completa × (1 − desconto/100), arredondado a centavos; depois soma o total Equatorial e subtrai o ajuste GDII."}
-      </small>
-    </div>
-  );
-}
 
 export default function PreparacaoFaturas() {
   const navegar = useNavigate();
+  const [parametros] = useSearchParams();
+  const documentoSolicitado = parametros.get("documento");
   const consulta = usarConsulta<Documento[]>(base);
   const recebimentos = usarConsulta<Recebimento[]>(
     "/api/admin/faturamento/recebimentos",
@@ -217,6 +109,53 @@ export default function PreparacaoFaturas() {
   const [sugestaoAtiva, setSugestaoAtiva] = useState(0);
   const cancelarRenomeacao = useRef(false);
   const salvandoRenomeacao = useRef(false);
+  const destaquePendencia = useRef<HTMLElement | null>(null);
+  const temporizadorDestaque = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+
+  useEffect(
+    () => () => {
+      if (temporizadorDestaque.current)
+        clearTimeout(temporizadorDestaque.current);
+      destaquePendencia.current?.classList.remove(
+        "faturamento-destaque-pendencia",
+      );
+    },
+    [],
+  );
+
+  function irParaPendencia(pendencia: string) {
+    const campo = document.getElementById(campoDaPendencia[pendencia] ?? "");
+    const secao = document.getElementById(
+      `conferencia-${secaoDaPendencia(pendencia)}`,
+    );
+    const alvo = (campo?.closest("label, .faturamento-cliente-busca") ??
+      campo ??
+      secao) as HTMLElement | null;
+    if (!alvo) return;
+    if (temporizadorDestaque.current)
+      clearTimeout(temporizadorDestaque.current);
+    destaquePendencia.current?.classList.remove(
+      "faturamento-destaque-pendencia",
+    );
+    alvo.classList.remove("faturamento-destaque-pendencia");
+    void alvo.offsetWidth;
+    alvo.classList.add("faturamento-destaque-pendencia");
+    destaquePendencia.current = alvo;
+    campo?.focus({ preventScroll: true });
+    alvo.scrollIntoView({
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "instant"
+        : "smooth",
+      block: "center",
+    });
+    temporizadorDestaque.current = setTimeout(() => {
+      alvo.classList.remove("faturamento-destaque-pendencia");
+      destaquePendencia.current = null;
+      temporizadorDestaque.current = null;
+    }, 1800);
+  }
 
   useEffect(() => {
     if (
@@ -242,9 +181,7 @@ export default function PreparacaoFaturas() {
       cliente_id: encontrada.cliente_id ? String(encontrada.cliente_id) : "",
       vencimento_ecosol:
         anterior.vencimento_ecosol ||
-        (encontrada.dia_vencimento >= 1 && encontrada.dia_vencimento <= 31
-          ? sugerirVencimentoEcosol(encontrada.dia_vencimento)
-          : ""),
+        sugerirVencimentoEcosolSeDefinido(encontrada.dia_vencimento),
     }));
     setBuscaCliente(encontrada.cliente_nome ?? encontrada.nome);
     setAlterado(true);
@@ -279,6 +216,23 @@ export default function PreparacaoFaturas() {
       setOcupado(false);
     }
   }
+  useEffect(() => {
+    const numero = Number(documentoSolicitado);
+    if (!Number.isSafeInteger(numero) || numero < 1) return;
+    const controle = new AbortController();
+    setOcupado(true);
+    setErro("");
+    consultarServidor<Documento>(`${base}/${numero}`, { signal: controle.signal })
+      .then((d) => { if (!controle.signal.aborted) mostrar(d); })
+      .catch((e) => { if (!controle.signal.aborted) setErro(e.message); })
+      .finally(() => { if (!controle.signal.aborted) setOcupado(false); });
+    return () => controle.abort();
+  }, [documentoSolicitado]);
+
+  useEffect(() => {
+    if (selecionado?.id !== Number(documentoSolicitado)) return;
+    document.getElementById("faturamento-conferencia")?.scrollIntoView({ block: "start" });
+  }, [documentoSolicitado, selecionado?.id]);
   function iniciarRenomeacao(
     d: Documento,
     origem: "lista" | "detalhe",
@@ -610,7 +564,7 @@ export default function PreparacaoFaturas() {
       uc: unidadeEscolhida.uc,
       uc_divergente_confirmada:
         ucDoPdf && ucDoPdf !== unidadeEscolhida.uc ? "sim" : "",
-      vencimento_ecosol: sugerirVencimentoEcosol(
+      vencimento_ecosol: sugerirVencimentoEcosolSeDefinido(
         unidadeEscolhida.dia_vencimento,
       ),
     }));
@@ -683,6 +637,7 @@ export default function PreparacaoFaturas() {
       <label>
         {rotulo}
         <input
+          id={`faturamento-${chave}`}
           type={tipo}
           value={dados[chave] ?? ""}
           maxLength={80}
@@ -752,6 +707,21 @@ export default function PreparacaoFaturas() {
         ? (modalidadeDaUsina?.modalidade ?? dados.modalidade ?? "")
         : (dados.modalidade ?? "")
   ).trim();
+  useEffect(() => {
+    if (
+      !selecionado ||
+      (selecionado.memoria && !alterado) ||
+      selecionado.status === aprovada ||
+      modalidadeInformada !== "GDI"
+    )
+      return;
+    const ajusteAtual = String(dados.ajuste_gdii ?? "").trim();
+    if (ajusteAtual && Number(ajusteAtual.replace(",", ".")) === 0) return;
+    setDados((anterior) => ({ ...anterior, ajuste_gdii: "0" }));
+    setPrevia(null);
+    setAlterado(true);
+    setConferido(false);
+  }, [selecionado, alterado, modalidadeInformada, dados.ajuste_gdii]);
   const injecaoInformada = String(dados.injecao ?? "").trim();
   const semInjecao =
     injecaoInformada !== "" && Number(injecaoInformada.replace(",", ".")) === 0;
@@ -1104,7 +1074,7 @@ export default function PreparacaoFaturas() {
             )}
           </div>
         </aside>
-        <section className="faturamento-revisao" aria-live="polite">
+        <section id="faturamento-conferencia" className="faturamento-revisao" aria-live="polite">
           {!selecionado ? (
             <div className="faturamento-selecione">
               <span aria-hidden="true">↗</span>
@@ -1210,6 +1180,10 @@ export default function PreparacaoFaturas() {
                         <li key={pendencia}>
                           <a
                             href={`#conferencia-${secaoDaPendencia(pendencia)}`}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              irParaPendencia(pendencia);
+                            }}
                           >
                             {pendencia} <span aria-hidden="true">↗</span>
                           </a>
@@ -1247,7 +1221,7 @@ export default function PreparacaoFaturas() {
               <div className="faturamento-conferencia">
                 <section
                   id="conferencia-cadastro"
-                  className="faturamento-grupo faturamento-grupo--cadastro"
+                  className={`faturamento-grupo faturamento-grupo--cadastro ${sugestoesAbertas && termoCliente ? "sugestoes-abertas" : ""}`}
                 >
                   <div className="faturamento-grupo-titulo">
                     <span>01</span>
@@ -1274,136 +1248,140 @@ export default function PreparacaoFaturas() {
                       <label htmlFor="faturamento-cliente">
                         Cliente responsável pela fatura
                       </label>
-                      <input
-                        id="faturamento-cliente"
-                        role="combobox"
-                        aria-autocomplete="list"
-                        aria-expanded={sugestoesAbertas}
-                        aria-controls="faturamento-sugestoes-clientes"
-                        autoComplete="off"
-                        placeholder="Digite o nome do cliente"
-                        value={buscaCliente || unidade?.cliente_nome || ""}
-                        maxLength={160}
-                        onFocus={() =>
-                          setSugestoesAbertas(Boolean(buscaCliente.trim()))
-                        }
-                        onChange={(e) => digitarCliente(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Escape") {
-                            setSugestoesAbertas(false);
-                          } else if (
-                            e.key === "ArrowDown" ||
-                            e.key === "ArrowUp"
-                          ) {
-                            e.preventDefault();
-                            setSugestoesAbertas(true);
-                            setSugestaoAtiva((atual) =>
-                              sugestoesCliente.length
-                                ? (atual +
-                                    (e.key === "ArrowDown" ? 1 : -1) +
-                                    sugestoesCliente.length) %
-                                  sugestoesCliente.length
-                                : 0,
-                            );
-                          } else if (e.key === "Enter" && sugestoesAbertas) {
-                            e.preventDefault();
-                            if (sugestoesCliente.length) {
-                              const cliente =
-                                sugestoesCliente[sugestaoAtiva] ??
-                                sugestoesCliente[0];
+                      <div className="faturamento-cliente-controle">
+                        <input
+                          id="faturamento-cliente"
+                          role="combobox"
+                          aria-autocomplete="list"
+                          aria-expanded={sugestoesAbertas}
+                          aria-controls="faturamento-sugestoes-clientes"
+                          autoComplete="off"
+                          placeholder="Digite o nome do cliente"
+                          value={buscaCliente || unidade?.cliente_nome || ""}
+                          maxLength={160}
+                          onFocus={() =>
+                            setSugestoesAbertas(Boolean(buscaCliente.trim()))
+                          }
+                          onChange={(e) => digitarCliente(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Escape") {
+                              setSugestoesAbertas(false);
+                            } else if (
+                              e.key === "ArrowDown" ||
+                              e.key === "ArrowUp"
+                            ) {
+                              e.preventDefault();
+                              setSugestoesAbertas(true);
+                              setSugestaoAtiva((atual) =>
+                                sugestoesCliente.length
+                                  ? (atual +
+                                      (e.key === "ArrowDown" ? 1 : -1) +
+                                      sugestoesCliente.length) %
+                                    sugestoesCliente.length
+                                  : 0,
+                              );
+                            } else if (e.key === "Enter" && sugestoesAbertas) {
+                              e.preventDefault();
+                              if (sugestoesCliente.length) {
+                                const cliente =
+                                  sugestoesCliente[sugestaoAtiva] ??
+                                  sugestoesCliente[0];
+                                const vinculadas = (
+                                  unidades.dados ?? []
+                                ).filter(
+                                  (item) => item.cliente_id === cliente.id,
+                                );
+                                const ucLida = (dados.uc ?? "")
+                                  .replace(/\D/g, "")
+                                  .replace(/^0+(?=\d)/, "");
+                                const correspondente = vinculadas.find(
+                                  (item) => item.uc === ucLida,
+                                );
+                                if (correspondente)
+                                  escolherCliente(correspondente);
+                                else if (vinculadas.length === 1 && !ucLida)
+                                  escolherCliente(vinculadas[0]);
+                                else if (nivel >= 2)
+                                  abrirVinculoCliente(cliente.id);
+                              } else if (
+                                !clientesPortal.carregando &&
+                                !clientesPortal.erro &&
+                                nivel >= 2
+                              )
+                                abrirCadastroComNome();
+                            }
+                          }}
+                        />
+                        {sugestoesAbertas && termoCliente && (
+                          <div
+                            className="faturamento-cliente-sugestoes"
+                            id="faturamento-sugestoes-clientes"
+                            role="listbox"
+                            aria-label="Clientes encontrados"
+                          >
+                            {sugestoesCliente.map((cliente, indice) => {
                               const vinculadas = (unidades.dados ?? []).filter(
                                 (item) => item.cliente_id === cliente.id,
                               );
-                              const ucLida = (dados.uc ?? "")
-                                .replace(/\D/g, "")
-                                .replace(/^0+(?=\d)/, "");
-                              const correspondente = vinculadas.find(
-                                (item) => item.uc === ucLida,
+                              return (
+                                <div
+                                  key={cliente.id}
+                                  className={
+                                    indice === sugestaoAtiva ? "ativa" : ""
+                                  }
+                                >
+                                  <strong>{cliente.name}</strong>
+                                  {vinculadas.map((item) => (
+                                    <button
+                                      type="button"
+                                      role="option"
+                                      aria-selected={unidade?.id === item.id}
+                                      key={item.id}
+                                      onClick={() => escolherCliente(item)}
+                                    >
+                                      UC {item.uc} · dia preferido{" "}
+                                      {item.dia_vencimento}
+                                    </button>
+                                  ))}
+                                  {nivel >= 2 ? (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        abrirVinculoCliente(cliente.id)
+                                      }
+                                    >
+                                      + Adicionar ou vincular outra UC
+                                    </button>
+                                  ) : !vinculadas.length ? (
+                                    <small>
+                                      Solicite à equipe autorizada o vínculo de
+                                      uma UC.
+                                    </small>
+                                  ) : null}
+                                </div>
                               );
-                              if (correspondente)
-                                escolherCliente(correspondente);
-                              else if (vinculadas.length === 1 && !ucLida)
-                                escolherCliente(vinculadas[0]);
-                              else if (nivel >= 2)
-                                abrirVinculoCliente(cliente.id);
-                            } else if (
+                            })}
+                            {!sugestoesCliente.length &&
                               !clientesPortal.carregando &&
                               !clientesPortal.erro &&
-                              nivel >= 2
-                            )
-                              abrirCadastroComNome();
-                          }
-                        }}
-                      />
-                      {sugestoesAbertas && termoCliente && (
-                        <div
-                          className="faturamento-cliente-sugestoes"
-                          id="faturamento-sugestoes-clientes"
-                          role="listbox"
-                          aria-label="Clientes encontrados"
-                        >
-                          {sugestoesCliente.map((cliente, indice) => {
-                            const vinculadas = (unidades.dados ?? []).filter(
-                              (item) => item.cliente_id === cliente.id,
-                            );
-                            return (
-                              <div
-                                key={cliente.id}
-                                className={
-                                  indice === sugestaoAtiva ? "ativa" : ""
-                                }
-                              >
-                                <strong>{cliente.name}</strong>
-                                {vinculadas.map((item) => (
-                                  <button
-                                    type="button"
-                                    role="option"
-                                    aria-selected={unidade?.id === item.id}
-                                    key={item.id}
-                                    onClick={() => escolherCliente(item)}
-                                  >
-                                    UC {item.uc} · dia preferido{" "}
-                                    {item.dia_vencimento}
-                                  </button>
-                                ))}
-                                {nivel >= 2 ? (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      abrirVinculoCliente(cliente.id)
-                                    }
-                                  >
-                                    + Adicionar ou vincular outra UC
-                                  </button>
-                                ) : !vinculadas.length ? (
-                                  <small>
-                                    Solicite à equipe autorizada o vínculo de
-                                    uma UC.
-                                  </small>
-                                ) : null}
-                              </div>
-                            );
-                          })}
-                          {!sugestoesCliente.length &&
-                            !clientesPortal.carregando &&
-                            !clientesPortal.erro &&
-                            (nivel >= 2 ? (
-                              <button
-                                type="button"
-                                onClick={abrirCadastroComNome}
-                              >
-                                + Cadastrar “{buscaCliente.trim()}”
-                              </button>
-                            ) : (
-                              <p>Solicite o cadastro à equipe autorizada.</p>
-                            ))}
-                          {(clientesPortal.carregando ||
-                            unidades.carregando) && <p>Buscando clientes…</p>}
-                          {(clientesPortal.erro || unidades.erro) && (
-                            <p>Não foi possível buscar clientes.</p>
-                          )}
-                        </div>
-                      )}
+                              (nivel >= 2 ? (
+                                <button
+                                  type="button"
+                                  onClick={abrirCadastroComNome}
+                                >
+                                  + Cadastrar “{buscaCliente.trim()}”
+                                </button>
+                              ) : (
+                                <p>Solicite o cadastro à equipe autorizada.</p>
+                              ))}
+                            {(clientesPortal.carregando ||
+                              unidades.carregando) && <p>Buscando clientes…</p>}
+                            {(clientesPortal.erro || unidades.erro) && (
+                              <p>Não foi possível buscar clientes.</p>
+                            )}
+                          </div>
+                        )}
+                      </div>
                       <small>
                         UC no PDF:{" "}
                         {selecionado.extracao.dados?.uc || "não identificada"}
@@ -1411,8 +1389,18 @@ export default function PreparacaoFaturas() {
                           ? ` · UC do cadastro: ${unidade.uc}`
                           : " · selecione o cliente e a UC"}
                       </small>
-                      {unidade?.cliente_provisorio_id != null && (
+                      {unidade?.cliente_operacional_id != null && (
                         <small className="faturamento-pendente-ajuda">
+                          Cadastro operacional de teste ·{" "}
+                          {unidade.pendencia_cadastro}. Confira o titular e o
+                          CPF/CNPJ real antes do cálculo.
+                        </small>
+                      )}
+                      {unidade?.cliente_provisorio_id != null && (
+                        <small
+                          id="faturamento-cadastro-definitivo"
+                          className="faturamento-pendente-ajuda"
+                        >
                           Cadastro provisório, sem acesso ao portal.{" "}
                           <Link to="/admin/clientes">
                             Completar cadastro do cliente
@@ -1478,6 +1466,7 @@ export default function PreparacaoFaturas() {
                         ? "Modalidade da usina nesta competência"
                         : "Modalidade desta fatura (UC sem usina)"}
                       <select
+                        id="faturamento-modalidade"
                         value={modalidadeInformada}
                         aria-invalid={!modalidadeInformada}
                         disabled={Boolean(
@@ -1497,18 +1486,20 @@ export default function PreparacaoFaturas() {
                         </small>
                       )}
                     </label>
-                    {campo(
-                      "ajuste_gdii",
-                      semInjecao
-                        ? "Ajuste GDII (deve ser 0 sem injeção)"
-                        : "Ajuste GDII (R$; informe 0 para GDI)",
-                      "text",
-                      semInjecao ? "0" : "Ex.: 290,71",
-                    )}
+                    {modalidadeInformada === "GDII" &&
+                      campo(
+                        "ajuste_gdii",
+                        semInjecao
+                          ? "Ajuste GDII (deve ser 0 sem injeção)"
+                          : "Ajuste GDII (R$)",
+                        "text",
+                        semInjecao ? "0" : "Ex.: 290,71",
+                      )}
                     {!semInjecao && (
                       <label>
                         Origem da tarifa
                         <select
+                          id="faturamento-origem_tarifa"
                           value={dados.origem_tarifa ?? "propria"}
                           onChange={(e) =>
                             mudar("origem_tarifa", e.target.value)
@@ -1528,6 +1519,7 @@ export default function PreparacaoFaturas() {
                         <label>
                           Fatura GDI de referência
                           <select
+                            id="faturamento-referencia_id"
                             value={dados.referencia_id ?? ""}
                             onChange={(e) =>
                               mudar("referencia_id", e.target.value)
@@ -1552,11 +1544,20 @@ export default function PreparacaoFaturas() {
                         </>
                       ))}
                   </fieldset>
-                  {unidade && !semInjecao && contrato && (
-                    <p className="faturamento-condicao-resumo">
-                      Desconto da UC: <strong>{contrato.desconto}%</strong>
-                      {contrato.desconto_inicio &&
-                        ` · vigente desde ${contrato.desconto_inicio}`}
+                  {unidade && !semInjecao && (
+                    <p
+                      id="faturamento-desconto"
+                      className="faturamento-condicao-resumo"
+                    >
+                      {contrato ? (
+                        <>
+                          Desconto da UC: <strong>{contrato.desconto}%</strong>
+                          {contrato.desconto_inicio &&
+                            ` · vigente desde ${contrato.desconto_inicio}`}
+                        </>
+                      ) : (
+                        "Desconto pendente para esta competência. Informe-o no cadastro da UC."
+                      )}
                     </p>
                   )}
                 </section>

@@ -77,7 +77,7 @@ export function documentoValido(valor) {
   return cnpj;
 }
 
-export function validarUnidade(campos) {
+export function validarUnidade(campos, { emailOpcional = false } = {}) {
   const usina_id =
     campos.usina_id === undefined ||
     campos.usina_id === null ||
@@ -86,8 +86,15 @@ export function validarUnidade(campos) {
       : Number(campos.usina_id);
   if (usina_id !== null && (!Number.isSafeInteger(usina_id) || usina_id < 1))
     falhar("Selecione uma usina válida.");
-  const email = texto(campos.email, "o e-mail", 180).toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) falhar("E-mail inválido.");
+  const email = String(campos.email ?? "")
+    .trim()
+    .toLowerCase();
+  if (
+    email.length > 180 ||
+    (!email && !emailOpcional) ||
+    (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+  )
+    falhar("E-mail inválido.");
   const dia = Number(campos.dia_vencimento);
   if (!Number.isInteger(dia) || dia < 1 || dia > 31)
     falhar("O dia preferido deve estar entre 1 e 31.");
@@ -125,7 +132,8 @@ export function calcularCobranca({
   const totalEquatorial = decimal(total_equatorial, "o total Equatorial", 2);
   const semInjecao = new D(energiaInjetada).isZero();
   const ajuste = decimal(
-    semInjecao && (ajuste_gdii === "" || ajuste_gdii == null)
+    (semInjecao || modalidade === "GDI") &&
+    (ajuste_gdii === "" || ajuste_gdii == null)
       ? "0"
       : ajuste_gdii,
     "o ajuste GDII",

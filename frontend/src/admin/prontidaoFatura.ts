@@ -37,7 +37,7 @@ export function pendenciasParaCalculo(
       item.id === Number(dados.unidade_id) &&
       item.uc === ucNormalizada(dados.uc) &&
       (item.cliente_id === Number(dados.cliente_id) ||
-        (item.cliente_provisorio_id != null && !dados.cliente_id)),
+        ((item.cliente_provisorio_id != null || item.cliente_operacional_id != null) && !dados.cliente_id)),
   );
   const semInjecao =
     preenchido(dados.injecao) && Number(dados.injecao.replace(",", ".")) === 0;
@@ -45,6 +45,8 @@ export function pendenciasParaCalculo(
   if (!unidade) pendencias.push("cliente e UC");
   else if (unidade.cliente_provisorio_id != null)
     pendencias.push("cadastro definitivo do cliente");
+  else if (unidade.cliente_operacional_id != null)
+    pendencias.push("documentação real do cliente");
   if (!preenchido(dados.competencia)) pendencias.push("competência");
   if (!preenchido(dados.injecao)) pendencias.push("energia injetada");
   if (unidade?.usina_id) {
@@ -61,8 +63,11 @@ export function pendenciasParaCalculo(
   if (!semInjecao && !preenchido(dados.origem_tarifa))
     pendencias.push("origem da tarifa");
   if (!preenchido(dados.total_equatorial)) pendencias.push("total Equatorial");
-  if (!semInjecao && !preenchido(dados.ajuste_gdii))
-    pendencias.push("ajuste GDII (informe zero para GDI)");
+  const modalidade =
+    modalidadeDaUcNaCompetencia(unidade, dados.competencia)?.modalidade ??
+    dados.modalidade;
+  if (!semInjecao && modalidade === "GDII" && !preenchido(dados.ajuste_gdii))
+    pendencias.push("ajuste GDII");
   if (!preenchido(dados.vencimento_equatorial))
     pendencias.push("vencimento Equatorial");
   if (!preenchido(dados.vencimento_ecosol || dados.vencimento_equatorial))

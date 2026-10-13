@@ -25,8 +25,11 @@ export function extrairUcDoQuadro(itens, largura, altura) {
   const visiveis = itens.filter((item) => "str" in item);
   const ramais = visiveis.filter(
     (item) =>
-      /PERDAS DE TRANSFORMA[CÇ][AÃ]O\s*\/\s*RAMAL:/i.test(item.str) &&
-      item.transform[4] < largura * 0.3,
+      // Alguns PDFs trazem os acentos como U+FFFD (TRANSFORMA��O).
+      // O restante do marcador e a posição continuam obrigatórios.
+      /^\s*PERDAS DE TRANSFORMA[^/\r\n]{1,8}\/\s*RAMAL:\s*[\d,.]+%/i.test(
+        item.str,
+      ) && item.transform[4] < largura * 0.3,
   );
   const formato = /^\d{1,3}(?:\.\d{3}){2,3}-\d{2}$/;
   const candidatos = visiveis.filter((item) => {

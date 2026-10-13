@@ -28,9 +28,13 @@ if (!existsSync(databasePath)) {
       );
 
     // Apenas hashes com sal são exportados; nunca senhas em texto, tokens ou sessões.
+    const clientesTemTelefone = database
+      .prepare("PRAGMA table_info(customers)")
+      .all()
+      .some((coluna) => coluna.name === "phone");
     const clientes = database
       .prepare(
-        "SELECT id, name AS nome, cpf, email, password_hash AS senha_hash, created_at AS criado_em FROM customers ORDER BY id",
+        `SELECT id, name AS nome, cpf, email, ${clientesTemTelefone ? "phone" : "''"} AS telefone, password_hash AS senha_hash, created_at AS criado_em FROM customers ORDER BY id`,
       )
       .all();
     const contatos = database

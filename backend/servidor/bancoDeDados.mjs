@@ -25,6 +25,7 @@ export function obterBanco() {
       name TEXT NOT NULL,
       cpf TEXT NOT NULL UNIQUE,
       email TEXT NOT NULL,
+      phone TEXT NOT NULL DEFAULT '',
       password_hash TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -75,6 +76,15 @@ export function obterBanco() {
       reset_at INTEGER NOT NULL
     );
   `);
+
+    const colunasDosClientes = banco
+      .prepare("PRAGMA table_info(customers)")
+      .all();
+    if (!colunasDosClientes.some((coluna) => coluna.name === "phone")) {
+      banco.exec(
+        "ALTER TABLE customers ADD COLUMN phone TEXT NOT NULL DEFAULT ''",
+      );
+    }
 
     const colunasDaEquipe = banco
       .prepare("PRAGMA table_info(staff_users)")

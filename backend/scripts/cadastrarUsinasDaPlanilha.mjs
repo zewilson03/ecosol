@@ -37,6 +37,16 @@ const provisoria = (nome) => {
 };
 
 function planejar(banco) {
+  if (
+    banco
+      .prepare(
+        "SELECT 1 FROM faturamento_historico WHERE acao='Usina não confirmada retirada do catálogo' LIMIT 1",
+      )
+      .get()
+  )
+    throw new Error(
+      "Esta importação antiga recriaria usinas retiradas do catálogo. Faça novas associações pela prévia do sistema.",
+    );
   const usinas = banco.prepare("SELECT id,nome,versao FROM usinas").all();
   const porChave = new Map();
   for (const usina of usinas) {

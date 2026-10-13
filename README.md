@@ -281,6 +281,24 @@ O cadastro direto e a caixa `/dev/links` funcionam no modo de desenvolvimento.
 Clientes sem senha inicial podem solicitar ativação; os links de teste aparecem
 na caixa local. A recuperação de senha usa o mesmo processo.
 
+## Central de cálculos
+
+A página `/admin/calculos`, disponível no menu **Cálculos**, reúne as faturas,
+pendências e resultados. Permite filtrar por cliente/UC/PDF, usina, competência
+e situação. O total exibido soma somente cálculos salvos da seleção, em centavos;
+prévias não entram nesse total. A exportação Excel inclui todos os cálculos salvos.
+
+A equipe nível 1 pode consultar e gerar prévias; nível 2 pode salvar após conferir;
+nível 3 pode aprovar para emissão futura. A página reutiliza as validações,
+versões e memória do faturamento. Não emite boletos. Campos pendentes abrem a
+conferência da fatura correspondente, e cálculos aprovados preservam seu histórico.
+
+Verificações: `npm run test:calculos`, `npm run test:faturamento` e `npm run build`.
+Para conferir o visual sem dados reais, após compilar execute
+`node frontend/testes/servidorCalculosVisual.mjs` e abra a URL indicada.
+Esse servidor de teste usa respostas simuladas e dados sintéticos em memória;
+não substitui os testes de integração do backend. Pare com Ctrl+C.
+
 ## Banco de dados
 
 O banco é `backend/data/ecosol.db`. É um arquivo binário SQLite. Para ler os cadastros

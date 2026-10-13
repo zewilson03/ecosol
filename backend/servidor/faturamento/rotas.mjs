@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { obterBanco } from "../bancoDeDados.mjs";
 import { exigirNivel } from "../permissoesDaEquipe.mjs";
 import { apenasDigitos, cpfValidoParaCadastro } from "../validacaoDeCpf.mjs";
+import { validarContatoCliente } from "../validacaoDeContato.mjs";
 import { receberPdf } from "./receberPdf.mjs";
 import { reanalisarFatura } from "./reanalisar.mjs";
 import { registrarHistorico } from "./registros.mjs";
@@ -123,7 +124,7 @@ function listarUnidades() {
   const banco = obterBanco();
   return banco
     .prepare(
-      "SELECT u.*, s.nome AS usina_nome, COALESCE(c.name,p.nome) AS cliente_nome FROM faturamento_unidades u LEFT JOIN usinas s ON s.id=u.usina_id LEFT JOIN customers c ON c.id=u.cliente_id LEFT JOIN faturamento_clientes_provisorios p ON p.id=u.cliente_provisorio_id ORDER BY u.nome, u.uc",
+      "SELECT u.*, s.nome AS usina_nome, COALESCE(c.name,o.nome,p.nome) AS cliente_nome, o.referencia_interna AS cliente_referencia_interna FROM faturamento_unidades u LEFT JOIN usinas s ON s.id=u.usina_id LEFT JOIN customers c ON c.id=u.cliente_id LEFT JOIN faturamento_clientes_operacionais o ON o.id=u.cliente_operacional_id LEFT JOIN faturamento_clientes_provisorios p ON p.id=u.cliente_provisorio_id ORDER BY u.nome, u.uc",
     )
     .all()
     .map((u) => {
@@ -185,10 +186,19 @@ router.get("/clientes-provisorios", (_req, res) =>
       .all(),
   ),
 );
+router.get("/clientes-operacionais", (_req, res) =>
+  res.json(
+    obterBanco()
+      .prepare(
+        "SELECT o.id,o.referencia_interna,o.nome,o.situacao,COUNT(u.id) AS unidades FROM faturamento_clientes_operacionais o LEFT JOIN faturamento_unidades u ON u.cliente_operacional_id=o.id GROUP BY o.id ORDER BY o.nome,o.id",
+      )
+      .all(),
+  ),
+);
 router.get("/clientes", (_req, res) =>
   res.json(
     obterBanco()
-      .prepare("SELECT id,name FROM customers ORDER BY name,id")
+      .prepare("SELECT id,name,phone FROM customers ORDER BY name,id")
       .all(),
   ),
 );
@@ -215,14 +225,10 @@ router.post("/cadastro-integrado", exigirNivel(2), (req, res) => {
     const cpfInformado = String(entrada.cpf ?? "").trim();
     if (!cpfValidoParaCadastro(cpfInformado))
       falhar("Informe um CPF válido para o cliente.");
-    const email = texto(
-      entrada.email,
-      "o e-mail do cliente",
-      180,
-    ).toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
-      falhar("E-mail do cliente inválido.");
-    novoCliente = { nome, cpf: apenasDigitos(cpfInformado), email };
+    const contato = validarContatoCliente(entrada.email, entrada.phone);
+    if (!contato)
+      falhar("Informe um e-mail ou telefone válido para o cliente.");
+    novoCliente = { nome, cpf: apenasDigitos(cpfInformado), ...contato };
   }
   const resultado = transacao(() => {
     const banco = obterBanco();
@@ -239,12 +245,14 @@ router.post("/cadastro-integrado", exigirNivel(2), (req, res) => {
         );
     }
     let clienteId = clienteExistenteId;
+    let telefoneCliente = novoCliente?.phone ?? "";
     if (clienteId !== null) {
       const cliente = banco
-        .prepare("SELECT cpf FROM customers WHERE id=?")
+        .prepare("SELECT cpf,phone FROM customers WHERE id=?")
         .get(clienteId);
       if (!cliente)
         falhar("Cliente do portal não encontrado. Atualize a lista.", 409);
+      telefoneCliente = cliente.phone;
       if (entrada.cpf && apenasDigitos(String(entrada.cpf)) !== cliente.cpf)
         falhar("O CPF informado não corresponde ao cliente selecionado.", 409);
     } else {
@@ -261,20 +269,32 @@ router.post("/cadastro-integrado", exigirNivel(2), (req, res) => {
         );
       clienteId = Number(
         banco
-          .prepare("INSERT INTO customers (name,cpf,email) VALUES (?,?,?)")
-          .run(novoCliente.nome, novoCliente.cpf, novoCliente.email)
+          .prepare(
+            "INSERT INTO customers (name,cpf,email,phone) VALUES (?,?,?,?)",
+          )
+          .run(
+            novoCliente.nome,
+            novoCliente.cpf,
+            novoCliente.email,
+            novoCliente.phone,
+          )
           .lastInsertRowid,
       );
     }
     const unidadeExistente = banco
       .prepare(
-        "SELECT id,cliente_id,cliente_provisorio_id,usina_id FROM faturamento_unidades WHERE uc=?",
+        "SELECT id,cliente_id,cliente_provisorio_id,cliente_operacional_id,usina_id FROM faturamento_unidades WHERE uc=?",
       )
       .get(uc);
     if (unidadeExistente) {
       if (unidadeExistente.cliente_provisorio_id !== null)
         falhar(
           "Esta UC pertence a um cadastro provisório. Complete e confira os dados antes de vinculá-la ao portal.",
+          409,
+        );
+      if (unidadeExistente.cliente_operacional_id !== null)
+        falhar(
+          "Esta UC tem cadastro operacional de teste. Confira a identidade antes de vinculá-la ao portal.",
           409,
         );
       if (
@@ -404,13 +424,16 @@ router.post("/cadastro-integrado", exigirNivel(2), (req, res) => {
               : "desconto_iniciado",
       };
     }
-    const unidade = validarUnidade({
-      uc,
-      nome: entrada.unidade_nome,
-      documento: entrada.unidade_documento,
-      email: entrada.unidade_email,
-      dia_vencimento: entrada.dia_vencimento,
-    });
+    const unidade = validarUnidade(
+      {
+        uc,
+        nome: entrada.unidade_nome,
+        documento: entrada.unidade_documento,
+        email: entrada.unidade_email,
+        dia_vencimento: entrada.dia_vencimento,
+      },
+      { emailOpcional: Boolean(telefoneCliente) },
+    );
     const desconto = decimal(
       entrada.desconto,
       "o desconto percentual da UC",
@@ -669,8 +692,16 @@ router.post("/usinas/:id/unidades", exigirNivel(2), (req, res) => {
   res.status(201).json({ sucesso: true });
 });
 router.post("/unidades", exigirNivel(2), (req, res) => {
-  const u = validarUnidade(req.body);
   const clienteId = clienteInformado(req.body.cliente_id);
+  const telefoneCliente =
+    clienteId === null
+      ? ""
+      : obterBanco()
+          .prepare("SELECT phone FROM customers WHERE id=?")
+          .get(clienteId)?.phone;
+  const u = validarUnidade(req.body, {
+    emailOpcional: Boolean(telefoneCliente),
+  });
   const desconto = decimal(
     req.body.desconto,
     "o desconto percentual da UC",
@@ -742,11 +773,9 @@ router.post("/unidades", exigirNivel(2), (req, res) => {
   res.status(201).json({ id: numero });
 });
 router.patch("/unidades/:id", exigirNivel(2), (req, res) => {
-  const numero = id(req.params.id),
-    u = validarUnidade(req.body);
+  const numero = id(req.params.id);
   transacao(() => {
     const banco = obterBanco();
-    conferirUsina(u.usina_id);
     const anterior = banco
       .prepare("SELECT * FROM faturamento_unidades WHERE id=?")
       .get(numero);
@@ -755,6 +784,29 @@ router.patch("/unidades/:id", exigirNivel(2), (req, res) => {
       ? clienteInformado(req.body.cliente_id)
       : anterior.cliente_id;
     conferirCliente(clienteId);
+    const telefoneCliente =
+      clienteId === null
+        ? ""
+        : banco
+            .prepare("SELECT phone FROM customers WHERE id=?")
+            .get(clienteId)?.phone;
+    const u = validarUnidade(req.body, {
+      emailOpcional: Boolean(telefoneCliente),
+    });
+    conferirUsina(u.usina_id);
+    if (anterior.cliente_operacional_id !== null && clienteId !== null) {
+      const cliente = banco
+        .prepare("SELECT cpf FROM customers WHERE id=?")
+        .get(clienteId);
+      if (
+        req.body.confirmar_identidade_operacional !== true ||
+        cliente?.cpf !== u.documento
+      )
+        falhar(
+          "Confirme a identidade e informe o mesmo CPF/CNPJ real do cliente antes de concluir o vínculo operacional.",
+          409,
+        );
+    }
     if (anterior.versao !== Number(req.body.versao))
       falhar("Cadastro alterado. Atualize a lista.", 409);
     if (anterior.uc !== u.uc)
@@ -776,7 +828,7 @@ router.patch("/unidades/:id", exigirNivel(2), (req, res) => {
     }
     banco
       .prepare(
-        "UPDATE faturamento_unidades SET nome=?,documento=?,email=?,dia_vencimento=?,usina_id=?,cliente_id=?,cliente_provisorio_id=?,versao=versao+1 WHERE id=?",
+        "UPDATE faturamento_unidades SET nome=?,documento=?,email=?,dia_vencimento=?,usina_id=?,cliente_id=?,cliente_provisorio_id=?,cliente_operacional_id=?,pendencia_cadastro=?,versao=versao+1 WHERE id=?",
       )
       .run(
         u.nome,
@@ -786,6 +838,8 @@ router.patch("/unidades/:id", exigirNivel(2), (req, res) => {
         u.usina_id,
         clienteId,
         clienteId === null ? anterior.cliente_provisorio_id : null,
+        clienteId === null ? anterior.cliente_operacional_id : null,
+        clienteId === null ? anterior.pendencia_cadastro : null,
         numero,
       );
     historico(
@@ -1117,6 +1171,11 @@ function montarCalculo(d, dados = d.dados) {
       "Cadastro provisório: confirme CPF/CNPJ, e-mail e cliente do portal antes de calcular uma cobrança.",
       409,
     );
+  if (unidade.cliente_operacional_id !== null)
+    falhar(
+      "Cadastro operacional de teste: confira o titular e o CPF/CNPJ real antes de calcular ou aprovar uma cobrança.",
+      409,
+    );
   if (dados.unidade_id) {
     const unidadeSelecionada = Number(dados.unidade_id);
     if (
@@ -1287,6 +1346,7 @@ router.post("/documentos/:id/calcular", exigirNivel(2), (req, res) => {
     const dadosPersistidos = {
       ...dados,
       modalidade: memoria.contrato.modalidade,
+      ajuste_gdii: memoria.entradas.ajuste_gdii,
       vencimento_ecosol:
         String(dados.vencimento_ecosol ?? "").trim() ||
         memoria.vencimento_ecosol,
