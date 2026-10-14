@@ -79,15 +79,15 @@ export async function reanalisarFatura({
           dados[campo] = valor;
           preenchidos[campo] = valor;
         } else if (
-          campo === "unitario" &&
-          dados[campo] === extracaoAnterior.dados?.unitario &&
+          ["unitario", "ajuste_gdii"].includes(campo) &&
+          dados[campo] === extracaoAnterior.dados?.[campo] &&
           dados[campo] !== valor
         ) {
           // Corrigir somente a sugestão automática comprovadamente antiga.
           // Qualquer valor que divirja da extração anterior fica intocado.
           dados[campo] = valor;
           corrigidos[campo] = {
-            anterior: extracaoAnterior.dados.unitario,
+            anterior: extracaoAnterior.dados[campo],
             novo: valor,
           };
         }

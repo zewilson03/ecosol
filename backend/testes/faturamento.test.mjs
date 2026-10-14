@@ -240,6 +240,37 @@ assert.equal(extraido.dados.uc, "423652401252");
 assert.equal(extraido.dados.injecao, "1660.00");
 assert.equal(extraido.dados.total_equatorial, "302.40");
 assert.equal(extraido.dados.ajuste_gdii, "290.71");
+assert.equal(
+  extrairCampos(
+    "PARC INJET S/DESC - 28,57% - UC 000418450401297 -\n" +
+      "GD II 2 kWh 339,00 0,175126 -59,37 0,175126",
+  ).dados.ajuste_gdii,
+  "59.37",
+);
+assert.equal(
+  extrairCampos(
+    "PARC INJET S/DESC - 28,57% - UC 000415466601274 -\n" +
+      "TIPOS DE\n" +
+      "GD II 2 kWh 23240,80 0,175126 4.070,07 0,175126",
+  ).dados.ajuste_gdii,
+  "4070.07",
+);
+assert.equal(
+  extrairCampos(
+    [
+      "PARC INJET S/DESC - 28,57% - UC 111 - GD II 2 kWh 199,18 0,175126 34,88",
+      "PARC INJET S/DESC - 28,57% - UC 222 - GD II 2 kWh 226,36 0,175126 39,64",
+      "PARC INJET S/DESC - 28,57% - UC 333 - GD II 2 kWh 222,46 0,175126 38,96",
+    ].join("\n"),
+  ).dados.ajuste_gdii,
+  "113.48",
+);
+assert.equal(
+  extrairCampos(
+    "PARC INJET S/DESC - 28,57% - UC 123 - GD I kWh 339,00 0,175126 59,37",
+  ).dados.ajuste_gdii,
+  undefined,
+);
 assert.equal(extraido.dados.bandeira, undefined);
 const tarifaEquatorial = extrairCampos(
   [
@@ -306,7 +337,7 @@ assert.equal(
 );
 assert.equal(
   extrairCampos(linhas.concat(linhas.at(-1)).join("\n")).dados.ajuste_gdii,
-  undefined,
+  "290.71",
 );
 assert.match(extrairCampos("").avisos.join(" "), /sem texto/);
 const cabecalhoEquatorial = [
@@ -649,7 +680,12 @@ try {
   await ok(
     "/cadastro-integrado",
     "POST",
-    { ...cadastroSoTelefone, cpf: "10000009580", uc: "987654321098", phone: "" },
+    {
+      ...cadastroSoTelefone,
+      cpf: "10000009580",
+      uc: "987654321098",
+      phone: "",
+    },
     400,
   );
   assert.equal(

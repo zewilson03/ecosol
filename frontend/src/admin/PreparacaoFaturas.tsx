@@ -7,15 +7,11 @@ import {
   pendenciasParaCalculo,
   situacaoParaEmissao,
 } from "./prontidaoFatura";
-import {
-  consultarServidor,
-  usarConsulta,
-} from "./comunicacaoComServidor";
+import { consultarServidor, usarConsulta } from "./comunicacaoComServidor";
 import { EstadoDaConsulta } from "./ComponentesDoPainel";
 import { usarAdministrador } from "./EstruturaAdministrativa";
 import type { Unidade } from "./UnidadesDeCobranca";
-import type { Documento, Memoria, PreviaCalculo } from "./tiposFaturamento";
-import DemonstrativoCalculo from "./DemonstrativoCalculo";
+import type { Documento, Memoria } from "./tiposFaturamento";
 
 type Recebimento = {
   id: number;
@@ -66,7 +62,6 @@ const campoDaPendencia: Record<string, string> = {
   "desconto vigente da UC": "faturamento-desconto",
 };
 
-
 export default function PreparacaoFaturas() {
   const navegar = useNavigate();
   const [parametros] = useSearchParams();
@@ -87,10 +82,8 @@ export default function PreparacaoFaturas() {
   );
   const [usinaExportacao, setUsinaExportacao] = useState("");
   const [selecionado, setSelecionado] = useState<Documento | null>(null);
-  const [previa, setPrevia] = useState<PreviaCalculo | null>(null);
   const [dados, setDados] = useState<Record<string, string>>({});
   const [alterado, setAlterado] = useState(false);
-  const [conferido, setConferido] = useState(false);
   const [ocupado, setOcupado] = useState(false);
   const [erro, setErro] = useState("");
   const [mensagem, setMensagem] = useState("");
@@ -185,13 +178,11 @@ export default function PreparacaoFaturas() {
     }));
     setBuscaCliente(encontrada.cliente_nome ?? encontrada.nome);
     setAlterado(true);
-    setConferido(false);
   }, [selecionado, unidades.dados, dados, alterado]);
 
   function mostrar(d: Documento) {
     if (selecionado?.id !== d.id) setEvidenciasAbertas(false);
     setSelecionado(d);
-    setPrevia(null);
     setDados(d.dados);
     const unidadeSalva = unidades.dados?.find(
       (item) => item.id === Number(d.dados.unidade_id),
@@ -202,7 +193,6 @@ export default function PreparacaoFaturas() {
     setSugestoesAbertas(false);
     setSugestaoAtiva(0);
     setAlterado(false);
-    setConferido(false);
   }
   async function abrir(numero: number) {
     setOcupado(true);
@@ -222,16 +212,26 @@ export default function PreparacaoFaturas() {
     const controle = new AbortController();
     setOcupado(true);
     setErro("");
-    consultarServidor<Documento>(`${base}/${numero}`, { signal: controle.signal })
-      .then((d) => { if (!controle.signal.aborted) mostrar(d); })
-      .catch((e) => { if (!controle.signal.aborted) setErro(e.message); })
-      .finally(() => { if (!controle.signal.aborted) setOcupado(false); });
+    consultarServidor<Documento>(`${base}/${numero}`, {
+      signal: controle.signal,
+    })
+      .then((d) => {
+        if (!controle.signal.aborted) mostrar(d);
+      })
+      .catch((e) => {
+        if (!controle.signal.aborted) setErro(e.message);
+      })
+      .finally(() => {
+        if (!controle.signal.aborted) setOcupado(false);
+      });
     return () => controle.abort();
   }, [documentoSolicitado]);
 
   useEffect(() => {
     if (selecionado?.id !== Number(documentoSolicitado)) return;
-    document.getElementById("faturamento-conferencia")?.scrollIntoView({ block: "start" });
+    document
+      .getElementById("faturamento-conferencia")
+      ?.scrollIntoView({ block: "start" });
   }, [documentoSolicitado, selecionado?.id]);
   function iniciarRenomeacao(
     d: Documento,
@@ -290,10 +290,6 @@ export default function PreparacaoFaturas() {
             }
           : atual,
       );
-      if (selecionado?.id === atualizado.id) {
-        setPrevia(null);
-        setConferido(false);
-      }
       setRenomeando(null);
       consulta.atualizar();
       recebimentos.atualizar();
@@ -357,7 +353,6 @@ export default function PreparacaoFaturas() {
       });
       setSelecionado(null);
       setEvidenciasAbertas(false);
-      setPrevia(null);
       setMensagem(
         "PDF excluído do Ecosol. O e-mail no Gmail permanece intacto.",
       );
@@ -473,47 +468,22 @@ export default function PreparacaoFaturas() {
       setOcupado(false);
     }
   }
-  async function acao(tipo: "salvar" | "calcular" | "aprovar") {
+  async function salvarConferencia() {
     if (!selecionado) return;
-    if (
-      tipo === "calcular" &&
-      (!previa || previa.versao !== selecionado.versao)
-    ) {
-      setErro("Gere e confira a prévia antes de salvar e calcular.");
-      return;
-    }
     setOcupado(true);
     setErro("");
     setMensagem("");
     try {
-      let d = selecionado;
-      if (tipo === "salvar") {
-        d = await consultarServidor<Documento>(`${base}/${d.id}`, {
+      const d = await consultarServidor<Documento>(
+        `${base}/${selecionado.id}`,
+        {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ versao: d.versao, dados }),
-        });
-      } else {
-        d = await consultarServidor<Documento>(`${base}/${d.id}/${tipo}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            versao: d.versao,
-            conferido,
-            ...(tipo === "calcular"
-              ? { dados, previa_hash: previa?.hash }
-              : {}),
-          }),
-        });
-      }
-      mostrar(d);
-      setMensagem(
-        tipo === "aprovar"
-          ? "Aprovação interna registrada. A cobrança aguarda emissão futura."
-          : tipo === "calcular"
-            ? "Cálculo concluído. Confira o demonstrativo abaixo."
-            : "Conferência salva.",
+          body: JSON.stringify({ versao: selecionado.versao, dados }),
+        },
       );
+      mostrar(d);
+      setMensagem("Conferência salva.");
     } catch (e) {
       setErro((e as Error).message);
     } finally {
@@ -523,9 +493,7 @@ export default function PreparacaoFaturas() {
   }
   function mudar(chave: string, valor: string) {
     setDados((anterior) => ({ ...anterior, [chave]: valor }));
-    setPrevia(null);
     setAlterado(true);
-    setConferido(false);
   }
   function digitarCliente(valor: string) {
     setBuscaCliente(valor);
@@ -537,9 +505,7 @@ export default function PreparacaoFaturas() {
       cliente_id: "",
       uc_divergente_confirmada: "",
     }));
-    setPrevia(null);
     setAlterado(true);
-    setConferido(false);
   }
   function escolherCliente(unidadeEscolhida: Unidade) {
     if (!unidadeEscolhida.cliente_id || !unidadeEscolhida.cliente_nome) return;
@@ -568,9 +534,7 @@ export default function PreparacaoFaturas() {
         unidadeEscolhida.dia_vencimento,
       ),
     }));
-    setPrevia(null);
     setAlterado(true);
-    setConferido(false);
   }
   function abrirCadastroComNome() {
     if (
@@ -601,31 +565,6 @@ export default function PreparacaoFaturas() {
         ucInicial: dados.uc || selecionado?.extracao.dados?.uc || "",
       },
     });
-  }
-  async function gerarPrevia() {
-    if (!selecionado) return;
-    setOcupado(true);
-    setErro("");
-    setMensagem("");
-    setPrevia(null);
-    try {
-      const resultado = await consultarServidor<PreviaCalculo>(
-        `${base}/${selecionado.id}/previa`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ versao: selecionado.versao, dados }),
-        },
-      );
-      setPrevia(resultado);
-      setMensagem(
-        "Prévia pronta. Confira os valores antes de salvar e calcular.",
-      );
-    } catch (e) {
-      setErro((e as Error).message);
-    } finally {
-      setOcupado(false);
-    }
   }
   function campo(
     chave: string,
@@ -676,9 +615,7 @@ export default function PreparacaoFaturas() {
       ...anterior,
       modalidade: modalidadeDaUsina.modalidade,
     }));
-    setPrevia(null);
     setAlterado(true);
-    setConferido(false);
   }, [selecionado, alterado, modalidadeDaUsina, dados.modalidade]);
   const termoCliente = normalizarBuscaCliente(buscaCliente);
   const sugestoesCliente = termoCliente
@@ -718,9 +655,7 @@ export default function PreparacaoFaturas() {
     const ajusteAtual = String(dados.ajuste_gdii ?? "").trim();
     if (ajusteAtual && Number(ajusteAtual.replace(",", ".")) === 0) return;
     setDados((anterior) => ({ ...anterior, ajuste_gdii: "0" }));
-    setPrevia(null);
     setAlterado(true);
-    setConferido(false);
   }, [selecionado, alterado, modalidadeInformada, dados.ajuste_gdii]);
   const injecaoInformada = String(dados.injecao ?? "").trim();
   const semInjecao =
@@ -757,7 +692,6 @@ export default function PreparacaoFaturas() {
         d.status === aprovada &&
         d.memoria?.contrato.modalidade === "GDI",
     ) ?? [];
-  const memoria = !alterado ? selecionado?.memoria : null;
   const bloqueado = ocupado || nivel < 2 || selecionado?.status === aprovada;
   const faltantes = selecionado
     ? pendenciasParaCalculo(
@@ -777,8 +711,6 @@ export default function PreparacaoFaturas() {
   const documentosPorId = new Map(
     (consulta.dados ?? []).map((documento) => [documento.id, documento]),
   );
-  const etapa =
-    selecionado?.status === aprovada ? 4 : memoria ? 3 : selecionado ? 2 : 1;
   const totalRecebidas =
     recebimentos.dados?.filter((r) => r.resultado === "Recebida").length ?? 0;
   const totalAtencao =
@@ -815,25 +747,6 @@ export default function PreparacaoFaturas() {
           </p>
         </div>
       </div>
-      <ol className="faturamento-etapas" aria-label="Etapas da preparação">
-        {["Receber PDF", "Conferir dados", "Calcular", "Aprovar"].map(
-          (nome, indice) => (
-            <li
-              className={
-                indice + 1 < etapa
-                  ? "concluida"
-                  : indice + 1 === etapa
-                    ? "atual"
-                    : ""
-              }
-              key={nome}
-            >
-              <span>{indice + 1}</span>
-              <strong>{nome}</strong>
-            </li>
-          ),
-        )}
-      </ol>
       <div className="faturamento-indicadores" aria-label="Resumo das faturas">
         <span>
           <strong>{recebimentos.dados?.length ?? 0}</strong> ocorrências
@@ -852,7 +765,11 @@ export default function PreparacaoFaturas() {
         </span>
       </div>
       {nivel >= 2 && (
-        <form className="faturamento-importacao" onSubmit={importar}>
+        <form
+          id="faturamento-receber"
+          className="faturamento-importacao"
+          onSubmit={importar}
+        >
           <div>
             <span className="faturamento-passo">1</span>
             <h2>Adicionar fatura</h2>
@@ -1074,7 +991,11 @@ export default function PreparacaoFaturas() {
             )}
           </div>
         </aside>
-        <section id="faturamento-conferencia" className="faturamento-revisao" aria-live="polite">
+        <section
+          id="faturamento-conferencia"
+          className="faturamento-revisao"
+          aria-live="polite"
+        >
           {!selecionado ? (
             <div className="faturamento-selecione">
               <span aria-hidden="true">↗</span>
@@ -1598,64 +1519,6 @@ export default function PreparacaoFaturas() {
                     </p>
                   )}
                 </section>
-                {selecionado.status !== aprovada && (
-                  <section className="faturamento-grupo faturamento-grupo--resultado faturamento-previa">
-                    <div className="faturamento-grupo-titulo">
-                      <span>05</span>
-                      <div>
-                        <small>Resultado antes de salvar</small>
-                        <h3>Prévia do cálculo</h3>
-                        <p>
-                          Veja a conta completa antes de salvar. Esta prévia não
-                          altera a fatura nem cria cobrança.
-                        </p>
-                      </div>
-                    </div>
-                    {faltantes.length > 0 && (
-                      <p className="faturamento-previa-pendencias">
-                        Resolva as pendências indicadas no início da conferência
-                        para gerar a prévia.
-                      </p>
-                    )}
-                    <button
-                      type="button"
-                      className="admin-botao secundario"
-                      disabled={ocupado || faltantes.length > 0}
-                      onClick={gerarPrevia}
-                    >
-                      {ocupado ? "Calculando prévia…" : "Calcular prévia"}
-                    </button>
-                    {previa && (
-                      <DemonstrativoCalculo memoria={previa.memoria} previa />
-                    )}
-                  </section>
-                )}
-                {!bloqueado && (
-                  <section className="faturamento-confirmacao">
-                    <div>
-                      <span>06</span>
-                      <div>
-                        <strong>Confirmar dados</strong>
-                        <p>
-                          Marque após comparar todos os campos com o PDF
-                          original.
-                        </p>
-                      </div>
-                    </div>
-                    <label className={conferido ? "marcada" : ""}>
-                      <input
-                        type="checkbox"
-                        checked={conferido}
-                        onChange={(e) => setConferido(e.target.checked)}
-                      />
-                      <span>
-                        <strong>Conferi esta fatura</strong>
-                        UC, consumo, tarifa, contrato e vencimentos estão
-                        corretos.
-                      </span>
-                    </label>
-                  </section>
-                )}
                 <div className="faturamento-acoes">
                   <small>
                     {alterado
@@ -1664,39 +1527,24 @@ export default function PreparacaoFaturas() {
                   </small>
                   <div>
                     {nivel >= 2 && selecionado.status !== aprovada && (
-                      <>
-                        <button
-                          type="button"
-                          className="admin-botao secundario"
-                          disabled={ocupado}
-                          onClick={() => acao("salvar")}
-                        >
-                          Salvar conferência
-                        </button>
-                        <button
-                          type="button"
-                          className="admin-botao"
-                          disabled={ocupado || !conferido || !previa}
-                          onClick={() => acao("calcular")}
-                        >
-                          Salvar e calcular
-                        </button>
-                      </>
-                    )}
-                    {nivel >= 3 && selecionado.status === "Calculada" && (
                       <button
                         type="button"
-                        className="admin-botao"
-                        disabled={ocupado || alterado}
-                        onClick={() => acao("aprovar")}
+                        className="admin-botao secundario"
+                        disabled={ocupado}
+                        onClick={salvarConferencia}
                       >
-                        Aprovar para emissão futura
+                        Salvar conferência
                       </button>
                     )}
+                    <Link
+                      className="admin-botao"
+                      to={`/admin/faturas?etapa=calcular&documento=${selecionado.id}`}
+                    >
+                      Ir para etapa 3 — Calcular
+                    </Link>
                   </div>
                 </div>
               </div>
-              {memoria && !previa && <DemonstrativoCalculo memoria={memoria} />}
               <details
                 key={selecionado.id}
                 className="admin-historico"

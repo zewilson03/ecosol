@@ -13,6 +13,7 @@
   color: #aa760e;
 }
 .calculos-contexto p {
+  flex: 1;
   margin: 0;
   line-height: 1.8;
   color: #466677;
@@ -262,6 +263,8 @@
     font-size: 22px;
   }
   .calculos-contexto {
+    align-items: flex-start;
+    flex-wrap: wrap;
     padding: 16px;
   }
   .calculos-acoes-documento > .admin-botao:last-child {

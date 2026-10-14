@@ -500,34 +500,36 @@ export default function ImportacaoExcel({
                         <td>{l.dados.desconto}%</td>
                         <td>{l.status}</td>
                         <td>{l.mensagem}</td>
-                        <td>
-                          <details>
+                        <td className="importacao-previa-completar">
+                          <details className="importacao-previa-editor">
                             <summary>Conferir dados da linha {l.linha}</summary>
-                            {analise?.campos.map((c) => (
-                              <label key={c.chave}>
-                                {c.rotulo}
-                                <input
-                                  disabled={ocupado}
-                                  maxLength={180}
-                                  value={
-                                    correcoes[l.linha]?.[c.chave] ??
-                                    l.dados[c.chave] ??
-                                    ""
-                                  }
-                                  onChange={(e) => {
-                                    setCorrecoes({
-                                      ...correcoes,
-                                      [l.linha]: {
-                                        ...correcoes[l.linha],
-                                        [c.chave]: e.target.value,
-                                      },
-                                    });
-                                    setRevisar(true);
-                                    setConfirma(false);
-                                  }}
-                                />
-                              </label>
-                            ))}
+                            <div className="importacao-previa-campos">
+                              {analise?.campos.map((c) => (
+                                <label key={c.chave}>
+                                  <span>{c.rotulo}</span>
+                                  <input
+                                    disabled={ocupado}
+                                    maxLength={180}
+                                    value={
+                                      correcoes[l.linha]?.[c.chave] ??
+                                      l.dados[c.chave] ??
+                                      ""
+                                    }
+                                    onChange={(e) => {
+                                      setCorrecoes({
+                                        ...correcoes,
+                                        [l.linha]: {
+                                          ...correcoes[l.linha],
+                                          [c.chave]: e.target.value,
+                                        },
+                                      });
+                                      setRevisar(true);
+                                      setConfirma(false);
+                                    }}
+                                  />
+                                </label>
+                              ))}
+                            </div>
                           </details>
                         </td>
                       </tr>

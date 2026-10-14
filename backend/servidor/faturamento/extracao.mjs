@@ -1,7 +1,9 @@
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
+import Decimal from "decimal.js";
 
 const numero = /-?\d[\d.]*(?:,\d+)?/g;
 const br = (s) => s?.replace(/\./g, "").replace(",", ".");
+const D = Decimal.clone({ precision: 36, rounding: Decimal.ROUND_HALF_UP });
 const meses = [
   "JAN",
   "FEV",
@@ -174,15 +176,22 @@ export function extrairCampos(texto, { ucQuadro = null } = {}) {
     let linha = linhas[i];
     if (
       /INJECAO SCEE|PARC INJET|CONSUMO NAO COMPENSADO/.test(linha) &&
-      !/KWH/.test(linha) &&
-      /^\s*KWH\b/.test(linhas[i + 1] || "")
-    )
-      linha += " " + (linhas[i + 1] || "");
+      !/KWH/.test(linha)
+    ) {
+      const continuacao = linhas
+        .slice(i + 1, i + 4)
+        .find((item) => /^\s*(?:GD\s*(?:I|II)\s*\d*\s*)?KWH\b/.test(item));
+      if (continuacao) linha += " " + continuacao;
+    }
     const depois = linha.split(/KWH\s*/)[1];
     const valores = depois?.match(numero);
     if (/INJECAO SCEE/.test(linha) && valores?.length >= 3)
       injecoes.push({ valores, linha });
-    if (/PARC INJET/.test(linha) && valores?.length >= 3)
+    if (
+      /PARC INJET S\/DESC/.test(linha) &&
+      /\bGD\s*II\b/.test(linha) &&
+      valores?.length >= 3
+    )
       ajustes.push({ valores, linha });
     if (/BANDEIRA/.test(linha) && valores?.length >= 3)
       bandeiras.push({ valores, linha });
@@ -226,8 +235,20 @@ export function extrairCampos(texto, { ucQuadro = null } = {}) {
       br(consumosNaoCompensados[0].valores[1]),
       consumosNaoCompensados[0].linha,
     );
-  if (ajustes.length === 1)
-    guardar("ajuste_gdii", br(ajustes[0].valores[2]), ajustes[0].linha);
+  const ajustesUnicos = [
+    ...new Map(ajustes.map((item) => [item.linha, item])).values(),
+  ];
+  if (ajustesUnicos.length)
+    guardar(
+      "ajuste_gdii",
+      ajustesUnicos
+        .reduce(
+          (total, item) => total.plus(new D(br(item.valores[2])).abs()),
+          new D(0),
+        )
+        .toFixed(2),
+      ajustesUnicos.map((item) => item.linha).join(" | "),
+    );
   if (bandeiras.length === 1)
     guardar("bandeira", br(bandeiras[0].valores[1]), bandeiras[0].linha);
   const avisos = [

@@ -78,16 +78,18 @@ do banco antes de atualizar uma instalação em uso.
    ainda exigem confirmação manual da modalidade antes de um novo cálculo.
 6. Confirme o vencimento Ecosol manualmente, observando o dia preferido. A regra
    para chegada tardia, feriados e meses curtos ainda precisa ser definida.
-7. Use **Calcular prévia** para conferir energia, tarifa, desconto e parcelas
-   do valor Ecosol antes de salvar; a prévia não altera a fatura. Qualquer
-   mudança nos campos exige nova prévia. Marque a conferência e escolha
-   **Salvar e calcular**. O servidor recalcula e só grava se o resultado ainda
-   corresponder à prévia. O demonstrativo mostra
+7. Avance para a etapa 3 **Calcular** de Faturas e use **Calcular prévia** para
+   conferir energia, tarifa, desconto e parcelas do valor Ecosol antes de
+   salvar; a prévia não altera a fatura. Qualquer mudança nos campos exige nova
+   prévia. Marque a conferência e escolha **Salvar cálculo conferido**. O
+   servidor recalcula e só grava se o resultado ainda corresponder à prévia. O
+   demonstrativo mostra
    `ARRED(injecao × (unitario + bandeira) × (1 − desconto/100); 2)
    - total_equatorial − ajuste_gdii`. Não soma mínimo ou iluminação novamente.
-8. O nível 3 pode **Aprovar para emissão futura**. A memória fica protegida contra
-   edição e guarda as condições informadas, dados cadastrais e fonte da tarifa. Esta aprovação
-   não emite boleto, não envia e-mail e não cria pagamento bancário.
+8. Na etapa 4 **Aprovar**, o nível 3 pode **Aprovar para emissão futura**. A
+   memória fica protegida contra edição e guarda as condições informadas, dados
+   cadastrais e fonte da tarifa. Esta aprovação não emite boleto, não envia
+   e-mail e não cria pagamento bancário.
 
 Permissões: nível 1 consulta; níveis 2 e 3 cadastram unidades, importam e calculam;
 nível 3 aprova. A API de vigências antigas permanece compatível, mas não é
@@ -281,17 +283,20 @@ O cadastro direto e a caixa `/dev/links` funcionam no modo de desenvolvimento.
 Clientes sem senha inicial podem solicitar ativação; os links de teste aparecem
 na caixa local. A recuperação de senha usa o mesmo processo.
 
-## Central de cálculos
+## Cálculos dentro de Faturas
 
-A página `/admin/calculos`, disponível no menu **Cálculos**, reúne as faturas,
-pendências e resultados. Permite filtrar por cliente/UC/PDF, usina, competência
-e situação. O total exibido soma somente cálculos salvos da seleção, em centavos;
-prévias não entram nesse total. A exportação Excel inclui todos os cálculos salvos.
+A etapa 3 **Calcular**, em `/admin/faturas?etapa=calcular`, reúne as faturas,
+pendências e resultados dentro do fluxo de Faturas. Permite filtrar por
+cliente/UC/PDF, usina, competência e situação. O total exibido soma somente
+cálculos salvos da seleção, em centavos; prévias não entram nesse total. A
+exportação Excel inclui todos os cálculos salvos. A etapa 4 **Aprovar** separa
+as faturas que já possuem memória de cálculo e aguardam a decisão da equipe.
 
-A equipe nível 1 pode consultar e gerar prévias; nível 2 pode salvar após conferir;
-nível 3 pode aprovar para emissão futura. A página reutiliza as validações,
-versões e memória do faturamento. Não emite boletos. Campos pendentes abrem a
-conferência da fatura correspondente, e cálculos aprovados preservam seu histórico.
+A equipe nível 1 pode consultar e gerar prévias na etapa 3; nível 2 pode salvar
+após conferir; nível 3 pode aprovar na etapa 4 para emissão futura. As etapas
+reutilizam as validações, versões e memória do faturamento. Não emitem boletos.
+Campos pendentes retornam à etapa 2 da fatura correspondente, e cálculos
+aprovados preservam seu histórico.
 
 Verificações: `npm run test:calculos`, `npm run test:faturamento` e `npm run build`.
 Para conferir o visual sem dados reais, após compilar execute

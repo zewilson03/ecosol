@@ -1,0 +1,522 @@
+{
+  "modo": "simulate",
+  "aplicado": true,
+  "hashPlano": "c55318ace5a9b9ab305ece5dec6bdef88700e8e2c3a434c4f0425cb619385f69",
+  "backup": null,
+  "fonte": {
+    "arquivo": "relatorio_clientes_ucs.pdf",
+    "sha256": "2e33ce1d09310a285477b233b9ec3e4b2ec5071f56f03df5caddac9ea3b81317"
+  },
+  "clientesCriados": 1,
+  "unidadesCriadas": 3,
+  "identificadoresHistoricosAdicionados": 4,
+  "unidadesAtualizadas": 1,
+  "vinculosCliente": 1,
+  "camposPreenchidos": {
+    "documento": 1
+  },
+  "alteracoes": [
+    {
+      "uc": "310492901220",
+      "campos": [
+        "documento"
+      ],
+      "vinculoClienteCriado": true
+    }
+  ],
+  "pendenciasPorTipo": {
+    "uc_nao_encontrada": 79,
+    "documento_divergente_no_pdf": 1,
+    "cpf_sem_email_para_portal": 1
+  },
+  "pendencias": [
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10030952059",
+      "pagina": 2,
+      "linha": 2
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10025694144",
+      "pagina": 2,
+      "linha": 3
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10002537999",
+      "pagina": 2,
+      "linha": 6
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10008630249",
+      "pagina": 2,
+      "linha": 8
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10008892340",
+      "pagina": 2,
+      "linha": 13
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10025822240",
+      "pagina": 2,
+      "linha": 17
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10014689390",
+      "pagina": 2,
+      "linha": 18
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10013391168",
+      "pagina": 3,
+      "linha": 26
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "20151998",
+      "pagina": 3,
+      "linha": 27
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10020381660",
+      "pagina": 3,
+      "linha": 28
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "21280423",
+      "pagina": 3,
+      "linha": 31
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "20993006",
+      "pagina": 3,
+      "linha": 32
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10017159766",
+      "pagina": 3,
+      "linha": 33
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10018171603",
+      "pagina": 3,
+      "linha": 34
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10001849520",
+      "pagina": 3,
+      "linha": 35
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10019412248",
+      "pagina": 3,
+      "linha": 36
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10022180697",
+      "pagina": 3,
+      "linha": 40
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10009480933",
+      "pagina": 3,
+      "linha": 41
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10001975836",
+      "pagina": 3,
+      "linha": 43
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "21202540",
+      "pagina": 3,
+      "linha": 44
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10020695398",
+      "pagina": 3,
+      "linha": 45
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10021243342",
+      "pagina": 3,
+      "linha": 46
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10021570297",
+      "pagina": 3,
+      "linha": 47
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10023090098",
+      "pagina": 4,
+      "linha": 48
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10023933265",
+      "pagina": 4,
+      "linha": 49
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10027881596",
+      "pagina": 4,
+      "linha": 50
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10027394253",
+      "pagina": 4,
+      "linha": 51
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10027397040",
+      "pagina": 4,
+      "linha": 52
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10029108312",
+      "pagina": 4,
+      "linha": 53
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10029646152",
+      "pagina": 4,
+      "linha": 54
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10019907581",
+      "pagina": 4,
+      "linha": 56
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10031432180",
+      "pagina": 4,
+      "linha": 57
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10022240924",
+      "pagina": 4,
+      "linha": 63
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10013151515",
+      "pagina": 4,
+      "linha": 65
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10028360662",
+      "pagina": 4,
+      "linha": 66
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10034890147",
+      "pagina": 4,
+      "linha": 67
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10034742830",
+      "pagina": 4,
+      "linha": 72
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "12204493",
+      "pagina": 5,
+      "linha": 76
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "20681872",
+      "pagina": 5,
+      "linha": 81
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10008348527",
+      "pagina": 5,
+      "linha": 82
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "20119100",
+      "pagina": 6,
+      "linha": 95
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "21305079",
+      "pagina": 6,
+      "linha": 96
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10037661955",
+      "pagina": 6,
+      "linha": 97
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10030823445",
+      "pagina": 6,
+      "linha": 101
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "21225643",
+      "pagina": 6,
+      "linha": 102
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10010180000",
+      "pagina": 6,
+      "linha": 105
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "21226003",
+      "pagina": 6,
+      "linha": 106
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10036864607",
+      "pagina": 6,
+      "linha": 108
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10008486822",
+      "pagina": 7,
+      "linha": 2
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10004686266",
+      "pagina": 7,
+      "linha": 3
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "20041380",
+      "pagina": 7,
+      "linha": 6
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "20770625",
+      "pagina": 7,
+      "linha": 10
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "21383984",
+      "pagina": 7,
+      "linha": 11
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10034738230",
+      "pagina": 7,
+      "linha": 13
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10010429091",
+      "pagina": 7,
+      "linha": 14
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10023887980",
+      "pagina": 7,
+      "linha": 15
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10001356788",
+      "pagina": 7,
+      "linha": 16
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "12675672",
+      "pagina": 7,
+      "linha": 17
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10013093736",
+      "pagina": 8,
+      "linha": 1
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "17359855",
+      "pagina": 8,
+      "linha": 5
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10011596854",
+      "pagina": 8,
+      "linha": 6
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10022656691",
+      "pagina": 8,
+      "linha": 9
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "20212884",
+      "pagina": 8,
+      "linha": 13
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10023732219",
+      "pagina": 8,
+      "linha": 14
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10020006835",
+      "pagina": 8,
+      "linha": 15
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "2530033694",
+      "pagina": 8,
+      "linha": 16
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10001245005",
+      "pagina": 8,
+      "linha": 17
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10017278390",
+      "pagina": 8,
+      "linha": 21
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10008647478",
+      "pagina": 8,
+      "linha": 3
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10015960879",
+      "pagina": 9,
+      "linha": 4
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10015960828",
+      "pagina": 9,
+      "linha": 5
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10015960984",
+      "pagina": 9,
+      "linha": 6
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "9290003369",
+      "pagina": 9,
+      "linha": 7
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "20417810",
+      "pagina": 9,
+      "linha": 12
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "20068694",
+      "pagina": 9,
+      "linha": 17
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10037848508",
+      "pagina": 9,
+      "linha": 1
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10006300837",
+      "pagina": 9,
+      "linha": 3
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10002380550",
+      "pagina": 9,
+      "linha": 5
+    },
+    {
+      "tipo": "uc_nao_encontrada",
+      "uc": "10006646822",
+      "pagina": 10,
+      "linha": 7
+    },
+    {
+      "tipo": "documento_divergente_no_pdf",
+      "uc": "240579201280",
+      "referencias": [
+        {
+          "pagina": 3,
+          "linha": 30
+        }
+      ]
+    },
+    {
+      "tipo": "cpf_sem_email_para_portal",
+      "uc": "79301201242"
+    }
+  ]
+}

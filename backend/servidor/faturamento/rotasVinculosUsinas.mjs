@@ -215,6 +215,15 @@ export function prepararPrevia(s, escolhas, banco) {
       if (!porAntiga.has(u.uc_antiga)) porAntiga.set(u.uc_antiga, []);
       porAntiga.get(u.uc_antiga).push(u);
     }
+  for (const alias of banco
+    .prepare("SELECT unidade_id,uc FROM faturamento_unidades_aliases")
+    .all()) {
+    const unidade = ucs.find((item) => item.id === alias.unidade_id);
+    if (!unidade) continue;
+    if (!porAntiga.has(alias.uc)) porAntiga.set(alias.uc, []);
+    if (!porAntiga.get(alias.uc).some((item) => item.id === unidade.id))
+      porAntiga.get(alias.uc).push(unidade);
+  }
   const resultados = linhas.map((linha) => {
     const base = {
       linha: linha.linha,
@@ -233,7 +242,7 @@ export function prepararPrevia(s, escolhas, banco) {
     if (!destino || destino.tipo === "ignorar")
       return { ...base, motivo: "Usina não selecionada para importação." };
     base.destino = destino;
-    const unidade = porUc.get(linha.uc);
+    let unidade = porUc.get(linha.uc);
     if (!unidade && porAntiga.has(linha.uc))
       return {
         ...base,
@@ -241,13 +250,50 @@ export function prepararPrevia(s, escolhas, banco) {
         motivo:
           "A UC atual aparece como UC antiga de outro cadastro. Confira a numeração.",
       };
-    if (!unidade && linha.uc_antiga && porUc.has(linha.uc_antiga))
+    const candidatasDaAntiga = linha.uc_antiga
+      ? [
+          ...(porUc.has(linha.uc_antiga) ? [porUc.get(linha.uc_antiga)] : []),
+          ...(porAntiga.get(linha.uc_antiga) ?? []),
+        ].filter(
+          (item, indice, lista) =>
+            item && lista.findIndex((outra) => outra.id === item.id) === indice,
+        )
+      : [];
+    if (!unidade && candidatasDaAntiga.length > 1)
       return {
         ...base,
         acao: "conferencia",
         motivo:
-          "A UC antiga já está cadastrada como UC atual. Confira a renumeração antes de criar outro cadastro.",
+          "A UC antiga aponta para mais de uma unidade. Confira o histórico antes de vincular.",
       };
+    if (!unidade && candidatasDaAntiga.length === 1) {
+      unidade = candidatasDaAntiga[0];
+      base.versao = unidade.versao;
+      base.unidade_id = unidade.id;
+      if (
+        !linha.cliente ||
+        chaveUsina(linha.cliente) !== chaveUsina(unidade.cliente_nome)
+      )
+        return {
+          ...base,
+          acao: "conferencia",
+          motivo: `A UC antiga foi localizada, mas o cliente difere do cadastro (${unidade.cliente_nome}). Confira a identidade.`,
+        };
+      if (destino.tipo !== "existente" || unidade.usina_id !== destino.id)
+        return {
+          ...base,
+          acao: "conferencia",
+          motivo:
+            "A UC antiga foi localizada, mas a usina diverge. Confira a transferência antes da renumeração.",
+        };
+      return {
+        ...base,
+        acao: "renumerar_uc",
+        uc_anterior: unidade.uc,
+        motivo:
+          "Nova UC vinculada pela numeração antiga; o histórico será preservado.",
+      };
+    }
     if (
       linha.uc_antiga &&
       porUc.has(linha.uc_antiga) &&
@@ -340,6 +386,7 @@ export function prepararPrevia(s, escolhas, banco) {
       atualizar_uc_antiga: resultados.filter(
         (r) => r.acao === "atualizar_uc_antiga",
       ).length,
+      renumerar_uc: resultados.filter((r) => r.acao === "renumerar_uc").length,
       inalteradas: resultados.filter((r) => r.acao === "inalterada").length,
       conferencia: resultados.filter((r) => r.acao === "conferencia").length,
       pendentes: resultados.filter((r) => ["erro", "pendente"].includes(r.acao))
@@ -383,7 +430,9 @@ rotasVinculosUsinas.post("/:id/confirmar", (req, res) => {
     if (JSON.stringify(atual.linhas) !== JSON.stringify(salva.linhas))
       falhar("Cadastros mudaram desde a prévia. Gere outra prévia.", 409);
     const ativas = atual.linhas.filter((l) =>
-      ["vincular", "criar_uc", "atualizar_uc_antiga"].includes(l.acao),
+      ["vincular", "criar_uc", "atualizar_uc_antiga", "renumerar_uc"].includes(
+        l.acao,
+      ),
     );
     if (!ativas.length)
       falhar("Não há UCs novas ou vínculos válidos para importar.");
@@ -444,7 +493,42 @@ rotasVinculosUsinas.post("/:id/confirmar", (req, res) => {
           409,
         );
       let unidadeId;
-      if (linha.acao === "atualizar_uc_antiga") {
+      if (linha.acao === "renumerar_uc") {
+        if (
+          banco
+            .prepare("SELECT 1 FROM faturamento_unidades WHERE uc=?")
+            .get(linha.uc) ||
+          banco
+            .prepare("SELECT 1 FROM faturamento_unidades_aliases WHERE uc=?")
+            .get(linha.uc)
+        )
+          falhar(
+            "A nova UC foi cadastrada depois da prévia. Gere outra prévia.",
+            409,
+          );
+        const r = banco
+          .prepare(
+            "UPDATE faturamento_unidades SET uc=?,versao=versao+1 WHERE id=? AND uc=? AND versao=?",
+          )
+          .run(linha.uc, linha.unidade_id, linha.uc_anterior, linha.versao);
+        if (r.changes !== 1)
+          falhar("UC alterada durante a confirmação. Gere outra prévia.", 409);
+        const inserirAlias = banco.prepare(
+          "INSERT OR IGNORE INTO faturamento_unidades_aliases(unidade_id,uc,origem) VALUES(?,?,?)",
+        );
+        inserirAlias.run(
+          linha.unidade_id,
+          linha.uc_anterior,
+          "Renumeração confirmada por planilha",
+        );
+        if (linha.uc_antiga)
+          inserirAlias.run(
+            linha.unidade_id,
+            linha.uc_antiga,
+            "Identificador histórico confirmado por planilha",
+          );
+        unidadeId = linha.unidade_id;
+      } else if (linha.acao === "atualizar_uc_antiga") {
         const r = banco
           .prepare(
             "UPDATE faturamento_unidades SET uc_antiga=?,versao=versao+1 WHERE id=? AND usina_id=? AND uc_antiga IS NULL AND versao=?",
@@ -519,9 +603,11 @@ rotasVinculosUsinas.post("/:id/confirmar", (req, res) => {
           req.administrador.id,
           linha.acao === "vincular"
             ? "UC vinculada à usina por planilha"
-            : linha.acao === "atualizar_uc_antiga"
-              ? "UC antiga registrada por planilha"
-              : "UC provisória criada por planilha de usinas",
+            : linha.acao === "renumerar_uc"
+              ? "UC atualizada com preservação dos identificadores antigos"
+              : linha.acao === "atualizar_uc_antiga"
+                ? "UC antiga registrada por planilha"
+                : "UC provisória criada por planilha de usinas",
           JSON.stringify({
             importacao_id: s.id,
             hash: s.hash,

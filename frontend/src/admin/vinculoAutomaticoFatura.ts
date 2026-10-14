@@ -5,6 +5,11 @@ const ucNormalizada = (valor: unknown) =>
     .replace(/\D/g, "")
     .replace(/^0+(?=\d)/, "");
 
+const correspondeAIdentificador = (unidade: Unidade, uc: string) =>
+  unidade.uc === uc ||
+  ucNormalizada(unidade.uc_antiga) === uc ||
+  Boolean(unidade.ucs_antigas?.some((item) => ucNormalizada(item) === uc));
+
 /** Identifica a UC sem presumir que um cadastro provisório já tenha acesso ao portal. */
 export function unidadeDaFatura(
   dados: Record<string, string>,
@@ -19,9 +24,26 @@ export function unidadeDaFatura(
   const numeroArquivo = nomeArquivo.match(/^(\d+)\.pdf$/i)?.[1];
   const extraida = ucNormalizada(ucExtraida);
   if (!ucSalva && extraida)
-    return unidades.find((unidade) => unidade.uc === extraida) ?? null;
+    return (
+      unidades.find((unidade) =>
+        correspondeAIdentificador(unidade, extraida),
+      ) ?? null
+    );
   if (numeroArquivo && ucSalva === numeroArquivo && extraida !== ucSalva)
-    return unidades.find((unidade) => unidade.uc === extraida) ?? null;
-  if (extraida && ucSalva && extraida !== ucSalva) return null;
-  return unidades.find((unidade) => unidade.uc === ucSalva) ?? null;
+    return (
+      unidades.find((unidade) =>
+        correspondeAIdentificador(unidade, extraida),
+      ) ?? null
+    );
+  const pelaSalva = unidades.find((unidade) =>
+    correspondeAIdentificador(unidade, ucSalva),
+  );
+  if (
+    extraida &&
+    ucSalva &&
+    extraida !== ucSalva &&
+    (!pelaSalva || !correspondeAIdentificador(pelaSalva, extraida))
+  )
+    return null;
+  return pelaSalva ?? null;
 }

@@ -109,6 +109,97 @@ export function prepararFaturamento(banco) {
   banco.exec(
     "CREATE UNIQUE INDEX IF NOT EXISTS faturamento_unidades_uc_antiga_unica ON faturamento_unidades(uc_antiga) WHERE uc_antiga IS NOT NULL AND uc_antiga<>''",
   );
+  banco.exec(`
+    CREATE TABLE IF NOT EXISTS faturamento_unidades_aliases (
+      id INTEGER PRIMARY KEY,
+      unidade_id INTEGER NOT NULL REFERENCES faturamento_unidades(id) ON DELETE CASCADE,
+      uc TEXT NOT NULL UNIQUE CHECK(uc<>''),
+      origem TEXT NOT NULL,
+      criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS faturamento_unidades_aliases_unidade
+      ON faturamento_unidades_aliases(unidade_id);
+    DELETE FROM faturamento_unidades_aliases
+      WHERE EXISTS (
+        SELECT 1 FROM faturamento_unidades atual
+        WHERE atual.id=faturamento_unidades_aliases.unidade_id
+          AND atual.uc=faturamento_unidades_aliases.uc
+      );
+    INSERT OR IGNORE INTO faturamento_unidades_aliases(unidade_id,uc,origem)
+      SELECT u.id,u.uc_antiga,'Migração do campo UC antiga'
+      FROM faturamento_unidades u
+      WHERE u.uc_antiga IS NOT NULL AND u.uc_antiga<>''
+        AND u.uc_antiga<>u.uc
+        AND NOT EXISTS (
+          SELECT 1 FROM faturamento_unidades atual
+          WHERE atual.uc=u.uc_antiga AND atual.id<>u.id
+        );
+    CREATE TRIGGER IF NOT EXISTS faturamento_alias_nao_pode_ser_uc_atual_insert
+    BEFORE INSERT ON faturamento_unidades_aliases
+    WHEN EXISTS (SELECT 1 FROM faturamento_unidades WHERE uc=NEW.uc)
+    BEGIN
+      SELECT RAISE(ABORT, 'UC histórica já cadastrada como UC atual');
+    END;
+    CREATE TRIGGER IF NOT EXISTS faturamento_alias_nao_pode_ser_uc_atual_update
+    BEFORE UPDATE OF uc ON faturamento_unidades_aliases
+    WHEN EXISTS (SELECT 1 FROM faturamento_unidades WHERE uc=NEW.uc)
+    BEGIN
+      SELECT RAISE(ABORT, 'UC histórica já cadastrada como UC atual');
+    END;
+    CREATE TRIGGER IF NOT EXISTS faturamento_uc_atual_nao_pode_ser_alias_insert
+    BEFORE INSERT ON faturamento_unidades
+    WHEN EXISTS (SELECT 1 FROM faturamento_unidades_aliases WHERE uc=NEW.uc)
+    BEGIN
+      SELECT RAISE(ABORT, 'UC atual já cadastrada como identificador histórico');
+    END;
+    CREATE TRIGGER IF NOT EXISTS faturamento_uc_atual_nao_pode_ser_alias_update
+    BEFORE UPDATE OF uc ON faturamento_unidades
+    WHEN EXISTS (SELECT 1 FROM faturamento_unidades_aliases WHERE uc=NEW.uc)
+    BEGIN
+      SELECT RAISE(ABORT, 'UC atual já cadastrada como identificador histórico');
+    END;
+    CREATE TRIGGER IF NOT EXISTS faturamento_uc_antiga_sem_conflito_insert
+    BEFORE INSERT ON faturamento_unidades
+    WHEN NEW.uc_antiga IS NOT NULL AND NEW.uc_antiga<>'' AND (
+      EXISTS (SELECT 1 FROM faturamento_unidades WHERE uc=NEW.uc_antiga)
+      OR EXISTS (
+        SELECT 1 FROM faturamento_unidades_aliases
+        WHERE uc=NEW.uc_antiga
+      )
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'UC antiga já pertence a outro cadastro');
+    END;
+    CREATE TRIGGER IF NOT EXISTS faturamento_uc_antiga_sem_conflito_update
+    BEFORE UPDATE OF uc_antiga ON faturamento_unidades
+    WHEN NEW.uc_antiga IS NOT NULL AND NEW.uc_antiga<>'' AND (
+      EXISTS (
+        SELECT 1 FROM faturamento_unidades
+        WHERE uc=NEW.uc_antiga AND id<>NEW.id
+      )
+      OR EXISTS (
+        SELECT 1 FROM faturamento_unidades_aliases
+        WHERE uc=NEW.uc_antiga AND unidade_id<>NEW.id
+      )
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'UC antiga já pertence a outro cadastro');
+    END;
+    CREATE TRIGGER IF NOT EXISTS faturamento_uc_antiga_cria_alias_insert
+    AFTER INSERT ON faturamento_unidades
+    WHEN NEW.uc_antiga IS NOT NULL AND NEW.uc_antiga<>''
+    BEGIN
+      INSERT OR IGNORE INTO faturamento_unidades_aliases(unidade_id,uc,origem)
+      VALUES(NEW.id,NEW.uc_antiga,'Cadastro da UC antiga');
+    END;
+    CREATE TRIGGER IF NOT EXISTS faturamento_uc_antiga_cria_alias_update
+    AFTER UPDATE OF uc_antiga ON faturamento_unidades
+    WHEN NEW.uc_antiga IS NOT NULL AND NEW.uc_antiga<>''
+    BEGIN
+      INSERT OR IGNORE INTO faturamento_unidades_aliases(unidade_id,uc,origem)
+      VALUES(NEW.id,NEW.uc_antiga,'Atualização da UC antiga');
+    END;
+  `);
   if (
     !banco
       .prepare("PRAGMA table_info(faturamento_documentos)")
@@ -196,7 +287,9 @@ export function prepararFaturamento(banco) {
       .all()
       .some((c) => c.name === "pendencia_cadastro")
   ) {
-    banco.exec("ALTER TABLE faturamento_unidades ADD COLUMN pendencia_cadastro TEXT");
+    banco.exec(
+      "ALTER TABLE faturamento_unidades ADD COLUMN pendencia_cadastro TEXT",
+    );
   }
   banco.exec(`CREATE INDEX IF NOT EXISTS faturamento_unidades_cliente
     ON faturamento_unidades(cliente_id) WHERE cliente_id IS NOT NULL`);

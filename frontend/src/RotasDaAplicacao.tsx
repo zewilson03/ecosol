@@ -3,7 +3,6 @@ import EstruturaAdministrativa from "./admin/EstruturaAdministrativa";
 import Usinas from "./admin/Usinas";
 import DetalheDaUsina from "./admin/DetalheDaUsina";
 import Faturas from "./admin/Faturas";
-import Calculos from "./admin/Calculos";
 import Clientes from "./admin/Clientes";
 import Financeiro from "./admin/Financeiro";
 import Gmail from "./admin/Gmail";
@@ -28,7 +27,10 @@ export default function RotasDaAplicacao() {
           <Route path="usinas" element={<Usinas />} />
           <Route path="usinas/:id" element={<DetalheDaUsina />} />
           <Route path="faturas" element={<Faturas />} />
-          <Route path="calculos" element={<Calculos />} />
+          <Route
+            path="calculos"
+            element={<Navigate to="/admin/faturas?etapa=calcular" replace />}
+          />
           <Route path="clientes" element={<Clientes />} />
           <Route path="financeiro" element={<Financeiro />} />
           <Route path="gmail" element={<Gmail />} />

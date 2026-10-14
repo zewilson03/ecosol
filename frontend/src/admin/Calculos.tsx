@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   CabecalhoDoModulo,
   EstadoDaConsulta,
@@ -47,14 +47,23 @@ function Situacao({ linha }: { linha: LinhaCalculo }) {
   );
 }
 
-export default function Calculos() {
+export default function Calculos({
+  incorporado = false,
+  modo = "calcular",
+}: {
+  incorporado?: boolean;
+  modo?: "calcular" | "aprovar";
+}) {
   const { nivel } = usarAdministrador();
+  const [parametros] = useSearchParams();
   const consulta = usarConsulta<Documento[]>(base);
   const unidades = usarConsulta<Unidade[]>("/api/admin/faturamento/unidades");
   const [busca, setBusca] = useState("");
   const [usina, setUsina] = useState("");
   const [competencia, setCompetencia] = useState("");
-  const [situacao, setSituacao] = useState("");
+  const [situacao, setSituacao] = useState(
+    modo === "aprovar" ? "calculada" : "",
+  );
   const [pagina, setPagina] = useState(1);
   const [selecionado, setSelecionado] = useState<number | null>(null);
   const [ocupado, setOcupado] = useState(false);
@@ -89,6 +98,22 @@ export default function Calculos() {
   const disponivel = !carregando && !consulta.erro && !unidades.erro;
 
   useEffect(() => {
+    setSituacao(modo === "aprovar" ? "calculada" : "");
+    setPagina(1);
+    setSelecionado(null);
+  }, [modo]);
+
+  useEffect(() => {
+    if (!disponivel) return;
+    const id = Number(parametros.get("documento"));
+    if (
+      Number.isInteger(id) &&
+      linhas.some((linha) => linha.documento.id === id)
+    )
+      setSelecionado(id);
+  }, [disponivel, linhas, parametros]);
+
+  useEffect(() => {
     if (selecionado === null || !disponivel) return;
     detalhe.current?.scrollIntoView({ block: "start" });
     detalhe.current
@@ -105,20 +130,17 @@ export default function Calculos() {
     setBusca("");
     setUsina("");
     setCompetencia("");
-    setSituacao("");
+    setSituacao(modo === "aprovar" ? "calculada" : "");
     setPagina(1);
   }
 
   return (
     <>
-      <CabecalhoDoModulo
-        titulo="Cálculos"
-        descricao="Da energia injetada ao valor Ecosol: confira cada parcela e acompanhe os resultados."
-      >
-        <div className="admin-acoes">
-          <Link className="admin-botao secundario" to="/admin/faturas">
-            Ir para Faturas
-          </Link>
+      {!incorporado && (
+        <CabecalhoDoModulo
+          titulo="Faturas — Calcular"
+          descricao="Etapa 3 do fluxo de Faturas: confira cada parcela e acompanhe os resultados."
+        >
           <button
             className="admin-botao"
             disabled={ocupado || carregando}
@@ -126,16 +148,26 @@ export default function Calculos() {
           >
             Atualizar
           </button>
-        </div>
-      </CabecalhoDoModulo>
+        </CabecalhoDoModulo>
+      )}
       <div className="calculos-contexto">
         <span aria-hidden="true">☀</span>
         <p>
-          <strong>Recebimento → Conferência → Cálculo → Aprovação</strong>
+          <strong>
+            {modo === "aprovar" ? "Etapa 4 — Aprovar" : "Etapa 3 — Calcular"}
+          </strong>
           <br />
-          Os valores salvos ficam reunidos aqui. Prévias só entram no total
-          depois da sua confirmação.
+          {modo === "aprovar"
+            ? "Revise a memória já salva e confirme somente os cálculos prontos para emissão futura."
+            : "Gere a prévia e salve o cálculo conferido. Prévias não entram no total antes da confirmação."}
         </p>
+        <button
+          className="admin-botao secundario"
+          disabled={ocupado || carregando}
+          onClick={atualizar}
+        >
+          Atualizar
+        </button>
       </div>
       {mensagem && (
         <p className="admin-aviso sucesso" role="status">
@@ -386,6 +418,7 @@ export default function Calculos() {
                   consulta.atualizar();
                   unidades.atualizar();
                 }}
+                modo={modo}
               />
             </section>
           )}
@@ -401,12 +434,14 @@ function DetalheCalculo({
   aoOcupar,
   aoFechar,
   aoConcluir,
+  modo,
 }: {
   linha: LinhaCalculo;
   nivel: number;
   aoOcupar: (valor: boolean) => void;
   aoFechar: () => void;
   aoConcluir: (mensagem: string) => void;
+  modo: "calcular" | "aprovar";
 }) {
   const [previa, setPrevia] = useState<PreviaCalculo | null>(null);
   const [conferido, setConferido] = useState(false);
@@ -424,10 +459,13 @@ function DetalheCalculo({
   const d = linha.documento;
   const memoria = previa?.memoria ?? linha.memoria;
   const aprovada = linha.situacao === "aprovada";
-  const enderecoFatura = `/admin/faturas?documento=${d.id}`;
+  const enderecoFatura = `/admin/faturas?etapa=conferir&documento=${d.id}`;
 
   async function executar(acao: "previa" | "calcular" | "aprovar") {
     if (emCurso.current || aprovada) return;
+    if ((acao === "previa" || acao === "calcular") && modo !== "calcular")
+      return;
+    if (acao === "aprovar" && modo !== "aprovar") return;
     if (acao === "calcular" && (!previa || !conferido || nivel < 2)) return;
     if (
       acao === "aprovar" &&
@@ -570,7 +608,7 @@ function DetalheCalculo({
         {!ocupado && (
           <Link to={enderecoFatura}>Conferir dados em Faturas ↗</Link>
         )}
-        {!aprovada && linha.pendencias.length === 0 && (
+        {modo === "calcular" && !aprovada && linha.pendencias.length === 0 && (
           <button
             className="admin-botao"
             disabled={ocupado}
@@ -606,8 +644,10 @@ function DetalheCalculo({
         )
       )}
       {!aprovada &&
-        nivel >= 2 &&
-        (previa || (linha.situacao === "calculada" && nivel >= 3)) && (
+        ((modo === "calcular" && nivel >= 2 && previa) ||
+          (modo === "aprovar" &&
+            nivel >= 3 &&
+            linha.situacao === "calculada")) && (
           <div className="calculos-confirmacao">
             <label>
               <input
@@ -621,7 +661,7 @@ function DetalheCalculo({
               </span>
             </label>
             <div className="admin-acoes">
-              {previa ? (
+              {modo === "calcular" ? (
                 <button
                   className="admin-botao"
                   disabled={ocupado || !conferido}
@@ -647,10 +687,24 @@ function DetalheCalculo({
           de boleto.
         </p>
       )}
-      {nivel < 2 && (
+      {modo === "calcular" && linha.situacao === "calculada" && (
+        <p className="calculos-orientacao">
+          Cálculo salvo. Continue na{" "}
+          <Link to={`/admin/faturas?etapa=aprovar&documento=${d.id}`}>
+            etapa 4 — Aprovar
+          </Link>
+          .
+        </p>
+      )}
+      {modo === "calcular" && nivel < 2 && (
         <p className="calculos-orientacao">
           Seu perfil permite consultar resultados e gerar prévias. O salvamento
           depende da equipe autorizada.
+        </p>
+      )}
+      {modo === "aprovar" && nivel < 3 && (
+        <p className="calculos-orientacao">
+          A aprovação exige o perfil avançado da equipe.
         </p>
       )}
     </>

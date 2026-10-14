@@ -870,6 +870,25 @@ try {
         10,
       ).lastInsertRowid,
   );
+  const ucRenumerada = Number(
+    banco
+      .prepare(
+        "INSERT INTO faturamento_unidades(uc,nome,documento,email,dia_vencimento,usina_id) VALUES(?,?,?,?,?,?)",
+      )
+      .run(
+        "800008888",
+        "Cliente renumerado",
+        "11222333000181",
+        "renumerado@example.test",
+        10,
+        usina.id,
+      ).lastInsertRowid,
+  );
+  banco
+    .prepare(
+      "INSERT INTO faturamento_unidades_aliases(unidade_id,uc,origem) VALUES(?,?,?)",
+    )
+    .run(ucRenumerada, "88887", "Histórico do teste");
   banco
     .prepare(
       "INSERT INTO faturamento_documentos(hash,nome,pdf,lote,texto,extracao,dados,memoria,unidade_id,competencia,status) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
@@ -946,6 +965,13 @@ try {
     "São Francisco",
     "nao-importar",
   ]);
+  consulta.addRow([
+    "88887",
+    "900008888",
+    "Cliente renumerado",
+    "Usina A",
+    "nao-importar",
+  ]);
   const bufferVinculos = Buffer.from(await vinculos.xlsx.writeBuffer());
   await ok(
     "/usinas/vinculos/analisar?nome=ucs.xlsx",
@@ -962,7 +988,7 @@ try {
     3,
   );
   assert.equal(analiseVinculos.aba, "Consulta");
-  assert.equal(analiseVinculos.linhas, 8);
+  assert.equal(analiseVinculos.linhas, 9);
   assert.equal(JSON.stringify(analiseVinculos).includes("nao-importar"), false);
   assert.equal(
     banco
@@ -995,6 +1021,7 @@ try {
   assert.equal(previaVinculos.resumo.conferencia, 1);
   assert.equal(previaVinculos.resumo.pendentes, 1);
   assert.equal(previaVinculos.resumo.atualizar_uc_antiga, 1);
+  assert.equal(previaVinculos.resumo.renumerar_uc, 1);
   const confirmadaVinculos = await ok(
     `/usinas/vinculos/${analiseVinculos.id}/confirmar`,
     "POST",
@@ -1002,7 +1029,7 @@ try {
     200,
     3,
   );
-  assert.equal(confirmadaVinculos.quantidade, 6);
+  assert.equal(confirmadaVinculos.quantidade, 7);
   assert.equal(confirmadaVinculos.usinas_criadas, 3);
   assert.equal(
     banco
@@ -1035,6 +1062,21 @@ try {
       .prepare("SELECT uc_antiga FROM faturamento_unidades WHERE uc=?")
       .get("999999999999").uc_antiga,
     null,
+  );
+  assert.equal(
+    banco
+      .prepare("SELECT uc FROM faturamento_unidades WHERE id=?")
+      .get(ucRenumerada).uc,
+    "900008888",
+  );
+  assert.deepEqual(
+    banco
+      .prepare(
+        "SELECT uc FROM faturamento_unidades_aliases WHERE unidade_id=? ORDER BY uc",
+      )
+      .all(ucRenumerada)
+      .map((item) => item.uc),
+    ["800008888", "88887"],
   );
   assert.equal(
     banco

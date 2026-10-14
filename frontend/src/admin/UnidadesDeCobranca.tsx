@@ -24,6 +24,7 @@ export type Unidade = {
   id: number;
   uc: string;
   uc_antiga?: string | null;
+  ucs_antigas?: string[];
   nome: string;
   documento: string;
   email: string;
@@ -481,8 +482,8 @@ export default function UnidadesDeCobranca({
                     </small>
                     {u.cliente_operacional_id && (
                       <small className="faturamento-pendente-ajuda">
-                        Documentação pendente · {u.pendencia_cadastro}. Sem acesso
-                        ao portal nem liberação de cobrança.
+                        Documentação pendente · {u.pendencia_cadastro}. Sem
+                        acesso ao portal nem liberação de cobrança.
                       </small>
                     )}
                     <small>

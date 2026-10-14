@@ -11,6 +11,8 @@ const provisoria = {
 const definitiva = {
   id: 13,
   uc: "11785001211",
+  uc_antiga: "22334455",
+  ucs_antigas: ["22334455", "11223344"],
   cliente_id: 7,
   cliente_provisorio_id: null,
   cliente_nome: "Cliente definitivo",
@@ -30,6 +32,14 @@ assert.equal(
 assert.equal(
   unidadeDaFatura({ uc: "" }, "2.903.188.012-00", "fatura.pdf", unidades),
   provisoria,
+);
+assert.equal(
+  unidadeDaFatura({ uc: "11.223.344" }, "", "fatura.pdf", unidades),
+  definitiva,
+);
+assert.equal(
+  unidadeDaFatura({ uc: "" }, "22.334.455", "fatura.pdf", unidades),
+  definitiva,
 );
 assert.equal(
   unidadeDaFatura(

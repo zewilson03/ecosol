@@ -143,6 +143,12 @@ function listarUnidades() {
         });
       return {
         ...u,
+        ucs_antigas: banco
+          .prepare(
+            "SELECT uc FROM faturamento_unidades_aliases WHERE unidade_id=? ORDER BY id DESC",
+          )
+          .all(u.id)
+          .map((item) => item.uc),
         vinculos_usina: vinculos.map((v) => ({
           ...v,
           modalidades:
@@ -277,15 +283,16 @@ router.post("/cadastro-integrado", exigirNivel(2), (req, res) => {
             novoCliente.cpf,
             novoCliente.email,
             novoCliente.phone,
-          )
-          .lastInsertRowid,
+          ).lastInsertRowid,
       );
     }
     const unidadeExistente = banco
       .prepare(
-        "SELECT id,cliente_id,cliente_provisorio_id,cliente_operacional_id,usina_id FROM faturamento_unidades WHERE uc=?",
+        `SELECT id,cliente_id,cliente_provisorio_id,cliente_operacional_id,usina_id
+         FROM faturamento_unidades
+         WHERE uc=? OR id=(SELECT unidade_id FROM faturamento_unidades_aliases WHERE uc=?)`,
       )
-      .get(uc);
+      .get(uc, uc);
     if (unidadeExistente) {
       if (unidadeExistente.cliente_provisorio_id !== null)
         falhar(
@@ -787,9 +794,8 @@ router.patch("/unidades/:id", exigirNivel(2), (req, res) => {
     const telefoneCliente =
       clienteId === null
         ? ""
-        : banco
-            .prepare("SELECT phone FROM customers WHERE id=?")
-            .get(clienteId)?.phone;
+        : banco.prepare("SELECT phone FROM customers WHERE id=?").get(clienteId)
+            ?.phone;
     const u = validarUnidade(req.body, {
       emailOpcional: Boolean(telefoneCliente),
     });
@@ -1161,9 +1167,13 @@ function montarCalculo(d, dados = d.dados) {
     semInjecao = decimal(dados.injecao, "a injeção SCEE") === "0";
   const unidade = banco
     .prepare(
-      "SELECT u.*, s.nome AS usina_nome, c.name AS cliente_nome FROM faturamento_unidades u LEFT JOIN usinas s ON s.id=u.usina_id LEFT JOIN customers c ON c.id=u.cliente_id WHERE u.uc=?",
+      `SELECT u.*, s.nome AS usina_nome, c.name AS cliente_nome
+       FROM faturamento_unidades u
+       LEFT JOIN usinas s ON s.id=u.usina_id
+       LEFT JOIN customers c ON c.id=u.cliente_id
+       WHERE u.uc=? OR u.id=(SELECT unidade_id FROM faturamento_unidades_aliases WHERE uc=?)`,
     )
-    .get(uc);
+    .get(uc, uc);
   if (!unidade)
     falhar("Cadastre esta unidade em Clientes → Unidades e contratos.");
   if (unidade.cliente_provisorio_id !== null)
@@ -1200,7 +1210,19 @@ function montarCalculo(d, dados = d.dados) {
     const ucLida = String(d.extracao?.dados?.uc ?? "")
       .replace(/\D/g, "")
       .replace(/^0+(?=\d)/, "");
-    if (ucLida && ucLida !== uc && dados.uc_divergente_confirmada !== "sim")
+    const unidadeDaLeitura = ucLida
+      ? banco
+          .prepare(
+            `SELECT id FROM faturamento_unidades
+             WHERE uc=? OR id=(SELECT unidade_id FROM faturamento_unidades_aliases WHERE uc=?)`,
+          )
+          .get(ucLida, ucLida)
+      : null;
+    if (
+      ucLida &&
+      unidadeDaLeitura?.id !== unidade.id &&
+      dados.uc_divergente_confirmada !== "sim"
+    )
       falhar(
         "A UC selecionada difere da leitura do PDF. Confirme essa divergência na conferência.",
       );
