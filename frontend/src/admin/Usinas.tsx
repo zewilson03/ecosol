@@ -22,6 +22,12 @@ type Usina = {
   modalidade_atual: "GDI" | "GDII" | null;
   modalidade_inicio: string | null;
   modalidades: { inicio: string; modalidade: "GDI" | "GDII" }[];
+  identificadores_geracao?: {
+    numero: string;
+    tipo: "atual" | "historico";
+    origem: string;
+    quantidade_usinas: number;
+  }[];
 };
 type UnidadeDaUsina = {
   id: number;
@@ -188,6 +194,21 @@ export default function Usinas() {
                     <p className="admin-aviso">Vínculo de usina pendente</p>
                   )}
                   <p>{usina.localizacao}</p>
+                  {usina.identificadores_geracao?.length ? (
+                    <div className="admin-usina-identificadores">
+                      <small>Identificadores da geração</small>
+                      {usina.identificadores_geracao.map((item) => (
+                        <span key={item.numero}>
+                          UC {item.numero} · {item.tipo === "atual" ? "atual" : "histórica"}
+                          {item.quantidade_usinas > 1
+                            ? " · conferir: também consta em outra usina"
+                            : ""}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <small>Identificador da geração pendente</small>
+                  )}
                   <strong>{usina.potencia_kw} kW</strong>
                   <small>{usina.status}</small>
                   <Link to={`/admin/usinas/${usina.id}`}>

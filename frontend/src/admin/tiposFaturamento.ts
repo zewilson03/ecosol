@@ -6,6 +6,7 @@ export type Memoria = {
     injecao: string;
     unitario: string;
     bandeira: string;
+    tarifa_total?: string;
     desconto: string;
     total_equatorial: string;
     ajuste_gdii: string;
@@ -24,7 +25,7 @@ export type Memoria = {
   competencia: string;
   vencimento_equatorial: string;
   vencimento_ecosol: string;
-  fonte: { tipo: string; documento_id: number };
+  fonte: { tipo: string; documento_id: number; tarifa?: "manual" };
 };
 export type PreviaCalculo = { memoria: Memoria; hash: string; versao: number };
 export type Documento = {
@@ -48,6 +49,12 @@ export type Documento = {
     };
   };
   memoria: Memoria | null;
+  usina_geradora?: {
+    numero: string | null;
+    situacao: "ausente" | "identificada" | "ambigua" | "sem_correspondencia";
+    usina: { id: number; nome: string } | null;
+    candidatas: { id: number; nome: string }[];
+  };
   texto?: string;
   historico?: { acao: string; responsavel: string; criado_em: string }[];
 };

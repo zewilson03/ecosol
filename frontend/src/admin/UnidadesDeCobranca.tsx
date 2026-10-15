@@ -408,7 +408,7 @@ export default function UnidadesDeCobranca({
             </div>
           </div>
         )}
-        <div className="admin-tabela">
+        <div className="admin-tabela admin-tabela-unidades">
           <table>
             <thead>
               <tr>
@@ -578,171 +578,198 @@ export default function UnidadesDeCobranca({
         )}
       </section>
       {edicao && (
-        <form
-          className="admin-formulario"
-          key={atual?.id ?? "nova"}
-          onSubmit={(e) => salvar(e)}
+        <div
+          className="admin-editor-sobreposicao"
+          role="dialog"
+          aria-modal="true"
+          aria-label={atual ? "Editar cadastro da UC" : "Cadastrar UC"}
+          onMouseDown={(evento) => {
+            if (evento.target === evento.currentTarget && !ocupado)
+              setEdicao(null);
+          }}
         >
-          <h3>{atual ? "Editar unidade" : "Nova unidade consumidora"}</h3>
-          <fieldset
-            className="admin-campos"
-            disabled={ocupado || !clientes.dados}
+          <form
+            className="admin-formulario admin-editor-flutuante"
+            key={atual?.id ?? "nova"}
+            onSubmit={(e) => salvar(e)}
           >
-            <label>
-              Cliente cadastrado vinculado
-              <select
-                key={`${atual?.id ?? "nova"}-${clientes.dados?.length ?? "loading"}`}
-                name="cliente_id"
-                defaultValue={atual?.cliente_id ?? clienteInicialId ?? ""}
-                onChange={(evento) => setClienteEscolhido(evento.target.value)}
-              >
-                <option value="">Sem vínculo — selecionar depois</option>
-                {clientes.dados?.map((cliente) => (
-                  <option value={cliente.id} key={cliente.id}>
-                    {cliente.name} (#{cliente.id})
-                  </option>
-                ))}
-              </select>
-              <small>
-                Confirme a identidade do cliente antes de vincular esta UC.
-              </small>
-            </label>
-            <label>
-              Usina de alocação
-              <select
-                name="usina_id"
-                defaultValue={atual?.usina_id ?? usinaFiltroId ?? ""}
-              >
-                <option value="">Alocação a definir</option>
-                {usinas.dados
-                  ?.filter(
-                    (u) => usinaFiltroId === null || u.id === usinaFiltroId,
-                  )
-                  .map((u) => (
-                    <option value={u.id} key={u.id}>
-                      {u.nome} · {u.modalidade_atual ?? "modalidade pendente"}
+            <h3>{atual ? "Editar unidade" : "Nova unidade consumidora"}</h3>
+            <fieldset
+              className="admin-campos"
+              disabled={ocupado || !clientes.dados}
+            >
+              <label>
+                Cliente cadastrado vinculado
+                <select
+                  key={`${atual?.id ?? "nova"}-${clientes.dados?.length ?? "loading"}`}
+                  name="cliente_id"
+                  defaultValue={atual?.cliente_id ?? clienteInicialId ?? ""}
+                  onChange={(evento) =>
+                    setClienteEscolhido(evento.target.value)
+                  }
+                >
+                  <option value="">Sem vínculo — selecionar depois</option>
+                  {clientes.dados?.map((cliente) => (
+                    <option value={cliente.id} key={cliente.id}>
+                      {cliente.name} (#{cliente.id})
                     </option>
                   ))}
-              </select>
-            </label>
-            <label>
-              Nome / razão social
-              <input
-                name="nome"
-                defaultValue={atual?.nome}
-                maxLength={160}
-                required
-              />
-            </label>
-            <label>
-              CPF ou CNPJ
-              <input
-                name="documento"
-                defaultValue={atual?.documento}
-                maxLength={18}
-                required
-              />
-            </label>
-            <label>
-              Unidade consumidora
-              <input
-                name="uc"
-                defaultValue={atual?.uc}
-                readOnly={!!atual}
-                maxLength={30}
-                required
-              />
-            </label>
-            <label>
-              E-mail de cobrança (opcional se o cliente tem telefone)
-              <input
-                name="email"
-                type="email"
-                defaultValue={atual?.email}
-                maxLength={180}
-                required={!clienteTemTelefone}
-              />
-            </label>
-            <label>
-              Dia preferido de vencimento
-              <input
-                name="dia_vencimento"
-                type="number"
-                min={1}
-                max={31}
-                defaultValue={atual?.dia_vencimento}
-                required
-              />
-            </label>
-            {!atual && (
-              <>
-                <label>
-                  Desconto inicial da UC (%)
-                  <input
-                    name="desconto"
-                    inputMode="decimal"
-                    placeholder="Ex.: 25 ou 0"
-                    required
-                  />
-                </label>
-                <label>
-                  Desconto válido desde a competência
-                  <input name="desconto_inicio" type="month" required />
-                </label>
-              </>
-            )}
-          </fieldset>
-          <div className="admin-acoes">
-            <button className="admin-botao" disabled={ocupado}>
-              {ocupado ? "Salvando…" : "Salvar cadastro"}
-            </button>
-            <button
-              type="button"
-              className="admin-botao secundario"
-              disabled={ocupado}
-              onClick={() => setEdicao(null)}
-            >
-              Cancelar
-            </button>
-          </div>
-        </form>
+                </select>
+                <small>
+                  Confirme a identidade do cliente antes de vincular esta UC.
+                </small>
+              </label>
+              <label>
+                Usina de alocação
+                <select
+                  name="usina_id"
+                  defaultValue={atual?.usina_id ?? usinaFiltroId ?? ""}
+                >
+                  <option value="">Alocação a definir</option>
+                  {usinas.dados
+                    ?.filter(
+                      (u) => usinaFiltroId === null || u.id === usinaFiltroId,
+                    )
+                    .map((u) => (
+                      <option value={u.id} key={u.id}>
+                        {u.nome} · {u.modalidade_atual ?? "modalidade pendente"}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <label>
+                Nome / razão social
+                <input
+                  name="nome"
+                  defaultValue={atual?.nome}
+                  maxLength={160}
+                  required
+                />
+              </label>
+              <label>
+                CPF ou CNPJ
+                <input
+                  name="documento"
+                  defaultValue={atual?.documento}
+                  maxLength={18}
+                  required
+                />
+              </label>
+              <label>
+                Unidade consumidora
+                <input
+                  name="uc"
+                  defaultValue={atual?.uc}
+                  readOnly={!!atual}
+                  maxLength={30}
+                  required
+                />
+              </label>
+              <label>
+                E-mail de cobrança (opcional se o cliente tem telefone)
+                <input
+                  name="email"
+                  type="email"
+                  defaultValue={atual?.email}
+                  maxLength={180}
+                  required={!clienteTemTelefone}
+                />
+              </label>
+              <label>
+                Dia preferido de vencimento
+                <input
+                  name="dia_vencimento"
+                  type="number"
+                  min={1}
+                  max={31}
+                  defaultValue={atual?.dia_vencimento}
+                  required
+                />
+              </label>
+              {!atual && (
+                <>
+                  <label>
+                    Desconto inicial da UC (%)
+                    <input
+                      name="desconto"
+                      inputMode="decimal"
+                      placeholder="Ex.: 25 ou 0"
+                      required
+                    />
+                  </label>
+                  <label>
+                    Desconto válido desde a competência
+                    <input name="desconto_inicio" type="month" required />
+                  </label>
+                </>
+              )}
+            </fieldset>
+            <div className="admin-acoes">
+              <button className="admin-botao" disabled={ocupado}>
+                {ocupado ? "Salvando…" : "Salvar cadastro"}
+              </button>
+              <button
+                type="button"
+                className="admin-botao secundario"
+                disabled={ocupado}
+                onClick={() => setEdicao(null)}
+              >
+                Cancelar
+              </button>
+            </div>
+          </form>
+        </div>
       )}
       {descontoPara && (
-        <form className="admin-formulario" onSubmit={salvarDesconto}>
-          <h3>Alterar desconto — UC {descontoPara.uc}</h3>
-          <p>
-            Informe a competência a partir da qual a nova taxa vale. As taxas
-            anteriores permanecem no histórico; cobranças aprovadas não mudam.
-          </p>
-          <fieldset className="admin-campos" disabled={ocupado}>
-            <label>
-              Novo desconto (%)
-              <input
-                name="desconto"
-                inputMode="decimal"
-                placeholder="Ex.: 20 ou 0"
-                required
-              />
-            </label>
-            <label>
-              Vigente a partir da competência
-              <input name="inicio" type="month" required />
-            </label>
-          </fieldset>
-          <div className="admin-acoes">
-            <button className="admin-botao" disabled={ocupado}>
-              Salvar nova vigência
-            </button>
-            <button
-              type="button"
-              className="admin-botao secundario"
-              disabled={ocupado}
-              onClick={() => setDescontoPara(null)}
-            >
-              Cancelar
-            </button>
-          </div>
-        </form>
+        <div
+          className="admin-editor-sobreposicao"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Alterar desconto da UC ${descontoPara.uc}`}
+          onMouseDown={(evento) => {
+            if (evento.target === evento.currentTarget && !ocupado)
+              setDescontoPara(null);
+          }}
+        >
+          <form
+            className="admin-formulario admin-editor-flutuante"
+            onSubmit={salvarDesconto}
+          >
+            <h3>Alterar desconto — UC {descontoPara.uc}</h3>
+            <p>
+              Informe a competência a partir da qual a nova taxa vale. As taxas
+              anteriores permanecem no histórico; cobranças aprovadas não mudam.
+            </p>
+            <fieldset className="admin-campos" disabled={ocupado}>
+              <label>
+                Novo desconto (%)
+                <input
+                  name="desconto"
+                  inputMode="decimal"
+                  placeholder="Ex.: 20 ou 0"
+                  required
+                />
+              </label>
+              <label>
+                Vigente a partir da competência
+                <input name="inicio" type="month" required />
+              </label>
+            </fieldset>
+            <div className="admin-acoes">
+              <button className="admin-botao" disabled={ocupado}>
+                Salvar nova vigência
+              </button>
+              <button
+                type="button"
+                className="admin-botao secundario"
+                disabled={ocupado}
+                onClick={() => setDescontoPara(null)}
+              >
+                Cancelar
+              </button>
+            </div>
+          </form>
+        </div>
       )}
     </>
   );

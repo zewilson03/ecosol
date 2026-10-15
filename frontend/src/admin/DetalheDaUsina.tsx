@@ -8,6 +8,11 @@ type Usina = {
   nome: string;
   localizacao: string;
   modalidade_atual: "GDI" | "GDII" | null;
+  identificadores_geracao?: {
+    numero: string;
+    tipo: "atual" | "historico";
+    quantidade_usinas: number;
+  }[];
 };
 
 export default function DetalheDaUsina() {
@@ -42,6 +47,16 @@ export default function DetalheDaUsina() {
                 ? "Ecosol é um vínculo provisório. Identifique e transfira cada UC para uma usina real."
                 : `${usina.localizacao} · ${usina.modalidade_atual ?? "Modalidade pendente"}`}
             </p>
+            {(usina.identificadores_geracao?.length ?? 0) > 0 && (
+              <p>
+                Identificadores da geração: {(usina.identificadores_geracao ?? [])
+                  .map(
+                    (item) =>
+                      `${item.numero} (${item.tipo === "atual" ? "atual" : "histórico"}${item.quantidade_usinas > 1 ? ", conflitante" : ""})`,
+                  )
+                  .join(", ")}
+              </p>
+            )}
           </section>
           <UnidadesDeCobranca
             usinaFiltroId={usina.id}

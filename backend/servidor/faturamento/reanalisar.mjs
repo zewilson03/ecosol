@@ -6,6 +6,7 @@ function elegivel(documento) {
   return (
     documento &&
     documento.classificacao === "fatura" &&
+    documento.finalidade === "cobranca" &&
     documento.excluido_em === null &&
     documento.status === "Pendente de revisão" &&
     documento.memoria === null &&
@@ -28,7 +29,12 @@ export async function reanalisarFatura({
   const anterior = banco
     .prepare("SELECT * FROM faturamento_documentos WHERE id=?")
     .get(documentoId);
-  if (!anterior || anterior.classificacao !== "fatura" || anterior.excluido_em)
+  if (
+    !anterior ||
+    anterior.classificacao !== "fatura" ||
+    anterior.finalidade !== "cobranca" ||
+    anterior.excluido_em
+  )
     falhar("Fatura não encontrada.", 404);
   if (!elegivel(anterior))
     falhar(
@@ -50,7 +56,7 @@ export async function reanalisarFatura({
     const atual = banco
       .prepare(
         `SELECT id,versao,status,classificacao,excluido_em,memoria,
-                unidade_id,competencia,hash,texto,extracao,dados
+                unidade_id,competencia,hash,texto,extracao,dados,finalidade
          FROM faturamento_documentos WHERE id=?`,
       )
       .get(documentoId);

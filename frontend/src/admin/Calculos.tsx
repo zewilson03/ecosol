@@ -40,7 +40,7 @@ const porPagina = 15;
 function Situacao({ linha }: { linha: LinhaCalculo }) {
   return (
     <span
-      className={`admin-status ${linha.situacao === "pendente" ? "incompleta" : "aguardando"}`}
+      className={`admin-status ${["pendente", "aprovada_bloqueada"].includes(linha.situacao) ? "incompleta" : "aguardando"}`}
     >
       {situacoesCalculo[linha.situacao]}
     </span>
@@ -458,7 +458,9 @@ function DetalheCalculo({
   }, []);
   const d = linha.documento;
   const memoria = previa?.memoria ?? linha.memoria;
-  const aprovada = linha.situacao === "aprovada";
+  const aprovada = ["aprovada", "aprovada_bloqueada"].includes(
+    linha.situacao,
+  );
   const enderecoFatura = `/admin/faturas?etapa=conferir&documento=${d.id}`;
 
   async function executar(acao: "previa" | "calcular" | "aprovar") {
@@ -682,10 +684,17 @@ function DetalheCalculo({
           </div>
         )}
       {aprovada && (
-        <p className="admin-aviso">
-          Cálculo aprovado e preservado no histórico. Aguarda a etapa de emissão
-          de boleto.
-        </p>
+        linha.pendenciasEmissao.length ? (
+          <p className="admin-aviso erro" role="alert">
+            Emissão bloqueada: complete {linha.pendenciasEmissao.join(", ")}
+            antes de emitir o boleto.
+          </p>
+        ) : (
+          <p className="admin-aviso">
+            Cálculo aprovado e preservado no histórico. Aguarda a etapa de emissão
+            de boleto.
+          </p>
+        )
       )}
       {modo === "calcular" && linha.situacao === "calculada" && (
         <p className="calculos-orientacao">

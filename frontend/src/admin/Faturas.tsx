@@ -3,11 +3,12 @@ import { CabecalhoDoModulo } from "./ComponentesDoPainel";
 import Calculos from "./Calculos";
 import { Link, useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
+import Pagamentos from "./Pagamentos";
 
 export default function Faturas() {
   const [parametros] = useSearchParams();
   const solicitada = parametros.get("etapa");
-  const etapa = ["receber", "conferir", "calcular", "aprovar"].includes(
+  const etapa = ["receber", "conferir", "calcular", "aprovar", "pagamentos"].includes(
     solicitada ?? "",
   )
     ? solicitada!
@@ -34,6 +35,7 @@ export default function Faturas() {
     { id: "conferir", nome: "Conferir dados" },
     { id: "calcular", nome: "Calcular" },
     { id: "aprovar", nome: "Aprovar" },
+    { id: "pagamentos", nome: "Pagamentos" },
   ];
 
   return (
@@ -57,7 +59,9 @@ export default function Faturas() {
           ))}
         </ol>
       </nav>
-      {etapa === "calcular" || etapa === "aprovar" ? (
+      {etapa === "pagamentos" ? (
+        <Pagamentos />
+      ) : etapa === "calcular" || etapa === "aprovar" ? (
         <Calculos incorporado modo={etapa} />
       ) : (
         <PreparacaoFaturas />

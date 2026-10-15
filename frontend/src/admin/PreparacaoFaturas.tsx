@@ -5,6 +5,7 @@ import { unidadeDaFatura } from "./vinculoAutomaticoFatura";
 import {
   modalidadeDaUcNaCompetencia,
   pendenciasParaCalculo,
+  pendenciasParaEmissao,
   situacaoParaEmissao,
 } from "./prontidaoFatura";
 import { consultarServidor, usarConsulta } from "./comunicacaoComServidor";
@@ -59,8 +60,23 @@ const campoDaPendencia: Record<string, string> = {
   "GDI de referência aprovada do mesmo lote": "faturamento-referencia_id",
   "unitário com tributos": "faturamento-unitario",
   "bandeira (informe zero se não houver)": "faturamento-bandeira",
+  "tarifa final manual": "faturamento-tarifa_total",
   "desconto vigente da UC": "faturamento-desconto",
 };
+
+function somarTarifa(unitario: string, bandeira: string) {
+  const converter = (valor: string) => {
+    const texto = valor.trim().replace(",", ".");
+    return /^\d+(?:\.\d{1,9})?$/.test(texto) ? Number(texto) : null;
+  };
+  const primeiro = converter(unitario);
+  const segundo = converter(bandeira);
+  if (primeiro === null || segundo === null) return "";
+  return (primeiro + segundo)
+    .toFixed(9)
+    .replace(/0+$/, "")
+    .replace(/\.$/, "");
+}
 
 export default function PreparacaoFaturas() {
   const navegar = useNavigate();
@@ -492,7 +508,33 @@ export default function PreparacaoFaturas() {
     }
   }
   function mudar(chave: string, valor: string) {
-    setDados((anterior) => ({ ...anterior, [chave]: valor }));
+    setDados((anterior) => {
+      const proximo = { ...anterior, [chave]: valor };
+      if (
+        ["unitario", "bandeira"].includes(chave) &&
+        anterior.tarifa_manual !== "sim"
+      ) {
+        proximo.origem_tarifa = anterior.origem_tarifa || "propria";
+        proximo.tarifa_total = somarTarifa(
+          chave === "unitario" ? valor : anterior.unitario ?? "",
+          chave === "bandeira" ? valor : anterior.bandeira ?? "",
+        );
+      }
+      if (chave === "tarifa_total") {
+        proximo.tarifa_manual = "sim";
+        proximo.origem_tarifa = anterior.origem_tarifa || "propria";
+      }
+      return proximo;
+    });
+    setAlterado(true);
+  }
+  function usarSomaDosComponentes() {
+    setDados((anterior) => ({
+      ...anterior,
+      tarifa_manual: "",
+      origem_tarifa: anterior.origem_tarifa || "propria",
+      tarifa_total: somarTarifa(anterior.unitario ?? "", anterior.bandeira ?? ""),
+    }));
     setAlterado(true);
   }
   function digitarCliente(valor: string) {
@@ -701,6 +743,11 @@ export default function PreparacaoFaturas() {
         dados,
       )
     : [];
+  const pendenciasEmissao =
+    selecionado && selecionado.status === aprovada
+      ? pendenciasParaEmissao(selecionado, unidades.dados ?? [], dados, unidade ?? undefined)
+      : [];
+  const emissaoBloqueada = pendenciasEmissao.length > 0;
   const lista = (recebimentos.dados ?? []).filter(
     (r) =>
       (!filtro || r.resultado === filtro) &&
@@ -1037,10 +1084,12 @@ export default function PreparacaoFaturas() {
                 </div>
                 <div className="faturamento-revisao-opcoes">
                   <span
-                    className={`admin-status ${selecionado.status === aprovada || selecionado.status === "Calculada" || !faltantes.length ? "aguardando" : "incompleta"}`}
+                    className={`admin-status ${emissaoBloqueada || (!(selecionado.status === aprovada || selecionado.status === "Calculada") && faltantes.length) ? "incompleta" : "aguardando"}`}
                   >
                     {selecionado.status === aprovada
-                      ? "Aguardando emissão"
+                      ? emissaoBloqueada
+                        ? "Emissão bloqueada"
+                        : "Aguardando emissão"
                       : selecionado.status === "Calculada"
                         ? "Aguardando aprovação"
                         : faltantes.length
@@ -1086,7 +1135,9 @@ export default function PreparacaoFaturas() {
               >
                 <strong>
                   {selecionado.status === aprovada
-                    ? "Aprovada para emissão futura"
+                    ? emissaoBloqueada
+                      ? `Emissão bloqueada: ${pendenciasEmissao.join(", ")}`
+                      : "Aprovada para emissão futura"
                     : selecionado.status === "Calculada"
                       ? "Cálculo concluído; aguarda aprovação"
                       : faltantes.length
@@ -1358,6 +1409,16 @@ export default function PreparacaoFaturas() {
                       "Ex.: 302,40",
                     )}
                   </fieldset>
+                  {selecionado.usina_geradora?.numero && (
+                    <p className="faturamento-nota-conferencia">
+                      Geradora informada no SCEE: UC {selecionado.usina_geradora.numero}.{" "}
+                      {selecionado.usina_geradora.situacao === "identificada"
+                        ? `Usina identificada: ${selecionado.usina_geradora.usina?.nome}.`
+                        : selecionado.usina_geradora.situacao === "ambigua"
+                          ? `Conferir usina: o número aparece em ${selecionado.usina_geradora.candidatas.map((item) => item.nome).join(" e ")}.`
+                          : "O número ainda não corresponde a uma usina cadastrada."}
+                    </p>
+                  )}
                   {semInjecao && (
                     <p className="faturamento-nota-conferencia">
                       Injeção SCEE 0 kWh: confirme essa ausência e o total no
@@ -1462,6 +1523,40 @@ export default function PreparacaoFaturas() {
                             "bandeira",
                             "Bandeira (R$/kWh; 0 se confirmada ausência)",
                           )}
+                          <label className="faturamento-tarifa-total">
+                            Tarifa final (R$/kWh)
+                            <input
+                              id="faturamento-tarifa_total"
+                              type="text"
+                              inputMode="decimal"
+                              maxLength={80}
+                              value={
+                                dados.tarifa_total ??
+                                somarTarifa(
+                                  dados.unitario ?? "",
+                                  dados.bandeira ?? "",
+                                )
+                              }
+                              placeholder="Soma automática dos componentes"
+                              onChange={(e) =>
+                                mudar("tarifa_total", e.target.value)
+                              }
+                            />
+                            <small>
+                              {dados.tarifa_manual === "sim"
+                                ? "Valor final informado manualmente; os componentes não serão alterados."
+                                : "Soma automática: unitário com tributos + bandeira."}
+                            </small>
+                            {dados.tarifa_manual === "sim" && (
+                              <button
+                                type="button"
+                                className="faturamento-link"
+                                onClick={usarSomaDosComponentes}
+                              >
+                                Usar novamente a soma dos componentes
+                              </button>
+                            )}
+                          </label>
                         </>
                       ))}
                   </fieldset>

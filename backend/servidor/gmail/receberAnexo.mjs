@@ -66,8 +66,8 @@ export async function receberAnexoGmail({
         banco
           .prepare(
             `INSERT INTO faturamento_documentos
-             (hash,nome,pdf,lote,texto,extracao,dados,classificacao)
-             VALUES (?,?,?,?,?,?,?,'triagem')`,
+             (hash,nome,pdf,lote,texto,extracao,dados,classificacao,finalidade)
+             VALUES (?,?,?,?,?,?,?,'triagem',?)`,
           )
           .run(
             hash,
@@ -77,6 +77,7 @@ export async function receberAnexoGmail({
             extracao.texto,
             JSON.stringify(extracao),
             JSON.stringify({ ...extracao.dados, origem_tarifa: "propria" }),
+            extracao.finalidade?.finalidade ?? "cobranca",
           ).lastInsertRowid,
       );
       documento = { id, classificacao: "triagem" };
@@ -96,6 +97,7 @@ export async function receberAnexoGmail({
             contaId: atual.conta_id,
             messageId: atual.message_id,
             partPath: atual.part_path,
+            finalidade: extracao.finalidade?.finalidade ?? "cobranca",
           }),
         );
     }

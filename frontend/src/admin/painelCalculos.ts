@@ -3,6 +3,7 @@ import type { Unidade } from "./UnidadesDeCobranca";
 import { unidadeDaFatura } from "./vinculoAutomaticoFatura";
 import {
   modalidadeDaUcNaCompetencia,
+  pendenciasParaEmissao,
   pendenciasParaCalculo,
 } from "./prontidaoFatura";
 import { sugerirVencimentoEcosolSeDefinido } from "./vencimentoEcosol";
@@ -13,6 +14,7 @@ export const situacoesCalculo = {
   pronta: "Pronta para prévia",
   calculada: "Aguardando aprovação",
   aprovada: "Aguardando emissão",
+  aprovada_bloqueada: "Emissão bloqueada",
 } as const;
 export type SituacaoCalculo = keyof typeof situacoesCalculo;
 
@@ -87,9 +89,14 @@ export function prepararLinhaCalculo(
   const pendencias = memoria
     ? []
     : pendenciasParaCalculo(documento, unidades, documentos, dados);
+  const pendenciasEmissao = memoria
+    ? pendenciasParaEmissao(documento, unidades, dados, unidade ?? undefined)
+    : [];
   const situacao: SituacaoCalculo =
     memoria && documento.status === statusAprovada
-      ? "aprovada"
+      ? pendenciasEmissao.length
+        ? "aprovada_bloqueada"
+        : "aprovada"
       : memoria && documento.status === "Calculada"
         ? "calculada"
         : pendencias.length
@@ -112,6 +119,7 @@ export function prepararLinhaCalculo(
       dados.modalidade ||
       "—",
     pendencias,
+    pendenciasEmissao,
     situacao,
   };
 }
@@ -120,7 +128,10 @@ export type LinhaCalculo = ReturnType<typeof prepararLinhaCalculo>;
 export function resumirCalculos(linhas: LinhaCalculo[]) {
   const salvas = linhas.filter(
     (linha) =>
-      linha.memoria && ["calculada", "aprovada"].includes(linha.situacao),
+      linha.memoria &&
+      ["calculada", "aprovada", "aprovada_bloqueada"].includes(
+        linha.situacao,
+      ),
   );
   return {
     quantidade: linhas.length,
@@ -130,7 +141,9 @@ export function resumirCalculos(linhas: LinhaCalculo[]) {
     aguardandoAprovacao: linhas.filter(
       (linha) => linha.situacao === "calculada",
     ).length,
-    aprovadas: linhas.filter((linha) => linha.situacao === "aprovada").length,
+    aprovadas: linhas.filter((linha) =>
+      ["aprovada", "aprovada_bloqueada"].includes(linha.situacao),
+    ).length,
     // As parcelas já chegam do servidor em centavos inteiros.
     totalCentavos: salvas.reduce(
       (total, linha) => total + linha.memoria!.total_centavos,

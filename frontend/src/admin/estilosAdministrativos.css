@@ -887,6 +887,22 @@
 .admin-tabela tbody tr:hover {
   background: #fbfdff;
 }
+.admin-tabela-unidades th:last-child,
+.admin-tabela-unidades td:last-child {
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  min-width: 190px;
+  background: #fff;
+  box-shadow: -12px 0 22px rgba(12, 51, 78, 0.06);
+}
+.admin-tabela-unidades th:last-child {
+  z-index: 2;
+  background: #f3f8fb;
+}
+.admin-tabela-unidades tbody tr:hover td:last-child {
+  background: #fbfdff;
+}
 .admin-status {
   display: inline-block;
   padding: 7px 11px;
@@ -933,6 +949,25 @@
   border: 1px solid #e1e8ef;
   border-radius: 20px;
   margin-bottom: 24px;
+}
+.admin-editor-sobreposicao {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  overflow-y: auto;
+  background: rgba(5, 25, 42, 0.58);
+  backdrop-filter: blur(5px);
+}
+.admin-editor-flutuante {
+  width: min(920px, 100%);
+  max-height: calc(100vh - 48px);
+  margin: auto;
+  overflow-y: auto;
+  background: #fff;
+  box-shadow: 0 28px 90px rgba(3, 27, 47, 0.34);
 }
 .admin-formulario fieldset {
   border: 0;
@@ -1231,6 +1266,24 @@
   min-height: 20px;
   color: #718790;
   font-size: 12px;
+}
+.admin-usina-identificadores {
+  display: grid;
+  gap: 6px;
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid rgba(17, 126, 137, 0.18);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+}
+.admin-usina-identificadores small,
+.admin-usina-identificadores span {
+  margin: 0;
+}
+.admin-usina-identificadores span {
+  color: #214d60;
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 .admin-usina-modalidade {
   display: grid;
@@ -2541,6 +2594,29 @@
 .faturamento-grupo .faturamento-campo-pendente select {
   border-color: #d49a27;
   box-shadow: 0 0 0 2px rgba(229, 172, 36, 0.13);
+}
+.faturamento-tarifa-total {
+  grid-column: 1 / -1;
+  padding: 12px;
+  border: 1px solid #b9d9d3;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #effaf7, #f8fcff);
+}
+.faturamento-tarifa-total small {
+  color: #56727d;
+  font-weight: 500;
+  line-height: 1.35;
+}
+.faturamento-link {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #087e78;
+  font: inherit;
+  font-weight: 800;
+  text-decoration: underline;
+  cursor: pointer;
 }
 .faturamento-pendente-ajuda {
   display: block;

@@ -45,8 +45,6 @@ export function pendenciasParaCalculo(
   if (!unidade) pendencias.push("cliente e UC");
   else if (unidade.cliente_provisorio_id != null)
     pendencias.push("cadastro definitivo do cliente");
-  else if (unidade.cliente_operacional_id != null)
-    pendencias.push("documentação real do cliente");
   if (!preenchido(dados.competencia)) pendencias.push("competência");
   if (!preenchido(dados.injecao)) pendencias.push("energia injetada");
   if (unidade?.usina_id) {
@@ -86,9 +84,15 @@ export function pendenciasParaCalculo(
       )
         pendencias.push("GDI de referência aprovada do mesmo lote");
     } else if (dados.origem_tarifa === "propria") {
-      if (!preenchido(dados.unitario)) pendencias.push("unitário com tributos");
-      if (!preenchido(dados.bandeira))
-        pendencias.push("bandeira (informe zero se não houver)");
+      if (dados.tarifa_manual === "sim") {
+        if (!preenchido(dados.tarifa_total))
+          pendencias.push("tarifa final manual");
+      } else {
+        if (!preenchido(dados.unitario))
+          pendencias.push("unitário com tributos");
+        if (!preenchido(dados.bandeira))
+          pendencias.push("bandeira (informe zero se não houver)");
+      }
     }
     if (
       unidade &&
@@ -100,13 +104,39 @@ export function pendenciasParaCalculo(
   return pendencias;
 }
 
+export function pendenciasParaEmissao(
+  fatura: FaturaDaFila,
+  unidades: Unidade[],
+  dados = fatura.dados,
+  unidadeConhecida?: Unidade,
+): string[] {
+  const unidade = unidadeConhecida ?? unidades.find(
+    (item) =>
+      item.id === Number(dados.unidade_id) &&
+      item.uc === ucNormalizada(dados.uc) &&
+      (item.cliente_id === Number(dados.cliente_id) ||
+        ((item.cliente_provisorio_id != null ||
+          item.cliente_operacional_id != null) &&
+          !dados.cliente_id)),
+  );
+  if (unidade?.cliente_operacional_id != null)
+    return ["documentação real do cliente"];
+  if (unidade?.cliente_provisorio_id != null)
+    return ["cadastro definitivo do cliente"];
+  return [];
+}
+
 export function situacaoParaEmissao(
   fatura: FaturaDaFila,
   unidades: Unidade[],
   faturas: FaturaDaFila[],
 ) {
-  if (fatura.status === "Aprovada — aguardando emissão")
-    return { cor: "aguardando", texto: "Aguardando emissão", pendencias: [] };
+  if (fatura.status === "Aprovada — aguardando emissão") {
+    const pendencias = pendenciasParaEmissao(fatura, unidades);
+    return pendencias.length
+      ? { cor: "incompleta", texto: "Emissão bloqueada", pendencias }
+      : { cor: "aguardando", texto: "Aguardando emissão", pendencias: [] };
+  }
   if (fatura.status === "Calculada")
     return { cor: "aguardando", texto: "Aguardando aprovação", pendencias: [] };
   const pendencias = pendenciasParaCalculo(fatura, unidades, faturas);

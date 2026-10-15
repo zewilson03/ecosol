@@ -16,6 +16,8 @@ import {
   lerPdf,
 } from "../servidor/faturamento/extracao.mjs";
 import { prepararFaturamento } from "../servidor/faturamento/esquema.mjs";
+import { identificarUsinaPorGeracao } from "../servidor/faturamento/identificadoresUsinas.mjs";
+import { identificarFinalidadeDocumento } from "../servidor/faturamento/finalidadeDocumento.mjs";
 
 const bancoAntigo = new DatabaseSync(":memory:");
 try {
@@ -87,6 +89,44 @@ try {
   );
 } finally {
   bancoAntigo.close();
+}
+
+const bancoIdentificadores = new DatabaseSync(":memory:");
+try {
+  bancoIdentificadores.exec(`
+    PRAGMA foreign_keys=ON;
+    CREATE TABLE usinas (id INTEGER PRIMARY KEY, nome TEXT NOT NULL);
+    INSERT INTO usinas(id,nome) VALUES (1,'São Francisco'),(2,'San German');
+  `);
+  prepararFaturamento(bancoIdentificadores);
+  bancoIdentificadores
+    .prepare(
+      `INSERT INTO usinas_identificadores_geracao(usina_id,numero,tipo,origem)
+       VALUES (?,?,?,?)`,
+    )
+    .run(1, "418450401297", "atual", "teste");
+  const identificada = identificarUsinaPorGeracao(
+    bancoIdentificadores,
+    "000418450401297",
+  );
+  assert.equal(identificada.numero, "418450401297");
+  assert.equal(identificada.situacao, "identificada");
+  assert.equal(identificada.usina?.id, 1);
+  assert.equal(identificada.usina?.nome, "São Francisco");
+  assert.equal(identificada.candidatas.length, 1);
+  for (const usinaId of [1, 2])
+    bancoIdentificadores
+      .prepare(
+        `INSERT INTO usinas_identificadores_geracao(usina_id,numero,tipo,origem)
+         VALUES (?,?,?,?)`,
+      )
+      .run(usinaId, "407962801205", "atual", "teste");
+  assert.equal(
+    identificarUsinaPorGeracao(bancoIdentificadores, "407962801205").situacao,
+    "ambigua",
+  );
+} finally {
+  bancoIdentificadores.close();
 }
 
 process.env.ECOSOL_DATA_DIR = mkdtempSync(
@@ -231,6 +271,7 @@ const linhas = [
   "REF: MES/ANO SET/2026",
   "TOTAL A PAGAR R$ 302,40",
   "VENCIMENTO 28/09/2026",
+  "INFORMACOES DO SCEE: GERACAO CICLO (9/2026) KWH: UC 000418450401297 : 166.825,45",
   "INJECAO SCEE - UC 000418450401297 - GD II 2 kWh 1660,00 0,787589 -1.307,40",
   "PARC INJET S/DESC - 28,57% - UC 000418450401297 - GD II 2 kWh 1660,00 0,175126 290,71",
 ];
@@ -239,6 +280,7 @@ const extraido = await lerPdf(arquivo);
 assert.equal(extraido.dados.uc, "423652401252");
 assert.equal(extraido.dados.injecao, "1660.00");
 assert.equal(extraido.dados.total_equatorial, "302.40");
+assert.equal(extraido.dados.uc_geradora, "418450401297");
 assert.equal(extraido.dados.ajuste_gdii, "290.71");
 assert.equal(
   extrairCampos(
@@ -294,6 +336,14 @@ assert.equal(semInjecao.dados.injecao, "0");
 assert.deepEqual(semInjecao.qualidade.campos_inferidos, ["Injeção SCEE"]);
 assert.ok(!semInjecao.qualidade.pendencias.includes("Injeção SCEE"));
 assert.match(semInjecao.evidencias.injecao, /Inferência/);
+assert.equal(semInjecao.sinalizadores.mensagens_scee_vazias, true);
+assert.equal(
+  extrairCampos(
+    "INFORMACOES DO SCEE: GERACAO CICLO (9/2026) KWH: UC 000418450401297\n" +
+      "FORNECIMENTO\nCONSUMO kWh 100,00 1,00 100,00\nITENS FINANCEIROS",
+  ).sinalizadores.mensagens_scee_vazias,
+  undefined,
+);
 assert.equal(
   extrairCampos("FORNECIMENTO\nCONSUMO kWh 100,00 1,00 100,00").dados.injecao,
   undefined,
@@ -311,6 +361,41 @@ assert.equal(
   ).dados.injecao,
   undefined,
 );
+const multiplasInjecoesComGeradora = extrairCampos(
+  "INFORMACOES DO SCEE: GERACAO CICLO (10/2026) KWH: UC 000456 : 100,00\n" +
+    "FORNECIMENTO\n" +
+    "INJECAO SCEE - UC 000123 - GD I kWh 20,00 1,00 -20,00\n" +
+    "INJECAO SCEE - UC 000456 - GD II 2 kWh 30,00 1,00 -30,00\n" +
+    "PARC INJET S/DESC - 25% - UC 000456 - GD II 2 kWh 30,00 0,20 6,00\n" +
+    "ITENS FINANCEIROS",
+);
+assert.equal(multiplasInjecoesComGeradora.dados.uc_geradora, "456");
+assert.equal(multiplasInjecoesComGeradora.dados.injecao, "30.00");
+assert.equal(multiplasInjecoesComGeradora.dados.ajuste_gdii, "6.00");
+assert.match(multiplasInjecoesComGeradora.evidencias.injecao, /UC 000456/);
+assert.equal(
+  identificarFinalidadeDocumento(
+    "GRANDEZAS CONTRATADAS\nDEMANDA - kW 0\nDEMANDA GERACAO - kW 1000",
+  ).finalidade,
+  "pagamento",
+);
+assert.equal(
+  identificarFinalidadeDocumento(
+    "FORNECIMENTO\nCONSUMO SCEE kWh 10,00 1,00 10,00\n" +
+      Array.from(
+        { length: 10 },
+        (_, indice) => `ITEM ${indice + 1} kWh 1,00 1,00 1,00`,
+      ).join("\n") +
+      "\nITENS FINANCEIROS",
+  ).finalidade,
+  "pagamento",
+);
+assert.equal(
+  identificarFinalidadeDocumento(
+    "FORNECIMENTO\nCONSUMO SCEE kWh 10,00 1,00 10,00\nITENS FINANCEIROS",
+  ).finalidade,
+  "cobranca",
+);
 assert.equal(
   calcularCobranca({
     injecao: "769",
@@ -323,6 +408,22 @@ assert.equal(
   }).tarifa_completa,
   "1.169969",
 );
+const tarifaFinalManual = calcularCobranca({
+  ...entrada,
+  tarifa_total: "1.25",
+});
+assert.equal(tarifaFinalManual.tarifa_completa, "1.25");
+assert.equal(tarifaFinalManual.entradas.unitario, "1.1");
+assert.equal(tarifaFinalManual.entradas.bandeira, "0.069969");
+const tarifaFinalSemComponentes = calcularCobranca({
+  ...entrada,
+  unitario: "",
+  bandeira: "",
+  tarifa_total: "1.25",
+});
+assert.equal(tarifaFinalSemComponentes.tarifa_completa, "1.25");
+assert.equal(tarifaFinalSemComponentes.entradas.unitario, "");
+assert.equal(tarifaFinalSemComponentes.entradas.bandeira, "");
 assert.equal(
   extrairCampos("INJECAO SCEE - UC 123 - GD I kWh 769,00 0,787589 -605,66")
     .dados.unitario,
@@ -972,12 +1073,17 @@ try {
       versao: d.versao,
       dados: dadosVinculados,
     },
-    400,
+    409,
   );
-  await ok(`/documentos/${d.id}/previa`, "POST", {
-    versao: d.versao,
-    dados: { ...dadosVinculados, uc_divergente_confirmada: "sim" },
-  });
+  await ok(
+    `/documentos/${d.id}/previa`,
+    "POST",
+    {
+      versao: d.versao,
+      dados: { ...dadosVinculados, uc_divergente_confirmada: "sim" },
+    },
+    409,
+  );
   await ok(
     `/documentos/${d.id}/previa`,
     "POST",
@@ -989,7 +1095,7 @@ try {
         uc_divergente_confirmada: "sim",
       },
     },
-    400,
+    409,
   );
   await ok("/documentos?lote=teste&nome=a.pdf", "POST", arquivo, 409);
   const recebimentos = await ok("/recebimentos");
@@ -1210,6 +1316,66 @@ try {
     { ...unidade, uc: "303025501263", nome: "UC sem injeção" },
     201,
   );
+  await ok(
+    "/unidades",
+    "POST",
+    { ...unidade, uc: "303025501264", nome: "UC atual do quadro verde" },
+    201,
+  );
+  await ok(
+    "/unidades",
+    "POST",
+    { ...unidade, uc: "2026099999999", nome: "Número antigo incorreto" },
+    201,
+  );
+  const pdfUcAtual = pdf([
+    "NUMERO DA UC",
+    "3.030.255.012-64",
+    "REF: MES/ANO SET/2026",
+    "TOTAL A PAGAR R$ 128,69",
+    "VENCIMENTO 13/10/2026",
+    "FORNECIMENTO",
+  ]);
+  let faturaUcObsoleta = await ok(
+    "/documentos?lote=uc-obsoleta&nome=2026099999999.pdf",
+    "POST",
+    pdfUcAtual,
+    201,
+  );
+  const dadosUcObsoleta = {
+    ...faturaUcObsoleta.dados,
+    uc: "2026099999999",
+    injecao: "0",
+    modalidade: "GDI",
+    ajuste_gdii: "0",
+    vencimento_ecosol: "",
+  };
+  banco
+    .prepare("UPDATE faturamento_documentos SET extracao=?,dados=? WHERE id=?")
+    .run(
+      JSON.stringify({
+        ...faturaUcObsoleta.extracao,
+        dados: { ...faturaUcObsoleta.extracao.dados, uc: "2026099999999" },
+      }),
+      JSON.stringify(dadosUcObsoleta),
+      faturaUcObsoleta.id,
+    );
+  await ok(
+    `/documentos/${faturaUcObsoleta.id}/previa`,
+    "POST",
+    { versao: faturaUcObsoleta.versao, dados: dadosUcObsoleta },
+    409,
+  );
+  faturaUcObsoleta = await ok(`/documentos/${faturaUcObsoleta.id}`);
+  const previaUcAtual = await ok(
+    `/documentos/${faturaUcObsoleta.id}/previa`,
+    "POST",
+    {
+      versao: faturaUcObsoleta.versao,
+      dados: { ...dadosUcObsoleta, uc: "303025501264" },
+    },
+  );
+  assert.equal(previaUcAtual.memoria.unidade.uc, "303025501264");
   const semInjecaoPdf = pdf([
     "NUMERO DA UC",
     "3.030.255.012-63",
@@ -1358,29 +1524,40 @@ try {
       .cliente_referencia_interna,
     "TESTE-OP-000001",
   );
-  const bloqueioOperacional = await ok(
+  const previaOperacional = await ok(
     `/documentos/${faturaProvisoria.id}/previa`,
     "POST",
     {
       versao: faturaProvisoria.versao,
       dados: { ...faturaProvisoria.dados, modalidade: "GDI", injecao: "0" },
     },
-    409,
   );
-  assert.match(bloqueioOperacional.erro, /cadastro operacional de teste/i);
+  assert.equal(previaOperacional.memoria.total_centavos, 12869);
+  let faturaOperacional = await ok(
+    `/documentos/${faturaProvisoria.id}/calcular`,
+    "POST",
+    {
+      versao: faturaProvisoria.versao,
+      conferido: true,
+      dados: { ...faturaProvisoria.dados, modalidade: "GDI", injecao: "0" },
+      previa_hash: previaOperacional.hash,
+    },
+  );
+  assert.equal(faturaOperacional.status, "Calculada");
+  faturaOperacional = await ok(
+    `/documentos/${faturaOperacional.id}/aprovar`,
+    "POST",
+    { versao: faturaOperacional.versao },
+  );
+  assert.match(faturaOperacional.status, /aguardando emissão/);
   assert.throws(
     () =>
       banco
         .prepare(
-          "UPDATE faturamento_documentos SET unidade_id=?,status='Calculada',memoria='{}' WHERE id=?",
+          "UPDATE faturamento_documentos SET status='Emitida' WHERE id=?",
         )
-        .run(
-          banco
-            .prepare("SELECT id FROM faturamento_unidades WHERE uc=?")
-            .get("999888777666").id,
-          faturaProvisoria.id,
-        ),
-    /Cadastro operacional de teste não pode gerar cobrança/,
+        .run(faturaOperacional.id),
+    /Documentação real do cliente pendente: emissão bloqueada/,
   );
 
   const acessoInicial = await receberPdf({

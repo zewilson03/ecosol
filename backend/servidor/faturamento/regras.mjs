@@ -122,6 +122,7 @@ export function calcularCobranca({
   injecao,
   unitario,
   bandeira,
+  tarifa_total,
   desconto,
   total_equatorial,
   ajuste_gdii,
@@ -162,10 +163,17 @@ export function calcularCobranca({
       total_centavos: new D(totalEquatorial).times(100).toNumber(),
     };
   }
+  const tarifaManual = String(tarifa_total ?? "").trim()
+    ? decimal(tarifa_total, "a tarifa total", 9, "100")
+    : "";
+  const componente = (valor, nome) => {
+    const informado = String(valor ?? "").trim();
+    return informado ? decimal(informado, nome, 9, "100") : "";
+  };
   const entradas = {
     injecao: energiaInjetada,
-    unitario: decimal(unitario, "a tarifa unitária", 9, "100"),
-    bandeira: decimal(bandeira, "a bandeira em R$/kWh", 9, "100"),
+    unitario: componente(unitario, "a tarifa unitária"),
+    bandeira: componente(bandeira, "a bandeira em R$/kWh"),
     desconto: decimal(desconto, "o desconto", 2, "100"),
     total_equatorial: totalEquatorial,
     ajuste_gdii: ajuste,
@@ -173,7 +181,17 @@ export function calcularCobranca({
   };
   if (modalidade === "GDI" && !new D(entradas.ajuste_gdii).isZero())
     falhar("GDI deve ter ajuste GDII igual a zero.");
-  const tarifa = new D(entradas.unitario).plus(entradas.bandeira);
+  if (!tarifaManual && (!entradas.unitario || !entradas.bandeira))
+    falhar(
+      "Informe os componentes da tarifa ou preencha a tarifa final manual.",
+    );
+  const tarifaDosComponentes = tarifaManual
+    ? null
+    : new D(entradas.unitario).plus(entradas.bandeira);
+  // A conferência pode registrar uma tarifa final validada manualmente. Os
+  // componentes continuam armazenados como evidência; nunca tentamos deduzir
+  // ou alterar um deles a partir da tarifa final.
+  const tarifa = tarifaManual ? new D(tarifaManual) : tarifaDosComponentes;
   if (!tarifa.gt(0)) falhar("A tarifa completa deve ser maior que zero.");
   const consumo = new D(entradas.injecao)
     .times(tarifa)

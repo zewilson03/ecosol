@@ -4,6 +4,8 @@ import { obterBanco } from "../bancoDeDados.mjs";
 import { exigirNivel } from "../permissoesDaEquipe.mjs";
 import { apenasDigitos, cpfValidoParaCadastro } from "../validacaoDeCpf.mjs";
 import { validarContatoCliente } from "../validacaoDeContato.mjs";
+import { lerPdf } from "./extracao.mjs";
+import { identificarUsinaPorGeracao } from "./identificadoresUsinas.mjs";
 import { receberPdf } from "./receberPdf.mjs";
 import { reanalisarFatura } from "./reanalisar.mjs";
 import { registrarHistorico } from "./registros.mjs";
@@ -33,7 +35,7 @@ const router = Router();
 rotasFaturamento.use("/api/admin/faturamento", exigirNivel(1), router);
 const APROVADA = "Aprovada — aguardando emissão";
 const colunas =
-  "id, hash, nome, lote, extracao, dados, memoria, unidade_id, competencia, status, classificacao, versao, criado_em, atualizado_em";
+  "id, hash, nome, lote, extracao, dados, memoria, unidade_id, competencia, status, classificacao, finalidade, versao, criado_em, atualizado_em";
 
 function id(valor) {
   const numero = Number(valor);
@@ -58,17 +60,24 @@ function nomePdf(valor) {
   return nome;
 }
 function documento(numero) {
-  const d = obterBanco()
+  const banco = obterBanco();
+  const d = banco
     .prepare(
-      `SELECT ${colunas} FROM faturamento_documentos WHERE id=? AND classificacao='fatura' AND excluido_em IS NULL`,
+      `SELECT ${colunas} FROM faturamento_documentos WHERE id=? AND classificacao='fatura' AND finalidade='cobranca' AND excluido_em IS NULL`,
     )
     .get(id(numero));
   if (!d) falhar("Fatura não encontrada.", 404);
+  const dados = JSON.parse(d.dados);
+  const extracao = JSON.parse(d.extracao);
   return {
     ...d,
-    dados: JSON.parse(d.dados),
-    extracao: JSON.parse(d.extracao),
+    dados,
+    extracao,
     memoria: d.memoria ? JSON.parse(d.memoria) : null,
+    usina_geradora: identificarUsinaPorGeracao(
+      banco,
+      dados.uc_geradora ?? extracao.dados?.uc_geradora,
+    ),
   };
 }
 function documentoCompleto(numero) {
@@ -958,7 +967,7 @@ router.get("/documentos", (_req, res) => {
   res.json(
     obterBanco()
       .prepare(
-        "SELECT id FROM faturamento_documentos WHERE classificacao='fatura' AND excluido_em IS NULL ORDER BY id DESC",
+        "SELECT id FROM faturamento_documentos WHERE classificacao='fatura' AND finalidade='cobranca' AND excluido_em IS NULL ORDER BY id DESC",
       )
       .all()
       .map((r) => documento(r.id)),
@@ -971,7 +980,7 @@ router.get("/recebimentos", (_req, res) => {
         `SELECT r.*,d.nome AS nome_atual,d.status AS estado_documento,d.dados,d.memoria
          FROM faturamento_recebimentos_pdf r
          LEFT JOIN faturamento_documentos d ON d.id=r.documento_id
-         WHERE r.documento_id IS NULL OR (d.classificacao='fatura' AND d.excluido_em IS NULL)
+         WHERE r.documento_id IS NULL OR (d.classificacao='fatura' AND d.finalidade='cobranca' AND d.excluido_em IS NULL)
          ORDER BY r.id DESC`,
       )
       .all()
@@ -985,6 +994,50 @@ router.get("/recebimentos", (_req, res) => {
 });
 router.get("/documentos/:id", (req, res) => {
   res.json(documentoCompleto(req.params.id));
+});
+router.get("/pagamentos", (_req, res) => {
+  const itens = obterBanco()
+    .prepare(
+      `SELECT id,nome,lote,extracao,dados,status,versao,criado_em,atualizado_em
+       FROM faturamento_documentos
+       WHERE classificacao='fatura' AND finalidade='pagamento'
+         AND excluido_em IS NULL ORDER BY id DESC`,
+    )
+    .all()
+    .map((item) => ({
+      ...item,
+      extracao: JSON.parse(item.extracao),
+      dados: JSON.parse(item.dados),
+    }));
+  res.set("Cache-Control", "no-store").json(itens);
+});
+router.get("/pagamentos/:id/pdf", (req, res) => {
+  const numero = id(req.params.id);
+  const d = obterBanco()
+    .prepare(
+      `SELECT nome,pdf FROM faturamento_documentos
+       WHERE id=? AND classificacao='fatura' AND finalidade='pagamento'
+         AND excluido_em IS NULL`,
+    )
+    .get(numero);
+  if (!d) falhar("Pagamento não encontrado.", 404);
+  const nomeAscii = d.nome
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z0-9._ -]/g, "_");
+  const nomeCodificado = encodeURIComponent(d.nome).replace(
+    /['()*]/g,
+    (caractere) => `%${caractere.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  res
+    .set({
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `inline; filename="${nomeAscii}"; filename*=UTF-8''${nomeCodificado}`,
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+      "X-Frame-Options": "SAMEORIGIN",
+    })
+    .send(Buffer.from(d.pdf));
 });
 router.get("/documentos/:id/pdf", (req, res) => {
   const d = documento(req.params.id);
@@ -1118,6 +1171,8 @@ const campos = [
   "injecao",
   "unitario",
   "bandeira",
+  "tarifa_total",
+  "tarifa_manual",
   "total_equatorial",
   "ajuste_gdii",
   "vencimento_equatorial",
@@ -1134,10 +1189,41 @@ function normalizarDadosConferencia(entrada) {
     dados[campo] = String(entrada[campo] ?? "").trim();
     if (dados[campo].length > 80) falhar("Campo acima do limite permitido.");
   }
+  if (dados.tarifa_manual && dados.tarifa_manual !== "sim")
+    falhar("Indicador de tarifa manual inválido.");
   return dados;
 }
 function hashCalculo(memoria) {
   return createHash("sha256").update(JSON.stringify(memoria)).digest("hex");
+}
+async function conferirUcAtualDoPdf(d, dados) {
+  const arquivo = obterBanco()
+    .prepare("SELECT pdf,hash FROM faturamento_documentos WHERE id=?")
+    .get(d.id);
+  if (!arquivo?.pdf?.length)
+    falhar("PDF original indisponível para confirmar a UC.", 409);
+  const hash = createHash("sha256").update(arquivo.pdf).digest("hex");
+  if (hash !== arquivo.hash || hash !== d.hash)
+    falhar("Integridade do PDF divergente; cálculo interrompido.", 409);
+  let extracaoAtual;
+  try {
+    extracaoAtual = await lerPdf(Buffer.from(arquivo.pdf));
+  } catch {
+    falhar("Não foi possível reler o PDF para confirmar a UC.", 409);
+  }
+  const ucAtual = String(extracaoAtual.dados?.uc ?? "")
+    .replace(/\D/g, "")
+    .replace(/^0+(?=\d)/, "");
+  // PDFs antigos ou com camada de texto danificada continuam no fluxo de
+  // conferência manual. Quando a releitura encontra o quadro verde, porém,
+  // essa evidência atual é soberana e não pode ser ignorada por uma extração
+  // armazenada por uma versão anterior do leitor.
+  if (!ucAtual) return;
+  if (ucAtual !== normalizarUc(dados.uc))
+    falhar(
+      "A UC informada difere da UC atual do quadro verde do PDF. Corrija a conferência antes de continuar.",
+      409,
+    );
 }
 router.patch("/documentos/:id", exigirNivel(2), (req, res) => {
   const numero = id(req.params.id);
@@ -1181,11 +1267,6 @@ function montarCalculo(d, dados = d.dados) {
       "Cadastro provisório: confirme CPF/CNPJ, e-mail e cliente do portal antes de calcular uma cobrança.",
       409,
     );
-  if (unidade.cliente_operacional_id !== null)
-    falhar(
-      "Cadastro operacional de teste: confira o titular e o CPF/CNPJ real antes de calcular ou aprovar uma cobrança.",
-      409,
-    );
   if (dados.unidade_id) {
     const unidadeSelecionada = Number(dados.unidade_id);
     if (
@@ -1194,7 +1275,7 @@ function montarCalculo(d, dados = d.dados) {
       unidadeSelecionada !== unidade.id
     )
       falhar("O cliente selecionado não corresponde à UC desta fatura.");
-    if (!dados.cliente_id)
+    if (!dados.cliente_id && unidade.cliente_operacional_id === null)
       falhar("Selecione o cliente do portal vinculado a esta UC.");
   }
   if (dados.cliente_id) {
@@ -1288,6 +1369,7 @@ function montarCalculo(d, dados = d.dados) {
     falhar("O vencimento Ecosol não pode anteceder a competência.");
   let unitario = dados.unitario,
     bandeira = dados.bandeira,
+    tarifa_total = "",
     fonte = { tipo: "propria", documento_id: d.id };
   if (semInjecao) {
     unitario = "0";
@@ -1312,10 +1394,17 @@ function montarCalculo(d, dados = d.dados) {
     };
   } else if (dados.origem_tarifa !== "propria")
     falhar("Selecione a origem da tarifa.");
+  else if (dados.tarifa_manual === "sim") {
+    if (!dados.tarifa_total)
+      falhar("Informe a tarifa final manual antes de calcular.");
+    tarifa_total = dados.tarifa_total;
+    fonte = { ...fonte, tarifa: "manual" };
+  }
   const resultado = calcularCobranca({
     ...dados,
     unitario,
     bandeira,
+    tarifa_total,
     desconto: contrato.desconto,
     modalidade: contrato.modalidade,
   });
@@ -1339,10 +1428,11 @@ function montarCalculo(d, dados = d.dados) {
   };
 }
 
-router.post("/documentos/:id/previa", (req, res) => {
+router.post("/documentos/:id/previa", async (req, res) => {
   const d = documento(req.params.id);
   conferirVersao(d, req.body);
   const dados = normalizarDadosConferencia(req.body.dados);
+  await conferirUcAtualDoPdf(d, dados);
   const memoria = montarCalculo(d, dados);
   res.set("Cache-Control", "no-store").json({
     memoria,
@@ -1351,8 +1441,15 @@ router.post("/documentos/:id/previa", (req, res) => {
   });
 });
 
-router.post("/documentos/:id/calcular", exigirNivel(2), (req, res) => {
+router.post("/documentos/:id/calcular", exigirNivel(2), async (req, res) => {
   const numero = id(req.params.id);
+  const anterior = documento(numero);
+  conferirVersao(anterior, req.body);
+  const dadosConferidos =
+    req.body.dados === undefined
+      ? anterior.dados
+      : normalizarDadosConferencia(req.body.dados);
+  await conferirUcAtualDoPdf(anterior, dadosConferidos);
   transacao(() => {
     const d = documento(numero);
     conferirVersao(d, req.body);
@@ -1405,8 +1502,13 @@ router.post("/documentos/:id/calcular", exigirNivel(2), (req, res) => {
   res.json(documentoCompleto(numero));
 });
 
-router.post("/documentos/:id/aprovar", exigirNivel(3), (req, res) => {
+router.post("/documentos/:id/aprovar", exigirNivel(3), async (req, res) => {
   const numero = id(req.params.id);
+  const anterior = documento(numero);
+  conferirVersao(anterior, req.body);
+  if (anterior.status !== "Calculada" || !anterior.memoria)
+    falhar("Calcule e confira a cobrança antes de aprovar.");
+  await conferirUcAtualDoPdf(anterior, anterior.dados);
   transacao(() => {
     const d = documento(numero);
     conferirVersao(d, req.body);

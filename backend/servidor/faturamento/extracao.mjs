@@ -1,5 +1,6 @@
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import Decimal from "decimal.js";
+import { identificarFinalidadeDocumento } from "./finalidadeDocumento.mjs";
 
 const numero = /-?\d[\d.]*(?:,\d+)?/g;
 const br = (s) => s?.replace(/\./g, "").replace(",", ".");
@@ -109,6 +110,15 @@ export function extrairCampos(texto, { ucQuadro = null } = {}) {
   const ref = normal.match(
     /\b(JAN|FEV|MAR|ABR|MAI|JUN|JUL|AGO|SET|OUT|NOV|DEZ)\s*\/\s*(20\d{2})\b/,
   );
+  const geracao = normal.match(
+    /GERACAO CICLO[\s\S]{0,160}?\bUC\s*0*([0-9][0-9.\-]*)/,
+  );
+  if (geracao)
+    guardar(
+      "uc_geradora",
+      ucCanonica(geracao[1]),
+      geracao[0],
+    );
   if (ref)
     guardar(
       "competencia",
@@ -168,6 +178,18 @@ export function extrairCampos(texto, { ucQuadro = null } = {}) {
       guardar("vencimento_equatorial", resumos[0].vencimento, resumos[0].linha);
   }
   const linhas = normal.split(/\r?\n/);
+  // Em determinadas contas da usina São Francisco o quadro "Mensagens
+  // importantes" vem visualmente vazio. O título verde não entra sempre na
+  // camada textual do PDF, mas nenhum dos marcadores internos do SCEE aparece.
+  // Essa é uma regra operacional confirmada: a conta não tem energia injetada
+  // nem desconto e deve usar somente o total da Equatorial. Não aplicar quando
+  // houver qualquer indício de SCEE, mesmo que a extração esteja incompleta.
+  const mensagensSceeVazias =
+    !/GERACAO\s+CICLO|INFORMACOES\s+DO\s+SCEE|CADASTRO\s+RATEIO\s+GERACAO|EXCEDENTE\s+RECEBIDO|INJECAO\s+SCEE|PARC\s+INJET/.test(
+      normal,
+    ) &&
+    /\bFORNECIMENTO\b/.test(normal) &&
+    /\bCONSUMO\b/.test(normal);
   const injecoes = [],
     ajustes = [],
     bandeiras = [],
@@ -185,14 +207,25 @@ export function extrairCampos(texto, { ucQuadro = null } = {}) {
     }
     const depois = linha.split(/KWH\s*/)[1];
     const valores = depois?.match(numero);
+    const ucDaLinha = linha.match(
+      /(?:INJECAO SCEE|PARC INJET S\/DESC)[^\r\n]*?\bUC\s*0*([0-9][0-9.\-]*)/,
+    );
     if (/INJECAO SCEE/.test(linha) && valores?.length >= 3)
-      injecoes.push({ valores, linha });
+      injecoes.push({
+        valores,
+        linha,
+        ucGeradora: ucDaLinha ? ucCanonica(ucDaLinha[1]) : null,
+      });
     if (
       /PARC INJET S\/DESC/.test(linha) &&
       /\bGD\s*II\b/.test(linha) &&
       valores?.length >= 3
     )
-      ajustes.push({ valores, linha });
+      ajustes.push({
+        valores,
+        linha,
+        ucGeradora: ucDaLinha ? ucCanonica(ucDaLinha[1]) : null,
+      });
     if (/BANDEIRA/.test(linha) && valores?.length >= 3)
       bandeiras.push({ valores, linha });
     if (/CONSUMO NAO COMPENSADO/.test(linha) && valores?.length >= 3)
@@ -200,8 +233,21 @@ export function extrairCampos(texto, { ucQuadro = null } = {}) {
   }
   // A tarifa comercial vem do consumo não compensado, não da injeção SCEE.
   // Múltiplas origens ou bandeiras exigem revisão; não somar taxas sem conhecer a base.
-  if (injecoes.length === 1) {
-    guardar("injecao", br(injecoes[0].valores[0]), injecoes[0].linha);
+  const injecoesDaGeradora = dados.uc_geradora
+    ? injecoes.filter((item) => item.ucGeradora === dados.uc_geradora)
+    : [];
+  const injecaoEscolhida =
+    injecoesDaGeradora.length === 1
+      ? injecoesDaGeradora[0]
+      : injecoes.length === 1
+        ? injecoes[0]
+        : null;
+  if (injecaoEscolhida) {
+    guardar(
+      "injecao",
+      br(injecaoEscolhida.valores[0]),
+      injecaoEscolhida.linha,
+    );
   }
   // Ausência de linha não é o mesmo que falha de leitura. Só assumir zero
   // quando a tabela de fornecimento estiver delimitada e contiver itens kWh.
@@ -235,9 +281,13 @@ export function extrairCampos(texto, { ucQuadro = null } = {}) {
       br(consumosNaoCompensados[0].valores[1]),
       consumosNaoCompensados[0].linha,
     );
-  const ajustesUnicos = [
+  let ajustesUnicos = [
     ...new Map(ajustes.map((item) => [item.linha, item])).values(),
   ];
+  const ajustesDaGeradora = dados.uc_geradora
+    ? ajustesUnicos.filter((item) => item.ucGeradora === dados.uc_geradora)
+    : [];
+  if (ajustesDaGeradora.length) ajustesUnicos = ajustesDaGeradora;
   if (ajustesUnicos.length)
     guardar(
       "ajuste_gdii",
@@ -271,7 +321,7 @@ export function extrairCampos(texto, { ucQuadro = null } = {}) {
       "Bandeira não identificada. Informe o componente em R$/kWh ou selecione uma GDI aprovada do lote.",
     );
   if (
-    injecoes.length > 1 ||
+    (injecoes.length > 1 && injecoesDaGeradora.length !== 1) ||
     ajustes.length > 1 ||
     bandeiras.length > 1 ||
     consumosNaoCompensados.length > 1
@@ -306,7 +356,20 @@ export function extrairCampos(texto, { ucQuadro = null } = {}) {
     pendencias,
     ...(injecaoZeroInferida ? { campos_inferidos: ["Injeção SCEE"] } : {}),
   };
-  return { dados, evidencias, avisos, qualidade };
+  return {
+    dados,
+    evidencias,
+    avisos,
+    qualidade,
+    sinalizadores: {
+      ...(mensagensSceeVazias
+        ? {
+            mensagens_scee_vazias: true,
+          }
+        : {}),
+    },
+    finalidade: identificarFinalidadeDocumento(texto),
+  };
 }
 
 export async function lerPdf(buffer) {

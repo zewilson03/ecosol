@@ -39,6 +39,17 @@ rotasAdministrativas.get("/api/admin/usinas", (_requisicao, resposta) => {
       .all(mesAtual, mesAtual)
       .map((usina) => ({
         ...usina,
+        identificadores_geracao: banco
+          .prepare(
+            `SELECT numero,tipo,origem,
+              (SELECT COUNT(DISTINCT outro.usina_id)
+               FROM usinas_identificadores_geracao outro
+               WHERE outro.numero=i.numero) AS quantidade_usinas
+             FROM usinas_identificadores_geracao i
+             WHERE i.usina_id=?
+             ORDER BY CASE tipo WHEN 'atual' THEN 0 ELSE 1 END,numero`,
+          )
+          .all(usina.id),
         modalidades: banco
           .prepare(
             "SELECT inicio,modalidade FROM usinas_modalidades WHERE usina_id=? ORDER BY inicio DESC",

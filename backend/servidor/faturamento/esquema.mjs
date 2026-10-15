@@ -10,6 +10,17 @@ export function prepararFaturamento(banco) {
     );
     CREATE INDEX IF NOT EXISTS usinas_modalidades_vigencia
       ON usinas_modalidades(usina_id,inicio DESC);
+    CREATE TABLE IF NOT EXISTS usinas_identificadores_geracao (
+      id INTEGER PRIMARY KEY,
+      usina_id INTEGER NOT NULL REFERENCES usinas(id) ON DELETE RESTRICT,
+      numero TEXT NOT NULL CHECK(numero<>'' AND numero NOT GLOB '*[^0-9]*'),
+      tipo TEXT NOT NULL CHECK(tipo IN ('atual','historico')),
+      origem TEXT NOT NULL,
+      criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(usina_id,numero)
+    );
+    CREATE INDEX IF NOT EXISTS usinas_identificadores_numero
+      ON usinas_identificadores_geracao(numero);
     CREATE TABLE IF NOT EXISTS usinas_importacoes_vinculos (
       id TEXT PRIMARY KEY, responsavel_id INTEGER NOT NULL,
       nome TEXT NOT NULL, hash TEXT NOT NULL, aba TEXT NOT NULL,
@@ -71,6 +82,8 @@ export function prepararFaturamento(banco) {
       status TEXT NOT NULL DEFAULT 'Pendente de revisão',
       classificacao TEXT NOT NULL DEFAULT 'fatura'
         CHECK(classificacao IN ('fatura','triagem','nao_fatura')),
+      finalidade TEXT NOT NULL DEFAULT 'cobranca'
+        CHECK(finalidade IN ('cobranca','pagamento')),
       excluido_em TEXT,
       versao INTEGER NOT NULL DEFAULT 1,
       criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -214,6 +227,16 @@ export function prepararFaturamento(banco) {
     !banco
       .prepare("PRAGMA table_info(faturamento_documentos)")
       .all()
+      .some((c) => c.name === "finalidade")
+  ) {
+    banco.exec(
+      "ALTER TABLE faturamento_documentos ADD COLUMN finalidade TEXT NOT NULL DEFAULT 'cobranca' CHECK(finalidade IN ('cobranca','pagamento'))",
+    );
+  }
+  if (
+    !banco
+      .prepare("PRAGMA table_info(faturamento_documentos)")
+      .all()
       .some((c) => c.name === "excluido_em")
   ) {
     banco.exec(
@@ -299,25 +322,28 @@ export function prepararFaturamento(banco) {
   banco.exec(`CREATE INDEX IF NOT EXISTS faturamento_unidades_operacional
     ON faturamento_unidades(cliente_operacional_id)
     WHERE cliente_operacional_id IS NOT NULL`);
-  // A proteção persiste no banco, inclusive se um processo antigo ainda estiver ativo.
+  // Documentação pendente não impede conferir e calcular uma fatura. A barreira
+  // precisa existir no marco de emissão, não na apuração interna.
   banco.exec(`
-    CREATE TRIGGER IF NOT EXISTS faturamento_operacional_sem_calculo_insert
+    DROP TRIGGER IF EXISTS faturamento_operacional_sem_calculo_insert;
+    DROP TRIGGER IF EXISTS faturamento_operacional_sem_calculo_update;
+    CREATE TRIGGER IF NOT EXISTS faturamento_operacional_sem_emissao_insert
     BEFORE INSERT ON faturamento_documentos
     WHEN NEW.unidade_id IS NOT NULL
-      AND (NEW.memoria IS NOT NULL OR NEW.status='Calculada' OR NEW.status LIKE 'Aprovada%')
+      AND NEW.status LIKE 'Emitida%'
       AND EXISTS (SELECT 1 FROM faturamento_unidades u
                   WHERE u.id=NEW.unidade_id AND u.cliente_operacional_id IS NOT NULL)
     BEGIN
-      SELECT RAISE(ABORT, 'Cadastro operacional de teste não pode gerar cobrança');
+      SELECT RAISE(ABORT, 'Documentação real do cliente pendente: emissão bloqueada');
     END;
-    CREATE TRIGGER IF NOT EXISTS faturamento_operacional_sem_calculo_update
+    CREATE TRIGGER IF NOT EXISTS faturamento_operacional_sem_emissao_update
     BEFORE UPDATE ON faturamento_documentos
     WHEN NEW.unidade_id IS NOT NULL
-      AND (NEW.memoria IS NOT NULL OR NEW.status='Calculada' OR NEW.status LIKE 'Aprovada%')
+      AND NEW.status LIKE 'Emitida%'
       AND EXISTS (SELECT 1 FROM faturamento_unidades u
                   WHERE u.id=NEW.unidade_id AND u.cliente_operacional_id IS NOT NULL)
     BEGIN
-      SELECT RAISE(ABORT, 'Cadastro operacional de teste não pode gerar cobrança');
+      SELECT RAISE(ABORT, 'Documentação real do cliente pendente: emissão bloqueada');
     END;
   `);
   banco.exec(`CREATE TABLE IF NOT EXISTS faturamento_importacoes (

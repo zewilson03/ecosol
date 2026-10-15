@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import { obterBanco } from "../bancoDeDados.mjs";
 import { lerPdf } from "./extracao.mjs";
+import {
+  preencherDadosPorGeradora,
+  sincronizarVinculoDaGeradora,
+} from "./preenchimentoPorGeradora.mjs";
 import { registrarHistorico, registrarRecebimentoPdf } from "./registros.mjs";
 import { falhar, texto } from "./regras.mjs";
 
@@ -91,10 +95,18 @@ export async function receberPdf({ arquivo, nome, lote, ator, origem }) {
       .get(hash);
     if (existente) return registrarDuplicata(existente.id);
 
+    const preenchimento = preencherDadosPorGeradora(banco, extracao, {
+      ...extracao.dados,
+      origem_tarifa: "propria",
+    });
+    const vinculo = sincronizarVinculoDaGeradora(banco, {
+      ...preenchimento,
+      competencia: preenchimento.dados.competencia,
+    });
     const documentoId = Number(
       banco
         .prepare(
-          "INSERT INTO faturamento_documentos (hash,nome,pdf,lote,texto,extracao,dados) VALUES (?,?,?,?,?,?,?)",
+          "INSERT INTO faturamento_documentos (hash,nome,pdf,lote,texto,extracao,dados,finalidade) VALUES (?,?,?,?,?,?,?,?)",
         )
         .run(
           hash,
@@ -103,16 +115,38 @@ export async function receberPdf({ arquivo, nome, lote, ator, origem }) {
           lote,
           extracao.texto,
           JSON.stringify(extracao),
-          JSON.stringify({ ...extracao.dados, origem_tarifa: "propria" }),
+          JSON.stringify(preenchimento.dados),
+          extracao.finalidade?.finalidade ?? "cobranca",
         ).lastInsertRowid,
     );
     registrarHistorico({
       responsavel,
       administradorId,
       acao: "Importação de PDF",
-      dados: { nome, lote, hash, origem },
+        dados: {
+          nome,
+          lote,
+          hash,
+          origem,
+          finalidade: extracao.finalidade?.finalidade ?? "cobranca",
+        },
       documentoId,
     });
+    if (vinculo.alterado)
+      registrarHistorico({
+        responsavel,
+        administradorId,
+        acao: "Vínculo automático pela UC geradora",
+        dados: {
+          uc: preenchimento.dados.uc,
+          competencia: preenchimento.dados.competencia,
+          identificador_geracao: preenchimento.identificacao.numero,
+          usina_id: preenchimento.identificacao.usina.id,
+          operacao: vinculo.operacao,
+        },
+        documentoId,
+        unidadeId: preenchimento.unidade.id,
+      });
     const manual = extracao.qualidade?.modo === "manual";
     registrar({
       hash,

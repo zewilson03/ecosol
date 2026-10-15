@@ -33,14 +33,26 @@ export default function DemonstrativoCalculo({
           <>
             <div>
               <dt>Unitário com tributos</dt>
-              <dd>R$ {decimalBr(entrada.unitario)}/kWh</dd>
+              <dd>
+                {entrada.unitario
+                  ? `R$ ${decimalBr(entrada.unitario)}/kWh`
+                  : "Não informado"}
+              </dd>
             </div>
             <div>
               <dt>+ Bandeira</dt>
-              <dd>R$ {decimalBr(entrada.bandeira)}/kWh</dd>
+              <dd>
+                {entrada.bandeira
+                  ? `R$ ${decimalBr(entrada.bandeira)}/kWh`
+                  : "Não informada"}
+              </dd>
             </div>
             <div>
-              <dt>= Tarifa completa</dt>
+              <dt>
+                {memoria.fonte.tarifa === "manual"
+                  ? "Tarifa final informada"
+                  : "= Tarifa completa"}
+              </dt>
               <dd>R$ {decimalBr(memoria.tarifa_completa)}/kWh</dd>
             </div>
             <div>
