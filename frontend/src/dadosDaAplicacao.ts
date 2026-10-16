@@ -39,6 +39,7 @@ export type Sessao =
   | {
       perfil: "equipe";
       administrador: { id: number | null; nome: string; nivel: number };
+      papeis_bancarios: string[];
     }
   | {
       perfil: "cliente";
@@ -53,7 +54,11 @@ export function usarDados<T>(endereco: string) {
     let ativo = true;
 
     fetch(endereco, { credentials: "same-origin" })
-      .then((resposta) => resposta.json())
+      .then((resposta) => {
+        if (!resposta.ok)
+          throw new Error("Não foi possível carregar os dados.");
+        return resposta.json();
+      })
       .then((resultado: T) => {
         if (ativo) definirDados(resultado);
       })

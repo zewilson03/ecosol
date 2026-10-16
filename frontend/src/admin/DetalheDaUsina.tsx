@@ -49,7 +49,8 @@ export default function DetalheDaUsina() {
             </p>
             {(usina.identificadores_geracao?.length ?? 0) > 0 && (
               <p>
-                Identificadores da geração: {(usina.identificadores_geracao ?? [])
+                Identificadores da geração:{" "}
+                {(usina.identificadores_geracao ?? [])
                   .map(
                     (item) =>
                       `${item.numero} (${item.tipo === "atual" ? "atual" : "histórico"}${item.quantidade_usinas > 1 ? ", conflitante" : ""})`,

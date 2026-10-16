@@ -71,7 +71,10 @@ banco
   )
   .run(ucComInicio, "2026-10", origem);
 assert.equal(usinaDaUnidadeNaCompetencia(banco, ucComInicio, "2026-09"), null);
-assert.equal(usinaDaUnidadeNaCompetencia(banco, ucComInicio, "2026-10"), origem);
+assert.equal(
+  usinaDaUnidadeNaCompetencia(banco, ucComInicio, "2026-10"),
+  origem,
+);
 const dataAtual = new Intl.DateTimeFormat("en-US", {
   timeZone: "America/Sao_Paulo",
   year: "numeric",

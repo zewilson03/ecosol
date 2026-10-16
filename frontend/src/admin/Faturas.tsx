@@ -8,9 +8,13 @@ import Pagamentos from "./Pagamentos";
 export default function Faturas() {
   const [parametros] = useSearchParams();
   const solicitada = parametros.get("etapa");
-  const etapa = ["receber", "conferir", "calcular", "aprovar", "pagamentos"].includes(
-    solicitada ?? "",
-  )
+  const etapa = [
+    "receber",
+    "conferir",
+    "calcular",
+    "aprovar",
+    "pagamentos",
+  ].includes(solicitada ?? "")
     ? solicitada!
     : parametros.has("documento")
       ? "conferir"

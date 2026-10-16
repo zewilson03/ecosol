@@ -10,3 +10,9 @@ backend/data/**/*.db-shm
 backend/data/consultas/
 backend/.env.local
 *.tsbuildinfo
+__pycache__/
+*.pyc
+*.pfx
+*.p12
+*.key
+*.pem

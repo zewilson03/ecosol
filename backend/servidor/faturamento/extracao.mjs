@@ -113,12 +113,7 @@ export function extrairCampos(texto, { ucQuadro = null } = {}) {
   const geracao = normal.match(
     /GERACAO CICLO[\s\S]{0,160}?\bUC\s*0*([0-9][0-9.\-]*)/,
   );
-  if (geracao)
-    guardar(
-      "uc_geradora",
-      ucCanonica(geracao[1]),
-      geracao[0],
-    );
+  if (geracao) guardar("uc_geradora", ucCanonica(geracao[1]), geracao[0]);
   if (ref)
     guardar(
       "competencia",
@@ -243,11 +238,7 @@ export function extrairCampos(texto, { ucQuadro = null } = {}) {
         ? injecoes[0]
         : null;
   if (injecaoEscolhida) {
-    guardar(
-      "injecao",
-      br(injecaoEscolhida.valores[0]),
-      injecaoEscolhida.linha,
-    );
+    guardar("injecao", br(injecaoEscolhida.valores[0]), injecaoEscolhida.linha);
   }
   // Ausência de linha não é o mesmo que falha de leitura. Só assumir zero
   // quando a tabela de fornecimento estiver delimitada e contiver itens kWh.

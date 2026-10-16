@@ -199,7 +199,8 @@ export default function Usinas() {
                       <small>Identificadores da geração</small>
                       {usina.identificadores_geracao.map((item) => (
                         <span key={item.numero}>
-                          UC {item.numero} · {item.tipo === "atual" ? "atual" : "histórica"}
+                          UC {item.numero} ·{" "}
+                          {item.tipo === "atual" ? "atual" : "histórica"}
                           {item.quantidade_usinas > 1
                             ? " · conferir: também consta em outra usina"
                             : ""}

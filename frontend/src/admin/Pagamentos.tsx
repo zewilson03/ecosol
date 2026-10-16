@@ -26,7 +26,9 @@ const reais = new Intl.NumberFormat("pt-BR", {
 });
 
 export default function Pagamentos() {
-  const consulta = usarConsulta<Pagamento[]>("/api/admin/faturamento/pagamentos");
+  const consulta = usarConsulta<Pagamento[]>(
+    "/api/admin/faturamento/pagamentos",
+  );
   const itens = consulta.dados ?? [];
   return (
     <section className="admin-cartao">
@@ -66,7 +68,9 @@ export default function Pagamentos() {
                   </td>
                   <td>
                     UC {item.dados.uc ?? "a conferir"}
-                    <small>{item.dados.competencia ?? "Competência pendente"}</small>
+                    <small>
+                      {item.dados.competencia ?? "Competência pendente"}
+                    </small>
                   </td>
                   <td>{item.dados.vencimento_equatorial ?? "A conferir"}</td>
                   <td>

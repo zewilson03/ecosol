@@ -134,7 +134,7 @@ export function calcularCobranca({
   const semInjecao = new D(energiaInjetada).isZero();
   const ajuste = decimal(
     (semInjecao || modalidade === "GDI") &&
-    (ajuste_gdii === "" || ajuste_gdii == null)
+      (ajuste_gdii === "" || ajuste_gdii == null)
       ? "0"
       : ajuste_gdii,
     "o ajuste GDII",

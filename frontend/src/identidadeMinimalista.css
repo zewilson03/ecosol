@@ -1,0 +1,993 @@
+/*
+ * Identidade Ecosol — minimalista
+ * Camada final de design: reduz ruído sem alterar estrutura ou comportamento.
+ */
+:root {
+  --ecosol-ink: #173642;
+  --ecosol-muted: #647a83;
+  --ecosol-primary: #0f6670;
+  --ecosol-primary-hover: #0a535c;
+  --ecosol-solar: #e9b832;
+  --ecosol-surface: #ffffff;
+  --ecosol-canvas: #f5f7f5;
+  --ecosol-soft: #edf3f1;
+  --ecosol-line: #dbe5e2;
+  --ecosol-danger: #a64238;
+  --ecosol-success: #287459;
+  --ecosol-radius: 12px;
+  --ecosol-shadow: 0 4px 16px rgba(20, 53, 59, 0.05);
+  --azul-principal: var(--ecosol-primary);
+  --azul-escuro: var(--ecosol-ink);
+  --azul-claro: #9fcfd0;
+  --fundo-claro: var(--ecosol-canvas);
+  --texto-suave: var(--ecosol-muted);
+  --borda-clara: var(--ecosol-line);
+}
+
+body {
+  color: var(--ecosol-ink);
+  background: var(--ecosol-canvas);
+  line-height: 1.55;
+}
+
+h1,
+h2,
+h3 {
+  letter-spacing: -0.025em;
+}
+
+button,
+a,
+input,
+select,
+textarea,
+summary {
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    opacity 0.15s ease;
+}
+
+/* Site público */
+.header {
+  border-bottom: 1px solid var(--ecosol-line);
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.nav {
+  height: 70px;
+}
+
+.brand {
+  color: var(--ecosol-ink);
+  font-size: 24px;
+}
+
+.brand-icon,
+.brand-dot {
+  color: var(--ecosol-solar);
+}
+
+.nav nav {
+  gap: 28px;
+  color: #435e68;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.nav-login {
+  padding: 10px 15px;
+  border: 1px solid var(--ecosol-primary);
+  border-radius: 9px;
+  background: var(--ecosol-primary);
+}
+
+.nav-login-admin {
+  border-color: var(--ecosol-line);
+  background: var(--ecosol-surface);
+  color: var(--ecosol-ink);
+}
+
+.nav-login .nav-arrow,
+.nav-login-admin .nav-arrow {
+  color: inherit;
+  opacity: 0.65;
+}
+
+.hero {
+  background: var(--ecosol-canvas);
+}
+
+.hero-grid {
+  min-height: 560px;
+  gap: 64px;
+}
+
+.hero-copy {
+  padding: 64px 0;
+}
+
+.hero h1 {
+  max-width: 650px;
+  margin: 22px 0 20px;
+  font-size: clamp(44px, 5vw, 68px);
+  line-height: 1.05;
+}
+
+.hero h1 em,
+.about h2 em,
+.cta h2 em,
+.auth-side h1 em,
+.form-intro h1 em {
+  color: var(--ecosol-primary);
+}
+
+.hero-copy > p {
+  max-width: 520px;
+  color: var(--ecosol-muted);
+  font-size: 17px;
+  line-height: 1.65;
+}
+
+.pulse {
+  background: var(--ecosol-solar);
+  box-shadow: none;
+}
+
+.button {
+  gap: 14px;
+  padding: 13px 18px;
+  border-radius: 9px;
+  box-shadow: none;
+}
+
+.button:hover {
+  transform: none;
+}
+
+.button-primary,
+.button-dark {
+  background: var(--ecosol-primary);
+}
+
+.button-primary:hover,
+.button-dark:hover {
+  background: var(--ecosol-primary-hover);
+}
+
+.hero-note {
+  margin-top: 44px;
+}
+
+.hero-art {
+  min-height: 430px;
+}
+
+.orbit,
+.float-card {
+  display: none;
+}
+
+.sun-disc {
+  background: #f7d778;
+  box-shadow: none;
+}
+
+.sun-ring {
+  border-color: rgba(233, 184, 50, 0.28);
+}
+
+.solar-panel {
+  border-radius: 12px;
+  background: var(--ecosol-primary);
+  box-shadow: none;
+}
+
+.benefits {
+  border-block: 1px solid var(--ecosol-line);
+  background: var(--ecosol-surface);
+}
+
+.benefits-grid > div {
+  padding-block: 28px;
+}
+
+.benefit-icon,
+.step-icon {
+  color: var(--ecosol-primary);
+  background: var(--ecosol-soft);
+}
+
+.section {
+  padding-block: 88px;
+}
+
+.steps article,
+.dash-card,
+.form-card,
+.lead-card,
+.info-box {
+  border: 1px solid var(--ecosol-line);
+  border-radius: var(--ecosol-radius);
+  background: var(--ecosol-surface);
+  box-shadow: none;
+}
+
+.steps article {
+  padding: 28px;
+}
+
+.about {
+  background: var(--ecosol-surface);
+}
+
+.about-art {
+  border-radius: 16px;
+  background: var(--ecosol-soft);
+  box-shadow: none;
+}
+
+.about-sun {
+  color: var(--ecosol-solar);
+}
+
+.cta {
+  background: var(--ecosol-primary);
+}
+
+.cta-inner {
+  padding-block: 64px;
+}
+
+.button-light {
+  border-color: rgba(255, 255, 255, 0.45);
+  background: transparent;
+  color: #fff;
+}
+
+.footer {
+  background: #17343d;
+}
+
+.auth-page,
+.inner-page,
+.dashboard {
+  background: var(--ecosol-canvas);
+}
+
+.form-card,
+.auth-side,
+.dash-card {
+  border-radius: var(--ecosol-radius);
+  box-shadow: var(--ecosol-shadow);
+}
+
+.field-stack input,
+.field-stack textarea,
+.field-row input,
+.status-form select {
+  border-color: var(--ecosol-line);
+  border-radius: 9px;
+  background: #fff;
+}
+
+/* Painel administrativo */
+.admin-aplicacao {
+  --azul-painel: var(--ecosol-primary);
+  --amarelo-painel: var(--ecosol-solar);
+  --azul-noite: #14343e;
+  --azul-ceu: var(--ecosol-primary);
+  --verde-solar: var(--ecosol-success);
+  --vidro: #fff;
+  --sombra-painel: var(--ecosol-shadow);
+  background:
+    radial-gradient(
+      circle at 88% 7%,
+      rgba(233, 184, 50, 0.08),
+      transparent 22rem
+    ),
+    radial-gradient(
+      circle at 25% 92%,
+      rgba(15, 102, 112, 0.06),
+      transparent 28rem
+    ),
+    var(--ecosol-canvas);
+  color: var(--ecosol-ink);
+  transition: grid-template-columns 0.42s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.admin-lateral {
+  isolation: isolate;
+  overflow: hidden;
+  padding: 24px 14px 18px;
+  border-right: 1px solid rgba(156, 211, 209, 0.14);
+  background:
+    linear-gradient(180deg, rgba(29, 86, 91, 0.42), transparent 34%), #17343d;
+  transition:
+    padding 0.42s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.32s ease;
+}
+
+.admin-lateral::after {
+  position: absolute;
+  z-index: -1;
+  top: -90px;
+  right: -110px;
+  width: 230px;
+  height: 230px;
+  border: 1px solid rgba(233, 184, 50, 0.16);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(233, 184, 50, 0.1), transparent 68%);
+  content: "";
+  pointer-events: none;
+  transition:
+    opacity 0.42s ease,
+    transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.admin-lateral-topo {
+  margin-bottom: 28px;
+}
+
+.admin-lateral nav {
+  gap: 5px;
+}
+
+.admin-lateral nav a {
+  min-height: 43px;
+  padding: 9px 11px;
+  border-radius: 9px;
+  color: #c7d5d8;
+  transition:
+    color 0.18s ease,
+    background-color 0.18s ease,
+    transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.admin-lateral nav a:hover {
+  background: rgba(255, 255, 255, 0.07);
+  transform: translateX(2px);
+}
+
+.admin-lateral nav a.active {
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 3px 0 var(--ecosol-solar);
+}
+
+.admin-lateral nav a.active .admin-nav-icone,
+.admin-marca span {
+  color: var(--ecosol-solar);
+}
+
+.admin-recolher {
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+.admin-recolher span {
+  display: block;
+  transform: rotate(0deg);
+  transition: transform 0.42s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.admin-marca,
+.admin-lateral > .admin-legenda,
+.admin-nav-texto,
+.admin-perfil-texto,
+.admin-sair span {
+  overflow: hidden;
+  max-width: 180px;
+  opacity: 1;
+  white-space: nowrap;
+  transform: translateX(0);
+  transition:
+    max-width 0.42s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.2s ease 0.1s,
+    transform 0.38s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.admin-lateral > .admin-legenda {
+  max-height: 20px;
+  transition:
+    max-width 0.42s cubic-bezier(0.22, 1, 0.36, 1),
+    max-height 0.32s ease,
+    margin 0.32s ease,
+    opacity 0.2s ease 0.1s,
+    transform 0.38s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.admin-nav-icone,
+.admin-avatar,
+.admin-sair svg {
+  transition:
+    color 0.2s ease,
+    transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.admin-lateral nav a:hover .admin-nav-icone {
+  transform: scale(1.06);
+}
+
+.admin-avatar {
+  background: var(--ecosol-solar);
+}
+
+.admin-cabecalho {
+  min-height: 62px;
+  padding: 14px 30px;
+  border-color: var(--ecosol-line);
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(14px) saturate(1.08);
+}
+
+.admin-conteudo {
+  padding: 30px;
+}
+
+.admin-titulo {
+  margin-bottom: 22px;
+}
+
+.admin-titulo h1 {
+  margin: 5px 0;
+  font-size: clamp(28px, 3vw, 34px);
+}
+
+.admin-titulo p {
+  max-width: 760px;
+  color: var(--ecosol-muted);
+  line-height: 1.5;
+}
+
+.admin-legenda,
+.admin-sobretitulo {
+  color: #56717a;
+  letter-spacing: 0.1em;
+}
+
+.admin-botao {
+  padding: 10px 15px;
+  border-radius: 9px;
+  background: var(--ecosol-primary);
+  box-shadow: none;
+  transition:
+    color 0.18s ease,
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.admin-botao:hover {
+  background: var(--ecosol-primary-hover);
+  box-shadow: 0 7px 18px rgba(15, 102, 112, 0.12);
+  transform: translateY(-1px);
+}
+
+.admin-botao:active {
+  transform: translateY(0) scale(0.985);
+}
+
+.admin-botao.secundario {
+  border-color: var(--ecosol-line);
+  background: #fff;
+  color: var(--ecosol-primary);
+}
+
+.admin-botao.secundario:hover {
+  background: var(--ecosol-soft);
+}
+
+.admin-botao.perigo {
+  background: var(--ecosol-danger);
+}
+
+.admin-cartao,
+.admin-resumos article,
+.admin-usina,
+.gmail-conta,
+.importacao-cartao,
+.planilhas-painel,
+.faturamento-fila,
+.faturamento-revisao,
+.faturamento-importacao,
+.faturamento-contexto,
+.calculos-painel,
+.bancario-executor,
+.bancario-preparar,
+.bancario-lista,
+.bancario-detalhe {
+  border: 1px solid var(--ecosol-line);
+  border-radius: var(--ecosol-radius);
+  background: var(--ecosol-surface);
+  box-shadow: none;
+  backdrop-filter: none;
+  transition:
+    border-color 0.22s ease,
+    box-shadow 0.28s ease,
+    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.admin-cartao:hover,
+.admin-usina:hover,
+.gmail-conta:hover,
+.importacao-cartao:hover {
+  border-color: #c7d9d5;
+  box-shadow: 0 10px 26px rgba(20, 65, 70, 0.06);
+  transform: translateY(-1px);
+}
+
+.admin-cartao {
+  padding: 20px;
+  margin-bottom: 18px;
+}
+
+.admin-resumos {
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.admin-resumos article {
+  padding: 18px;
+}
+
+.admin-resumos article.solar {
+  border-color: #eadba9;
+  background: #fffbef;
+}
+
+.admin-resumos strong {
+  margin: 10px 0 4px;
+}
+
+.admin-aplicacao input,
+.admin-aplicacao select,
+.admin-aplicacao textarea {
+  border-color: var(--ecosol-line);
+  border-radius: 9px;
+  background: #fff;
+}
+
+.admin-aplicacao input:focus,
+.admin-aplicacao select:focus,
+.admin-aplicacao textarea:focus {
+  border-color: var(--ecosol-primary);
+  box-shadow: 0 0 0 3px rgba(15, 102, 112, 0.1);
+}
+
+.admin-aplicacao :focus-visible {
+  outline: 2px solid var(--ecosol-solar);
+  outline-offset: 2px;
+}
+
+.admin-aviso {
+  border-radius: 9px;
+  box-shadow: none;
+}
+
+.admin-status,
+.status-pill,
+.faturamento-indicadores > span,
+.bancario-status {
+  border-radius: 999px;
+  box-shadow: none;
+}
+
+.admin-tabela th {
+  background: #f2f5f4;
+}
+
+.faturamento-contexto {
+  padding: 15px 18px;
+  background: var(--ecosol-surface);
+}
+
+.faturamento-contexto-icone {
+  width: 38px;
+  height: 38px;
+  background: #fff7dc;
+  box-shadow: none;
+}
+
+.faturamento-etapas {
+  border-color: var(--ecosol-line);
+  border-radius: var(--ecosol-radius);
+  background: #fff;
+  box-shadow: none;
+}
+
+.faturamento-etapas li.atual {
+  background: #fffbef;
+  box-shadow: inset 0 -3px var(--ecosol-solar);
+}
+
+.faturamento-navegacao-etapas li.atual a > span {
+  background: var(--ecosol-solar);
+  box-shadow: none;
+}
+
+.faturamento-importacao {
+  padding: 20px;
+  background: #fff;
+}
+
+.faturamento-passo {
+  background: var(--ecosol-soft);
+  color: var(--ecosol-primary);
+}
+
+.faturamento-item,
+.faturamento-grupo,
+.calculos-linha,
+.bancario-operacao {
+  box-shadow: none;
+}
+
+.faturamento-item.ativo,
+.bancario-operacao.ativo {
+  background: var(--ecosol-soft);
+}
+
+.faturamento-grupo {
+  border-radius: var(--ecosol-radius);
+  background: #fff;
+}
+
+.faturamento-demonstrativo,
+.calculos-demonstrativo {
+  border-color: var(--ecosol-line);
+  border-radius: var(--ecosol-radius);
+  background: #f7faf8;
+}
+
+.bancario-faixa-seguranca {
+  border-radius: 9px;
+  background: #fffbef;
+  box-shadow: none;
+}
+
+.bancario-resumo > div,
+.bancario-documentos > div {
+  border-radius: 9px;
+  background: #f4f7f6;
+}
+
+/* Formulários de criação e alteração */
+.admin-editor-sobreposicao {
+  padding: 28px;
+  background: rgba(14, 36, 43, 0.58);
+  backdrop-filter: blur(10px) saturate(0.9);
+  animation: ecosol-fundo-modal 0.24s ease both;
+}
+
+.admin-editor-flutuante {
+  width: min(760px, 100%);
+  max-height: min(760px, calc(100vh - 56px));
+  padding: 24px;
+  border: 1px solid rgba(206, 224, 220, 0.9);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 24px 70px rgba(7, 31, 37, 0.22);
+  animation: ecosol-modal-entrada 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+  scrollbar-gutter: stable;
+}
+
+.admin-formulario {
+  padding: 20px;
+  border: 1px solid var(--ecosol-line);
+  border-radius: var(--ecosol-radius);
+  background: var(--ecosol-surface);
+  box-shadow: none;
+}
+
+.admin-formulario.admin-cartao {
+  padding: 20px;
+}
+
+.admin-formulario > h3,
+.admin-editor-flutuante > h3 {
+  margin: 0 0 6px;
+  color: var(--ecosol-ink);
+  font-size: 20px;
+  line-height: 1.25;
+}
+
+.admin-formulario > h3 + p,
+.admin-editor-flutuante > h3 + p {
+  max-width: 620px;
+  margin: 0 0 18px;
+  color: var(--ecosol-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.admin-formulario fieldset,
+.admin-formulario fieldset.admin-campos {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 15px 18px;
+  margin: 0 0 18px;
+  padding: 0;
+  border: 0;
+}
+
+.admin-formulario label,
+.admin-contato label {
+  min-width: 0;
+  gap: 6px;
+  color: #36545e;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.admin-formulario label > small {
+  color: #788b91;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.admin-formulario input,
+.admin-formulario select,
+.admin-formulario textarea {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  font-size: 13px;
+}
+
+.admin-formulario textarea {
+  min-height: 94px;
+  resize: vertical;
+}
+
+.admin-formulario input::placeholder,
+.admin-formulario textarea::placeholder {
+  color: #98a7ab;
+  opacity: 1;
+}
+
+.admin-formulario input:hover,
+.admin-formulario select:hover,
+.admin-formulario textarea:hover {
+  border-color: #bdcfcb;
+}
+
+.admin-formulario input:read-only {
+  background: #f2f5f4;
+  color: #60747b;
+}
+
+.admin-formulario .admin-aviso,
+.admin-formulario .cadastro-integrado-largura {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.admin-editor-flutuante .admin-acoes,
+.admin-formulario > .admin-acoes {
+  justify-content: flex-end;
+  margin-top: 4px;
+  padding-top: 16px;
+  border-top: 1px solid var(--ecosol-line);
+}
+
+.admin-editor-flutuante .admin-acoes .admin-botao,
+.admin-formulario > .admin-acoes .admin-botao {
+  min-width: 112px;
+}
+
+.gmail-formulario,
+.cadastro-integrado {
+  max-width: 860px;
+}
+
+.gmail-formulario {
+  padding: 0;
+  border: 0;
+}
+
+.gmail-formulario fieldset {
+  margin-bottom: 14px;
+}
+
+.admin-transferencia-previa {
+  border-color: var(--ecosol-line);
+  border-radius: var(--ecosol-radius);
+  background: #fff;
+  box-shadow: var(--ecosol-shadow);
+  animation: ecosol-entrada 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.form-card input,
+.form-card select,
+.form-card textarea,
+.customer-fields input {
+  border: 1px solid var(--ecosol-line);
+  border-radius: 9px;
+  background: #fff;
+}
+
+.form-card input:focus,
+.form-card select:focus,
+.form-card textarea:focus,
+.customer-fields input:focus {
+  border-color: var(--ecosol-primary);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(15, 102, 112, 0.1);
+}
+
+@keyframes ecosol-fundo-modal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ecosol-modal-entrada {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.admin-conteudo > * {
+  animation: ecosol-entrada 0.38s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.hero-copy,
+.hero-art {
+  animation: ecosol-entrada 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.hero-art {
+  animation-delay: 0.08s;
+}
+
+.sun-disc {
+  animation: ecosol-respirar 7s ease-in-out infinite;
+}
+
+@keyframes ecosol-entrada {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes ecosol-respirar {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.025);
+  }
+}
+
+@media (min-width: 701px) {
+  .admin-aplicacao.admin-aplicacao--recolhida {
+    grid-template-columns: 72px minmax(0, 1fr);
+  }
+
+  .admin-aplicacao--recolhida .admin-lateral {
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+
+  .admin-aplicacao--recolhida .admin-lateral::after {
+    opacity: 0.45;
+    transform: translate(30px, -12px) scale(0.8);
+  }
+
+  .admin-aplicacao--recolhida .admin-marca,
+  .admin-aplicacao--recolhida .admin-lateral > .admin-legenda,
+  .admin-aplicacao--recolhida .admin-nav-texto,
+  .admin-aplicacao--recolhida .admin-perfil-texto,
+  .admin-aplicacao--recolhida .admin-sair span {
+    display: block;
+    max-width: 0;
+    opacity: 0;
+    transform: translateX(-8px);
+    transition-delay: 0s;
+  }
+
+  .admin-aplicacao--recolhida .admin-lateral > .admin-legenda {
+    max-height: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+  }
+
+  .admin-aplicacao--recolhida .admin-recolher span {
+    transform: rotate(180deg);
+  }
+}
+
+@media (max-width: 760px) {
+  .shell {
+    width: min(100% - 30px, 1180px);
+  }
+
+  .nav {
+    height: 64px;
+  }
+
+  .hero-grid {
+    min-height: auto;
+    gap: 20px;
+  }
+
+  .hero-copy {
+    padding: 48px 0 24px;
+  }
+
+  .hero-art {
+    min-height: 310px;
+  }
+
+  .section {
+    padding-block: 60px;
+  }
+
+  .admin-cabecalho,
+  .admin-conteudo {
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+
+  .admin-titulo {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .admin-editor-sobreposicao {
+    align-items: end;
+    padding: 12px;
+  }
+
+  .admin-editor-flutuante {
+    width: 100%;
+    max-height: calc(100vh - 24px);
+    padding: 18px;
+    border-radius: 16px 16px 10px 10px;
+  }
+
+  .admin-formulario fieldset,
+  .admin-formulario fieldset.admin-campos {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-editor-flutuante .admin-acoes,
+  .admin-formulario > .admin-acoes {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .admin-editor-flutuante .admin-acoes .admin-botao,
+  .admin-formulario > .admin-acoes .admin-botao {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

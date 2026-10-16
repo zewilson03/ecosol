@@ -37,7 +37,9 @@ export function pendenciasParaCalculo(
       item.id === Number(dados.unidade_id) &&
       item.uc === ucNormalizada(dados.uc) &&
       (item.cliente_id === Number(dados.cliente_id) ||
-        ((item.cliente_provisorio_id != null || item.cliente_operacional_id != null) && !dados.cliente_id)),
+        ((item.cliente_provisorio_id != null ||
+          item.cliente_operacional_id != null) &&
+          !dados.cliente_id)),
   );
   const semInjecao =
     preenchido(dados.injecao) && Number(dados.injecao.replace(",", ".")) === 0;
@@ -110,15 +112,17 @@ export function pendenciasParaEmissao(
   dados = fatura.dados,
   unidadeConhecida?: Unidade,
 ): string[] {
-  const unidade = unidadeConhecida ?? unidades.find(
-    (item) =>
-      item.id === Number(dados.unidade_id) &&
-      item.uc === ucNormalizada(dados.uc) &&
-      (item.cliente_id === Number(dados.cliente_id) ||
-        ((item.cliente_provisorio_id != null ||
-          item.cliente_operacional_id != null) &&
-          !dados.cliente_id)),
-  );
+  const unidade =
+    unidadeConhecida ??
+    unidades.find(
+      (item) =>
+        item.id === Number(dados.unidade_id) &&
+        item.uc === ucNormalizada(dados.uc) &&
+        (item.cliente_id === Number(dados.cliente_id) ||
+          ((item.cliente_provisorio_id != null ||
+            item.cliente_operacional_id != null) &&
+            !dados.cliente_id)),
+    );
   if (unidade?.cliente_operacional_id != null)
     return ["documentação real do cliente"];
   if (unidade?.cliente_provisorio_id != null)

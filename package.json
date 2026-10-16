@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test:seguranca": "node backend/testes/segurancaHttp.test.mjs",
+    "test:bancario": "node backend/testes/permissoesBancarias.test.mjs && node backend/testes/operacoesBancarias.test.mjs && node backend/testes/executorBancario.test.mjs",
+    "format:check": "prettier --check frontend/src frontend/testes frontend/index.html frontend/vite.config.ts backend/servidor backend/scripts backend/testes docs README.md package.json .prettierrc.json",
     "test:calculos": "node frontend/testes/calculos.test.mjs",
     "test:planilhas": "node backend/testes/planilhas.test.mjs",
     "test:transferencias": "node backend/testes/transferenciasUsinas.test.mjs",
@@ -13,7 +16,7 @@
     "dev": "node backend/servidor/iniciar.mjs",
     "build": "node node_modules/typescript/bin/tsc --project frontend/tsconfig.json --noEmit && node node_modules/vite/bin/vite.js build --config frontend/vite.config.ts --configLoader runner",
     "start": "node backend/servidor/iniciar.mjs",
-    "format": "prettier --write frontend/src frontend/index.html frontend/vite.config.ts backend/servidor backend/scripts README.md"
+    "format": "prettier --write frontend/src frontend/testes frontend/index.html frontend/vite.config.ts backend/servidor backend/scripts backend/testes docs README.md package.json .prettierrc.json"
   },
   "dependencies": {
     "decimal.js": "^10.6.0",

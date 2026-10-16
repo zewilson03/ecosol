@@ -129,9 +129,7 @@ export function resumirCalculos(linhas: LinhaCalculo[]) {
   const salvas = linhas.filter(
     (linha) =>
       linha.memoria &&
-      ["calculada", "aprovada", "aprovada_bloqueada"].includes(
-        linha.situacao,
-      ),
+      ["calculada", "aprovada", "aprovada_bloqueada"].includes(linha.situacao),
   );
   return {
     quantidade: linhas.length,

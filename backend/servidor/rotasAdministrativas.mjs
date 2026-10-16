@@ -3,6 +3,11 @@ import { resumoCriptografico } from "./autenticacao.mjs";
 import { obterBanco } from "./bancoDeDados.mjs";
 import { registrarHistorico } from "./faturamento/registros.mjs";
 import { exigirNivel } from "./permissoesDaEquipe.mjs";
+import {
+  nivelMinimoDoPapel,
+  rotasPermissoesBancarias,
+} from "./bancario/rotasPermissoes.mjs";
+import { rotasOperacoesBancarias } from "./bancario/rotasOperacoes.mjs";
 
 export const rotasAdministrativas = Router();
 const exigirAdministrador = exigirNivel(1);
@@ -16,6 +21,8 @@ rotasAdministrativas.use("/api/admin", (requisicao, resposta, proximo) => {
     return proximo();
   return exigirAdministrador(requisicao, resposta, proximo);
 });
+rotasAdministrativas.use(rotasPermissoesBancarias);
+rotasAdministrativas.use(rotasOperacoesBancarias);
 
 rotasAdministrativas.get("/api/admin/usinas", (_requisicao, resposta) => {
   const banco = obterBanco();
@@ -157,6 +164,16 @@ rotasAdministrativas.patch(
         .status(400)
         .json({ erro: "Mantenha pelo menos um administrador avançado." });
     }
+    const papelIncompativel = banco
+      .prepare(
+        "SELECT papel FROM bancario_papeis_equipe WHERE staff_id=? ORDER BY papel",
+      )
+      .all(id)
+      .find((item) => nivelMinimoDoPapel(item.papel) > nivel);
+    if (papelIncompativel)
+      return resposta.status(409).json({
+        erro: "Remova as permissões bancárias incompatíveis antes de reduzir o nível.",
+      });
     banco
       .prepare("UPDATE staff_users SET access_level = ? WHERE id = ?")
       .run(nivel, id);
@@ -202,6 +219,19 @@ rotasAdministrativas.delete(
             erro: "Mantenha pelo menos um administrador avançado.",
           });
         }
+      }
+      const ultimoGestor = banco
+        .prepare(
+          `SELECT
+             EXISTS(SELECT 1 FROM bancario_papeis_equipe WHERE staff_id=? AND papel='administrador_integracao') AS alvo,
+             (SELECT COUNT(*) FROM bancario_papeis_equipe WHERE papel='administrador_integracao') AS total`,
+        )
+        .get(id);
+      if (ultimoGestor.alvo && ultimoGestor.total <= 1) {
+        banco.exec("ROLLBACK");
+        return resposta.status(409).json({
+          erro: "Mantenha pelo menos um administrador da integração bancária.",
+        });
       }
       banco.prepare("DELETE FROM sessions WHERE staff_id = ?").run(id);
       banco.prepare("DELETE FROM staff_users WHERE id = ?").run(id);

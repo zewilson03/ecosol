@@ -39,6 +39,8 @@ async function chamar(caminho, cookie, dados) {
 }
 
 try {
+  assert.equal((await chamar("/api/dev/links")).status, 404);
+  assert.equal((await chamar("/api/clientes/cadastro", null, {})).status, 404);
   const entrada = await chamar("/api/equipe/entrada-inicial", null, {
     password: process.env.ADMIN_PASSWORD,
   });

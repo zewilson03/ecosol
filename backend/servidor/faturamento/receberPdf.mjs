@@ -123,13 +123,13 @@ export async function receberPdf({ arquivo, nome, lote, ator, origem }) {
       responsavel,
       administradorId,
       acao: "Importação de PDF",
-        dados: {
-          nome,
-          lote,
-          hash,
-          origem,
-          finalidade: extracao.finalidade?.finalidade ?? "cobranca",
-        },
+      dados: {
+        nome,
+        lote,
+        hash,
+        origem,
+        finalidade: extracao.finalidade?.finalidade ?? "cobranca",
+      },
       documentoId,
     });
     if (vinculo.alterado)

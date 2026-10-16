@@ -19,6 +19,25 @@ import {
 
 type SecaoDosCadastros = "unidades" | "clientes" | "contatos" | "acessos";
 
+type PermissoesBancarias = {
+  pode_gerenciar: boolean;
+  papeis: { id: string; nome: string }[];
+  pessoas: {
+    id: number;
+    name: string;
+    email: string;
+    access_level: number;
+    papeis: string[];
+  }[];
+};
+
+const nivelMinimoDoPapelBancario: Record<string, number> = {
+  consulta_auditoria: 1,
+  operador_financeiro: 2,
+  aprovador_financeiro: 3,
+  administrador_integracao: 3,
+};
+
 const secoesDosCadastros: {
   id: SecaoDosCadastros;
   numero: string;
@@ -119,16 +138,29 @@ export default function Clientes() {
   const consulta = usarConsulta<DadosDaEquipe>(
     secao === "unidades" ? null : `/api/equipe/dados?secao=${secao}`,
   );
+  const permissoesBancarias = usarConsulta<PermissoesBancarias>(
+    secao === "acessos" && administrador.nivel === 3
+      ? "/api/admin/bancario/permissoes"
+      : null,
+  );
   const provisorios = usarConsulta<
     { id: number; nome: string; unidades: number }[]
   >(
-    secao === "clientes"
-      ? "/api/admin/faturamento/clientes-provisorios"
-      : null,
+    secao === "clientes" ? "/api/admin/faturamento/clientes-provisorios" : null,
   );
   const operacionais = usarConsulta<
-    { id: number; referencia_interna: string; nome: string; situacao: string; unidades: number }[]
-  >(secao === "clientes" ? "/api/admin/faturamento/clientes-operacionais" : null);
+    {
+      id: number;
+      referencia_interna: string;
+      nome: string;
+      situacao: string;
+      unidades: number;
+    }[]
+  >(
+    secao === "clientes"
+      ? "/api/admin/faturamento/clientes-operacionais"
+      : null,
+  );
   const [busca, definirBusca] = useState("");
   const [formulario, definirFormulario] = useState(
     Boolean(nomeInicialCliente || clienteParaVincular),
@@ -193,6 +225,32 @@ export default function Clientes() {
         "Acesso excluído. As sessões dessa pessoa foram encerradas.",
       );
       consulta.atualizar();
+    } catch (falha) {
+      definirErro((falha as Error).message);
+    } finally {
+      definirOcupado(false);
+    }
+  }
+
+  async function alterarPapelBancario(
+    pessoaId: number,
+    papel: string,
+    conceder: boolean,
+  ) {
+    definirOcupado(true);
+    definirErro("");
+    definirMensagem("");
+    try {
+      await consultarServidor(
+        `/api/admin/bancario/permissoes/${pessoaId}/${papel}`,
+        { method: conceder ? "PUT" : "DELETE" },
+      );
+      definirMensagem(
+        conceder
+          ? "Permissão bancária concedida e auditada."
+          : "Permissão bancária removida e auditada.",
+      );
+      permissoesBancarias.atualizar();
     } catch (falha) {
       definirErro((falha as Error).message);
     } finally {
@@ -448,8 +506,8 @@ export default function Clientes() {
               {(operacionais.dados ?? []).length > 0 && (
                 <details className="admin-tabela">
                   <summary>
-                    Clientes operacionais de teste: {operacionais.dados?.length} ·
-                    documentação pendente, sem acesso e sem cobrança
+                    Clientes operacionais de teste: {operacionais.dados?.length}{" "}
+                    · documentação pendente, sem acesso e sem cobrança
                   </summary>
                   <table>
                     <thead>
@@ -504,7 +562,9 @@ export default function Clientes() {
                         .filter(
                           (item) =>
                             item.unidades > 0 &&
-                            item.nome.toLowerCase().includes(busca.toLowerCase()),
+                            item.nome
+                              .toLowerCase()
+                              .includes(busca.toLowerCase()),
                         )
                         .map((item) => (
                           <tr key={item.id}>
@@ -651,6 +711,102 @@ export default function Clientes() {
               </div>
               {administradores.length === 0 && (
                 <p>Crie o primeiro acesso usando “Novo acesso”.</p>
+              )}
+              <div className="admin-barra">
+                <div>
+                  <h2>Permissões bancárias</h2>
+                  <p>
+                    Acesso negado por padrão. Preparação, aprovação, auditoria e
+                    administração da integração são permissões independentes.
+                  </p>
+                </div>
+              </div>
+              {permissoesBancarias.carregando && (
+                <p>Carregando permissões bancárias…</p>
+              )}
+              {permissoesBancarias.erro && (
+                <p className="admin-erro">{permissoesBancarias.erro}</p>
+              )}
+              {permissoesBancarias.dados && (
+                <>
+                  {!permissoesBancarias.dados.pode_gerenciar && (
+                    <p className="admin-aviso">
+                      Somente um administrador da integração pode alterar estes
+                      papéis. Outro administrador deve alterar os papéis da sua
+                      própria conta.
+                    </p>
+                  )}
+                  <div className="admin-tabela">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Pessoa</th>
+                          {permissoesBancarias.dados.papeis.map((papel) => (
+                            <th key={papel.id}>{papel.nome}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {permissoesBancarias.dados.pessoas.map((pessoa) => (
+                          <tr key={pessoa.id}>
+                            <td>
+                              <strong>{pessoa.name}</strong>
+                              <br />
+                              <small>
+                                Nível {pessoa.access_level} · {pessoa.email}
+                              </small>
+                            </td>
+                            {permissoesBancarias.dados!.papeis.map((papel) => {
+                              const concedido = pessoa.papeis.includes(
+                                papel.id,
+                              );
+                              const nivelInsuficiente =
+                                pessoa.access_level <
+                                (nivelMinimoDoPapelBancario[papel.id] ?? 3);
+                              return (
+                                <td key={papel.id}>
+                                  <label>
+                                    <input
+                                      type="checkbox"
+                                      aria-label={`${papel.nome} para ${pessoa.name}`}
+                                      checked={concedido}
+                                      disabled={
+                                        ocupado ||
+                                        !permissoesBancarias.dados!
+                                          .pode_gerenciar ||
+                                        pessoa.id === administrador.id ||
+                                        nivelInsuficiente
+                                      }
+                                      onChange={() =>
+                                        alterarPapelBancario(
+                                          pessoa.id,
+                                          papel.id,
+                                          !concedido,
+                                        )
+                                      }
+                                    />
+                                    {nivelInsuficiente
+                                      ? ` Exige nível ${nivelMinimoDoPapelBancario[papel.id]}`
+                                      : concedido
+                                        ? " Concedido"
+                                        : " Sem acesso"}
+                                  </label>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p>
+                    <small>
+                      Por segurança, ninguém altera os próprios papéis. No
+                      primeiro uso, um administrador nível 3 deve nomear outro
+                      nível 3 como administrador da integração.
+                    </small>
+                  </p>
+                </>
               )}
             </>
           )}

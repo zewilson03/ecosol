@@ -22,8 +22,7 @@ export function identificarFinalidadeDocumento(texto) {
       ? linhas
           .slice(inicio + 1, fim > inicio ? fim : undefined)
           .filter(
-            (linha) =>
-              /\b(?:KWH|KW|KVARH)\b/.test(linha) && /\d/.test(linha),
+            (linha) => /\b(?:KWH|KW|KVARH)\b/.test(linha) && /\d/.test(linha),
           ).length
       : 0;
   const temConsumoScee = /\bCONSUMO(?:\s+HR|\s+FP|\s+P)?\s+SCEE\b/.test(normal);

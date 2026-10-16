@@ -1,0 +1,380 @@
+import assert from "node:assert/strict";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+process.env.ECOSOL_DATA_DIR = mkdtempSync(join(tmpdir(), "ecosol-executor-"));
+process.env.NODE_ENV = "test";
+
+const { obterBanco } = await import("../servidor/bancoDeDados.mjs");
+const { criarAdaptadorSicoobSimulado } =
+  await import("../servidor/bancario/adaptadorSimulado.mjs");
+const { criarExecutorBancario } =
+  await import("../servidor/bancario/executor.mjs");
+const { hashCanonico, jsonCanonico } =
+  await import("../servidor/bancario/operacoes.mjs");
+
+const banco = obterBanco();
+const preparadorId = Number(
+  banco
+    .prepare(
+      "INSERT INTO staff_users(name,email,password_hash,access_level) VALUES(?,?,?,3)",
+    )
+    .run("Preparador", "preparador-executor@teste.local", "hash")
+    .lastInsertRowid,
+);
+const aprovadorId = Number(
+  banco
+    .prepare(
+      "INSERT INTO staff_users(name,email,password_hash,access_level) VALUES(?,?,?,3)",
+    )
+    .run("Aprovador", "aprovador-executor@teste.local", "hash").lastInsertRowid,
+);
+banco
+  .prepare(
+    "INSERT INTO bancario_papeis_equipe(staff_id,papel,concedido_por) VALUES(?, 'operador_financeiro', 9999)",
+  )
+  .run(preparadorId);
+banco
+  .prepare(
+    "INSERT INTO bancario_papeis_equipe(staff_id,papel,concedido_por) VALUES(?, 'aprovador_financeiro', 9999)",
+  )
+  .run(aprovadorId);
+
+const clienteId = Number(
+  banco
+    .prepare("INSERT INTO customers(name,cpf,email,phone) VALUES(?,?,?,?)")
+    .run("Cliente executor", "52998224725", "executor@teste.local", "")
+    .lastInsertRowid,
+);
+const unidadeId = Number(
+  banco
+    .prepare(
+      `INSERT INTO faturamento_unidades
+       (uc,nome,documento,email,dia_vencimento,cliente_id)
+       VALUES(?,?,?,?,?,?)`,
+    )
+    .run(
+      "987654321",
+      "Cliente executor",
+      "52998224725",
+      "executor@teste.local",
+      20,
+      clienteId,
+    ).lastInsertRowid,
+);
+
+let sequencia = 0;
+function criarTrabalho(rotulo, valorCentavos = 10000) {
+  sequencia += 1;
+  const competencia = `2027-${String(sequencia).padStart(2, "0")}`;
+  const pdf = Buffer.from(`%PDF simulador ${rotulo}`);
+  const documentoHash = createHash("sha256").update(pdf).digest("hex");
+  const memoria = {
+    regra: "ecosol-v1",
+    total_centavos: valorCentavos,
+    vencimento_ecosol: "2027-12-20",
+    unidade: { id: unidadeId, uc: "987654321" },
+  };
+  const documentoId = Number(
+    banco
+      .prepare(
+        `INSERT INTO faturamento_documentos
+         (hash,nome,pdf,lote,texto,extracao,dados,memoria,unidade_id,
+          competencia,status,classificacao,finalidade,versao)
+         VALUES(?,?,?,?,?,?,?,?,?,?,'Aprovada — aguardando emissão','fatura','cobranca',7)`,
+      )
+      .run(
+        documentoHash,
+        `${rotulo}.pdf`,
+        pdf,
+        rotulo,
+        "texto",
+        "{}",
+        "{}",
+        JSON.stringify(memoria),
+        unidadeId,
+        competencia,
+      ).lastInsertRowid,
+  );
+  const snapshot = {
+    versao: 1,
+    tipo: "cobranca",
+    origem: {
+      documento_id: documentoId,
+      documento_hash: documentoHash,
+      documento_versao: 7,
+      nome: `${rotulo}.pdf`,
+    },
+    cliente: {
+      id: clienteId,
+      nome: "Cliente executor",
+      documento: "52998224725",
+    },
+    unidade: { id: unidadeId, uc: "987654321", competencia },
+    cobranca: {
+      valor_centavos: valorCentavos,
+      moeda: "BRL",
+      vencimento: "2027-12-20",
+    },
+    memoria_calculo: memoria,
+  };
+  const operacaoId = randomUUID();
+  const idempotencia = createHash("sha256")
+    .update(`executor-${rotulo}`)
+    .digest("hex");
+  const snapshotHash = hashCanonico(snapshot);
+  banco
+    .prepare(
+      `INSERT INTO bancario_operacoes
+       (id,tipo,ambiente,conta_referencia,origem_tipo,origem_id,origem_versao,
+        idempotencia,valor_centavos,vencimento,snapshot,snapshot_hash,estado,preparado_por)
+       VALUES(?,'cobranca','homologacao','conta-teste','faturamento_documento',?,7,
+              ?,?,'2027-12-20',?,?,'aguardando_aprovacao',?)`,
+    )
+    .run(
+      operacaoId,
+      String(documentoId),
+      idempotencia,
+      valorCentavos,
+      jsonCanonico(snapshot),
+      snapshotHash,
+      preparadorId,
+    );
+  banco
+    .prepare(
+      `INSERT INTO bancario_aprovacoes
+       (operacao_id,operacao_versao,snapshot_hash,preparador_id,aprovador_id)
+       VALUES(?,1,?,?,?)`,
+    )
+    .run(operacaoId, snapshotHash, preparadorId, aprovadorId);
+  banco
+    .prepare("UPDATE bancario_operacoes SET estado='aprovada' WHERE id=?")
+    .run(operacaoId);
+  const intencaoId = randomUUID();
+  banco
+    .prepare(
+      `INSERT INTO bancario_intencoes
+       (id,operacao_id,operacao_versao,acao,estado,proxima_tentativa_em)
+       VALUES(?,?,1,'registrar_cobranca','pendente',0)`,
+    )
+    .run(intencaoId, operacaoId);
+  banco
+    .prepare("UPDATE bancario_operacoes SET estado='envio_pendente' WHERE id=?")
+    .run(operacaoId);
+  return { operacaoId, intencaoId, documentoId, idempotencia };
+}
+
+const cenarios = new Map();
+const adaptador = criarAdaptadorSicoobSimulado({
+  banco,
+  decidir({ idempotencia, etapa, tentativa }) {
+    const cenario = cenarios.get(idempotencia) ?? "sucesso";
+    if (
+      cenario === "falha_segura_uma_vez" &&
+      etapa === "envio" &&
+      tentativa === 1
+    )
+      return "indisponivel_antes_envio";
+    if (cenario === "falha_segura_sempre" && etapa === "envio")
+      return "indisponivel_antes_envio";
+    if (cenario === "aceitar_e_timeout" && etapa === "envio")
+      return "aceitar_e_timeout";
+    if (cenario === "timeout_sem_aceite" && etapa === "envio")
+      return "timeout_sem_aceite";
+    if (cenario === "rejeitada" && etapa === "envio") return "rejeitada";
+    return "sucesso";
+  },
+});
+let agora = 2_000_000_000_000;
+const executor = criarExecutorBancario({
+  banco,
+  adaptador,
+  relogio: () => agora,
+  executorId: "executor-teste",
+});
+
+function operacao(id) {
+  return banco
+    .prepare(
+      "SELECT estado,provedor_id,ultimo_codigo FROM bancario_operacoes WHERE id=?",
+    )
+    .get(id);
+}
+
+function intencao(id) {
+  return banco
+    .prepare(
+      "SELECT estado,tentativas,posse_por,posse_ate FROM bancario_intencoes WHERE id=?",
+    )
+    .get(id);
+}
+
+try {
+  const sucesso = criarTrabalho("sucesso");
+  assert.deepEqual(await executor.processarUma(), {
+    processada: false,
+    motivo: "sem_trabalho",
+  });
+  banco
+    .prepare("UPDATE bancario_controle_executor SET pausado=0 WHERE id=1")
+    .run();
+  assert.equal((await executor.processarUma()).processada, true);
+  assert.equal(operacao(sucesso.operacaoId).estado, "registrada");
+  assert.match(operacao(sucesso.operacaoId).provedor_id, /^SIM-/);
+  assert.equal(intencao(sucesso.intencaoId).estado, "concluida");
+
+  const ambiguoAceito = criarTrabalho("ambiguo-aceito");
+  cenarios.set(ambiguoAceito.idempotencia, "aceitar_e_timeout");
+  await executor.processarUma();
+  assert.equal(
+    operacao(ambiguoAceito.operacaoId).estado,
+    "resultado_desconhecido",
+  );
+  assert.equal(
+    intencao(ambiguoAceito.intencaoId).estado,
+    "resultado_desconhecido",
+  );
+  agora += quinzeMinutosParaTeste();
+  await executor.processarUma();
+  assert.equal(operacao(ambiguoAceito.operacaoId).estado, "registrada");
+  assert.deepEqual(
+    banco
+      .prepare(
+        "SELECT etapa FROM bancario_tentativas WHERE operacao_id=? ORDER BY rowid",
+      )
+      .all(ambiguoAceito.operacaoId)
+      .map((item) => item.etapa),
+    ["envio", "consulta"],
+  );
+  const ambiguoAusente = criarTrabalho("ambiguo-ausente");
+  cenarios.set(ambiguoAusente.idempotencia, "timeout_sem_aceite");
+  await executor.processarUma();
+  agora += quinzeMinutosParaTeste();
+  await executor.processarUma();
+  assert.equal(
+    operacao(ambiguoAusente.operacaoId).estado,
+    "resultado_desconhecido",
+  );
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT COUNT(*) AS n FROM bancario_simulador_cobrancas WHERE idempotencia=?",
+      )
+      .get(ambiguoAusente.idempotencia).n,
+    0,
+  );
+  assert.deepEqual(
+    banco
+      .prepare(
+        "SELECT etapa FROM bancario_tentativas WHERE operacao_id=? ORDER BY rowid",
+      )
+      .all(ambiguoAusente.operacaoId)
+      .map((item) => item.etapa),
+    ["envio", "consulta"],
+  );
+  banco
+    .prepare("UPDATE bancario_intencoes SET proxima_tentativa_em=? WHERE id=?")
+    .run(agora + 24 * 60 * 60_000, ambiguoAusente.intencaoId);
+
+  const falhaSegura = criarTrabalho("falha-segura");
+  cenarios.set(falhaSegura.idempotencia, "falha_segura_uma_vez");
+  await executor.processarUma();
+  assert.equal(operacao(falhaSegura.operacaoId).estado, "envio_pendente");
+  assert.equal(intencao(falhaSegura.intencaoId).estado, "pendente");
+  agora += quinzeMinutosParaTeste();
+  await executor.processarUma();
+  assert.equal(operacao(falhaSegura.operacaoId).estado, "registrada");
+
+  const rejeitada = criarTrabalho("rejeitada");
+  cenarios.set(rejeitada.idempotencia, "rejeitada");
+  await executor.processarUma();
+  assert.equal(operacao(rejeitada.operacaoId).estado, "rejeitada");
+  assert.equal(intencao(rejeitada.intencaoId).estado, "falhou");
+
+  const posseExpirada = criarTrabalho("posse-expirada");
+  banco
+    .prepare(
+      "UPDATE bancario_intencoes SET estado='processando',posse_por='morto',posse_ate=? WHERE id=?",
+    )
+    .run(agora - 1, posseExpirada.intencaoId);
+  await executor.processarUma();
+  assert.equal(
+    operacao(posseExpirada.operacaoId).estado,
+    "resultado_desconhecido",
+  );
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT etapa FROM bancario_tentativas WHERE operacao_id=? ORDER BY iniciado_em DESC LIMIT 1",
+      )
+      .get(posseExpirada.operacaoId).etapa,
+    "consulta",
+  );
+
+  const concorrente = criarTrabalho("concorrente");
+  const executorDois = criarExecutorBancario({
+    banco,
+    adaptador,
+    relogio: () => agora,
+    executorId: "executor-teste-2",
+  });
+  const concorrencia = await Promise.all([
+    executor.processarUma(),
+    executorDois.processarUma(),
+  ]);
+  assert.equal(
+    concorrencia.filter((resultado) => resultado.processada).length,
+    1,
+  );
+  assert.equal(operacao(concorrente.operacaoId).estado, "registrada");
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT COUNT(*) AS n FROM bancario_tentativas WHERE operacao_id=?",
+      )
+      .get(concorrente.operacaoId).n,
+    1,
+  );
+
+  const limiteRetentativas = criarTrabalho("limite-retentativas");
+  cenarios.set(limiteRetentativas.idempotencia, "falha_segura_sempre");
+  banco
+    .prepare("UPDATE bancario_intencoes SET tentativas=7 WHERE id=?")
+    .run(limiteRetentativas.intencaoId);
+  await executor.processarUma();
+  assert.equal(operacao(limiteRetentativas.operacaoId).estado, "falhou");
+  assert.equal(intencao(limiteRetentativas.intencaoId).estado, "falhou");
+
+  const permissaoRevogada = criarTrabalho("permissao-revogada");
+  banco
+    .prepare(
+      "DELETE FROM bancario_papeis_equipe WHERE staff_id=? AND papel='aprovador_financeiro'",
+    )
+    .run(aprovadorId);
+  const bloqueio = await executor.processarUma();
+  assert.equal(bloqueio.motivo, "bloqueada_antes_envio");
+  assert.equal(operacao(permissaoRevogada.operacaoId).estado, "falhou");
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT COUNT(*) AS n FROM bancario_tentativas WHERE operacao_id=?",
+      )
+      .get(permissaoRevogada.operacaoId).n,
+    0,
+  );
+
+  assert.ok(
+    banco.prepare("SELECT COUNT(*) AS n FROM bancario_tentativas").get().n >= 8,
+  );
+  console.log(
+    "OK: executor pausado, claim, sucesso, rejeição, retry seguro, timeout, consulta e posse expirada.",
+  );
+} finally {
+  banco.close();
+}
+
+function quinzeMinutosParaTeste() {
+  return 16 * 60_000;
+}

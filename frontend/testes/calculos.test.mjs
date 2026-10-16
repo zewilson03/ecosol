@@ -35,8 +35,23 @@ try {
   assert.equal(linhas[0].dados.ajuste_gdii, "0");
   assert.equal(linhas[0].dados.vencimento_ecosol, ""); // usa Equatorial no servidor
   assert.equal(linhas[1].dados.ajuste_gdii, "290.71");
-  assert.equal(linhas[2].situacao, "pendente");
-  assert.ok(linhas[2].pendencias.includes("documentação real do cliente"));
+  assert.equal(linhas[2].situacao, "pronta");
+  assert.ok(!linhas[2].pendencias.includes("documentação real do cliente"));
+  const aprovadaOperacional = prepararLinhaCalculo(
+    {
+      ...documentos[2],
+      status: "Aprovada — aguardando emissão",
+      memoria: { ...documentos[3].memoria, unidade: unidades[2] },
+    },
+    unidades,
+    documentos,
+  );
+  assert.equal(aprovadaOperacional.situacao, "aprovada_bloqueada");
+  assert.ok(
+    aprovadaOperacional.pendenciasEmissao.includes(
+      "documentação real do cliente",
+    ),
+  );
   assert.deepEqual(
     { unidades, documentos },
     original,
@@ -44,8 +59,8 @@ try {
   );
   assert.deepEqual(resumirCalculos(linhas), {
     quantidade: 5,
-    pendentes: 1,
-    prontas: 2,
+    pendentes: 0,
+    prontas: 3,
     calculadas: 2,
     aguardandoAprovacao: 1,
     aprovadas: 1,

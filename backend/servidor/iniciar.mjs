@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import "./configuracao.mjs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
@@ -9,20 +9,19 @@ import { rotasAdministrativas } from "./rotasAdministrativas.mjs";
 import { rotasFaturamento } from "./faturamento/rotas.mjs";
 import { rotasGmail, sincronizadorGmail } from "./gmail/rotas.mjs";
 import { criarRepositorioGmail } from "./gmail/repositorio.mjs";
+import { protecaoHttp, tratarErroHttp } from "./segurancaHttp.mjs";
+import { iniciarExecutorBancarioSeConfigurado } from "./bancario/executor.mjs";
 
 const pastaDoBackend = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const pastaDoProjeto = resolve(pastaDoBackend, "..");
 const pastaDoFrontend = join(pastaDoProjeto, "frontend");
 const pastaCompilada = join(pastaDoFrontend, "dist");
 
-const arquivoDeConfiguracao = join(pastaDoBackend, ".env.local");
-if (existsSync(arquivoDeConfiguracao))
-  process.loadEnvFile(arquivoDeConfiguracao);
-
 const aplicacao = express();
 const porta = Number(process.env.PORT ?? 3000);
 
 aplicacao.disable("x-powered-by");
+aplicacao.use(protecaoHttp(process.env.APP_URL ?? `http://localhost:${porta}`));
 aplicacao.use(express.urlencoded({ extended: false, limit: "20kb" }));
 aplicacao.use(
   "/api/admin/faturamento/planilhas",
@@ -30,28 +29,12 @@ aplicacao.use(
 );
 aplicacao.use(express.json({ limit: "20kb" }));
 
-// Formulários só podem ser enviados pela própria origem do site.
-aplicacao.use((requisicao, resposta, proximo) => {
-  if (
-    ["POST", "PATCH", "PUT", "DELETE"].includes(requisicao.method) &&
-    requisicao.headers.origin
-  ) {
-    const origemPermitida = process.env.APP_URL ?? `http://localhost:${porta}`;
-    if (
-      new URL(requisicao.headers.origin).origin !==
-      new URL(origemPermitida).origin
-    ) {
-      return resposta.sendStatus(403);
-    }
-  }
-  proximo();
-});
-
 aplicacao.use(rotas);
 aplicacao.use(rotasAdministrativas);
 aplicacao.use(rotasFaturamento);
 aplicacao.use(rotasGmail);
 obterBanco();
+iniciarExecutorBancarioSeConfigurado();
 
 if (process.env.NODE_ENV !== "production") {
   // Recompila automaticamente a interface quando o código é salvo no VS Code.
@@ -68,10 +51,7 @@ aplicacao.get("/{*caminho}", (_requisicao, resposta) => {
   resposta.sendFile(join(pastaCompilada, "index.html"));
 });
 
-aplicacao.use((erro, _requisicao, resposta, _proximo) => {
-  console.error("Erro no servidor Ecosol:", erro);
-  resposta.status(500).send("Não foi possível concluir a solicitação.");
-});
+aplicacao.use(tratarErroHttp);
 
 aplicacao.listen(porta, "127.0.0.1", () => {
   console.log(`Ecosol disponível em http://localhost:${porta}`);

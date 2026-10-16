@@ -2,6 +2,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import RotasDaAplicacao from "./RotasDaAplicacao";
 import "./estilos.css";
+import "./identidadeMinimalista.css";
 
 const elementoPrincipal = document.getElementById("root");
 if (!elementoPrincipal) throw new Error("Elemento principal não encontrado.");

@@ -32,9 +32,7 @@ const protegidos = candidatos.filter(
     documento.unidade_id !== null ||
     documento.competencia !== null,
 );
-const elegiveis = candidatos.filter(
-  (item) => !protegidos.includes(item),
-);
+const elegiveis = candidatos.filter((item) => !protegidos.includes(item));
 const resumo = {
   modo: confirmar ? "confirmado" : "previa",
   documentos: documentos.length,
@@ -58,7 +56,10 @@ if (confirmar) {
   const pasta = resolve("backend/data/backups");
   mkdirSync(pasta, { recursive: true });
   const carimbo = new Date().toISOString().replace(/[-:.]/g, "");
-  const backup = resolve(pasta, `ecosol-antes-classificar-pagamentos-${carimbo}.db`);
+  const backup = resolve(
+    pasta,
+    `ecosol-antes-classificar-pagamentos-${carimbo}.db`,
+  );
   banco.prepare("VACUUM INTO ?").run(backup);
   resumo.backup = backup;
   banco.exec("BEGIN IMMEDIATE");

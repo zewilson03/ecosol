@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { prepararFaturamento } from "./faturamento/esquema.mjs";
 import { prepararGmail } from "./gmail/esquema.mjs";
+import { prepararBancario } from "./bancario/esquema.mjs";
 
 let banco;
 
@@ -148,6 +149,7 @@ export function obterBanco() {
 
     prepararFaturamento(banco);
     prepararGmail(banco);
+    prepararBancario(banco);
     return banco;
   } catch (erro) {
     const conexaoIncompleta = banco;

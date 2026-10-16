@@ -72,10 +72,7 @@ function somarTarifa(unitario: string, bandeira: string) {
   const primeiro = converter(unitario);
   const segundo = converter(bandeira);
   if (primeiro === null || segundo === null) return "";
-  return (primeiro + segundo)
-    .toFixed(9)
-    .replace(/0+$/, "")
-    .replace(/\.$/, "");
+  return (primeiro + segundo).toFixed(9).replace(/0+$/, "").replace(/\.$/, "");
 }
 
 export default function PreparacaoFaturas() {
@@ -516,8 +513,8 @@ export default function PreparacaoFaturas() {
       ) {
         proximo.origem_tarifa = anterior.origem_tarifa || "propria";
         proximo.tarifa_total = somarTarifa(
-          chave === "unitario" ? valor : anterior.unitario ?? "",
-          chave === "bandeira" ? valor : anterior.bandeira ?? "",
+          chave === "unitario" ? valor : (anterior.unitario ?? ""),
+          chave === "bandeira" ? valor : (anterior.bandeira ?? ""),
         );
       }
       if (chave === "tarifa_total") {
@@ -533,7 +530,10 @@ export default function PreparacaoFaturas() {
       ...anterior,
       tarifa_manual: "",
       origem_tarifa: anterior.origem_tarifa || "propria",
-      tarifa_total: somarTarifa(anterior.unitario ?? "", anterior.bandeira ?? ""),
+      tarifa_total: somarTarifa(
+        anterior.unitario ?? "",
+        anterior.bandeira ?? "",
+      ),
     }));
     setAlterado(true);
   }
@@ -745,7 +745,12 @@ export default function PreparacaoFaturas() {
     : [];
   const pendenciasEmissao =
     selecionado && selecionado.status === aprovada
-      ? pendenciasParaEmissao(selecionado, unidades.dados ?? [], dados, unidade ?? undefined)
+      ? pendenciasParaEmissao(
+          selecionado,
+          unidades.dados ?? [],
+          dados,
+          unidade ?? undefined,
+        )
       : [];
   const emissaoBloqueada = pendenciasEmissao.length > 0;
   const lista = (recebimentos.dados ?? []).filter(
@@ -785,8 +790,11 @@ export default function PreparacaoFaturas() {
   return (
     <>
       <div className="faturamento-contexto" role="note">
-        <span aria-hidden="true">☀</span>
-        <div>
+        <span className="faturamento-contexto-icone" aria-hidden="true">
+          ☀
+        </span>
+        <div className="faturamento-contexto-texto">
+          <small>FLUXO DE FATURAMENTO</small>
           <strong>Conferência interna</strong>
           <p>
             Revise o PDF, calcule e aprove o valor. A emissão pelo Sicoob ainda
@@ -819,6 +827,7 @@ export default function PreparacaoFaturas() {
         >
           <div>
             <span className="faturamento-passo">1</span>
+            <small className="admin-sobretitulo">ENTRADA MANUAL</small>
             <h2>Adicionar fatura</h2>
             <p>
               Informe o lote e selecione o PDF da Equatorial. O arquivo original
@@ -851,10 +860,11 @@ export default function PreparacaoFaturas() {
         </form>
       )}
       {nivel >= 3 && (
-        <div className="admin-aviso">
+        <div className="faturamento-reanalise">
           <button
             className="admin-botao secundario"
             type="button"
+            title="Refaz a leitura dos PDFs sem alterar edições manuais, calcular ou aprovar cobranças."
             disabled={
               ocupado ||
               !consulta.dados?.some(
@@ -863,12 +873,9 @@ export default function PreparacaoFaturas() {
             }
             onClick={reanalisarPendentes}
           >
-            Reanalisar faturas pendentes
+            <span aria-hidden="true">↻</span>
+            Reanalisar pendentes
           </button>
-          <p>
-            Refaz a leitura dos PDFs existentes. Preserva edições manuais e não
-            calcula nem aprova cobranças.
-          </p>
         </div>
       )}
       <EstadoDaConsulta {...consulta} repetir={consulta.atualizar} />
@@ -1411,7 +1418,8 @@ export default function PreparacaoFaturas() {
                   </fieldset>
                   {selecionado.usina_geradora?.numero && (
                     <p className="faturamento-nota-conferencia">
-                      Geradora informada no SCEE: UC {selecionado.usina_geradora.numero}.{" "}
+                      Geradora informada no SCEE: UC{" "}
+                      {selecionado.usina_geradora.numero}.{" "}
                       {selecionado.usina_geradora.situacao === "identificada"
                         ? `Usina identificada: ${selecionado.usina_geradora.usina?.nome}.`
                         : selecionado.usina_geradora.situacao === "ambigua"

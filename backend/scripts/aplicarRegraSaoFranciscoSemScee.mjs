@@ -22,7 +22,9 @@ const documentos = banco
 
 const candidatos = [];
 for (const documento of documentos) {
-  if (createHash("sha256").update(documento.pdf).digest("hex") !== documento.hash)
+  if (
+    createHash("sha256").update(documento.pdf).digest("hex") !== documento.hash
+  )
     throw new Error(`Integridade inválida no PDF #${documento.id}.`);
   const extracao = await lerPdf(Buffer.from(documento.pdf));
   if (!extracao.sinalizadores?.mensagens_scee_vazias) continue;
@@ -68,7 +70,8 @@ if (confirmar && candidatos.length) {
     pasta,
     `ecosol-antes-regra-sao-francisco-sem-scee-${carimbo}.db`,
   );
-  if (existsSync(arquivoBackup)) throw new Error("O arquivo de backup já existe.");
+  if (existsSync(arquivoBackup))
+    throw new Error("O arquivo de backup já existe.");
   banco.prepare("VACUUM INTO ?").run(arquivoBackup);
   resumo.backup = arquivoBackup;
 
@@ -92,7 +95,9 @@ if (confirmar && candidatos.length) {
         documento.versao,
       );
       if (gravacao.changes !== 1)
-        throw new Error(`A fatura #${documento.id} mudou durante a atualização.`);
+        throw new Error(
+          `A fatura #${documento.id} mudou durante a atualização.`,
+        );
       const vinculo = sincronizarVinculoDaGeradora(banco, {
         ...preenchimento,
         competencia: preenchimento.dados.competencia,

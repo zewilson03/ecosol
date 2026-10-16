@@ -45,9 +45,9 @@ await workbook.xlsx.readFile(arquivo);
 const aba = workbook.worksheets[0];
 if (!aba) throw new Error("A planilha não contém abas.");
 const cabecalhos = new Map();
-aba.getRow(1).eachCell((celula, coluna) =>
-  cabecalhos.set(chave(celula.text), coluna),
-);
+aba
+  .getRow(1)
+  .eachCell((celula, coluna) => cabecalhos.set(chave(celula.text), coluna));
 const colunaNome = cabecalhos.get("NOME USINA");
 const colunaAntiga = cabecalhos.get("UC GERADORA");
 const colunaAtual = cabecalhos.get("UC NOVA GERADORA");

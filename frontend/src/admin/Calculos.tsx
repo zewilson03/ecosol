@@ -458,9 +458,7 @@ function DetalheCalculo({
   }, []);
   const d = linha.documento;
   const memoria = previa?.memoria ?? linha.memoria;
-  const aprovada = ["aprovada", "aprovada_bloqueada"].includes(
-    linha.situacao,
-  );
+  const aprovada = ["aprovada", "aprovada_bloqueada"].includes(linha.situacao);
   const enderecoFatura = `/admin/faturas?etapa=conferir&documento=${d.id}`;
 
   async function executar(acao: "previa" | "calcular" | "aprovar") {
@@ -683,19 +681,18 @@ function DetalheCalculo({
             </div>
           </div>
         )}
-      {aprovada && (
-        linha.pendenciasEmissao.length ? (
+      {aprovada &&
+        (linha.pendenciasEmissao.length ? (
           <p className="admin-aviso erro" role="alert">
             Emissão bloqueada: complete {linha.pendenciasEmissao.join(", ")}
             antes de emitir o boleto.
           </p>
         ) : (
           <p className="admin-aviso">
-            Cálculo aprovado e preservado no histórico. Aguarda a etapa de emissão
-            de boleto.
+            Cálculo aprovado e preservado no histórico. Aguarda a etapa de
+            emissão de boleto.
           </p>
-        )
-      )}
+        ))}
       {modo === "calcular" && linha.situacao === "calculada" && (
         <p className="calculos-orientacao">
           Cálculo salvo. Continue na{" "}

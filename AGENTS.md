@@ -57,6 +57,7 @@ This repository defines project-scoped Codex agents in `.codex/agents/`:
 - `backend_agent`: implements and investigates backend behavior and uses the feature, bug, and external-integration skills appropriate to the task.
 - `security_agent`: performs read-only security and financial-risk analysis.
 - `database_agent`: handles SQLite, schema, migration, integrity, concurrency, and persistence work using temporary test databases.
+- `design_agent`: designs and implements the Ecosol UI/UX using the established minimal, accessible, responsive, solar-futuristic visual system.
 - `reviewer_agent`: performs the final read-only review of diffs and local change sets.
 
 For non-trivial work, delegate independent, well-bounded analysis when the user asks for subagents or parallel work, or when separate read-heavy investigations will materially improve quality. Prefer the specialized agent whose description matches the task. Do not run multiple write-capable agents against the same files. The primary agent owns the final decision, integration, and validation.

@@ -1,0 +1,211 @@
+.bancario-faixa-seguranca,
+.bancario-executor,
+.bancario-preparar,
+.bancario-lista,
+.bancario-detalhe {
+  border: 1px solid rgba(20, 119, 139, 0.16);
+  border-radius: 22px;
+  background: #fff;
+  box-shadow: 0 14px 40px rgba(12, 61, 76, 0.06);
+}
+.bancario-faixa-seguranca {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 14px 18px;
+  margin-bottom: 18px;
+  background: linear-gradient(90deg, #fff7d5, #fffdf4);
+  border-color: #ecd786;
+  color: #775d08;
+}
+.bancario-faixa-seguranca span {
+  color: #756d50;
+}
+.bancario-executor,
+.bancario-preparar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 22px;
+  margin-bottom: 18px;
+}
+.bancario-executor h2,
+.bancario-preparar h2,
+.bancario-secao-titulo h2 {
+  margin: 4px 0 5px;
+  color: #123d53;
+}
+.bancario-executor p,
+.bancario-preparar p {
+  margin: 0;
+  color: #66808f;
+}
+.bancario-preparar {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(360px, 1.2fr);
+}
+.bancario-documentos {
+  display: grid;
+  gap: 8px;
+}
+.bancario-documentos > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: #f1f8f8;
+}
+.bancario-documentos span {
+  display: grid;
+}
+.bancario-documentos small {
+  color: #738995;
+}
+.bancario-grade {
+  display: grid;
+  grid-template-columns: minmax(310px, 0.75fr) minmax(500px, 1.25fr);
+  gap: 18px;
+  align-items: start;
+}
+.bancario-lista,
+.bancario-detalhe {
+  padding: 20px;
+}
+.bancario-secao-titulo {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.bancario-secao-titulo > span {
+  color: #66808f;
+}
+.bancario-operacao {
+  width: 100%;
+  border: 0;
+  border-top: 1px solid #e2edef;
+  background: transparent;
+  padding: 14px 10px;
+  display: flex;
+  justify-content: space-between;
+  text-align: left;
+  color: #183f54;
+  cursor: pointer;
+}
+.bancario-operacao:hover,
+.bancario-operacao.ativo {
+  background: #edf8f7;
+}
+.bancario-operacao span {
+  display: grid;
+  gap: 4px;
+}
+.bancario-operacao span:last-child {
+  text-align: right;
+}
+.bancario-operacao small {
+  color: #6d8592;
+}
+.bancario-status {
+  display: inline-flex;
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: #edf1f3;
+  color: #49616d;
+  font-size: 12px;
+}
+.bancario-status.aguardando_aprovacao {
+  background: #fff0c5;
+  color: #765801;
+}
+.bancario-status.aprovada {
+  background: #dff4ec;
+  color: #17634f;
+}
+.bancario-status.envio_pendente {
+  background: #dceff8;
+  color: #145d78;
+}
+.bancario-status.resultado_desconhecido,
+.bancario-status.falhou,
+.bancario-status.rejeitada {
+  background: #ffe2dc;
+  color: #91372b;
+}
+.bancario-status.registrada,
+.bancario-status.liquidada {
+  background: #d9f2df;
+  color: #176033;
+}
+.bancario-resumo {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+.bancario-resumo > div {
+  padding: 12px;
+  border-radius: 14px;
+  background: #f3f8fa;
+}
+.bancario-resumo dt {
+  font-size: 12px;
+  color: #718693;
+}
+.bancario-resumo dd {
+  margin: 4px 0 0;
+  font-weight: 700;
+  color: #183f54;
+}
+.bancario-acoes {
+  display: flex;
+  gap: 10px;
+  margin: 16px 0;
+}
+.bancario-historicos {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.bancario-historicos > div {
+  border-top: 1px solid #dce8eb;
+  padding-top: 12px;
+}
+.bancario-historicos h3 {
+  color: #183f54;
+}
+.bancario-historicos p {
+  display: grid;
+  gap: 3px;
+  padding: 9px 0;
+  margin: 0;
+  border-bottom: 1px solid #e7eff1;
+  color: #345567;
+}
+.bancario-historicos small {
+  color: #718693;
+}
+@media (max-width: 1000px) {
+  .bancario-grade,
+  .bancario-preparar {
+    grid-template-columns: 1fr;
+  }
+  .bancario-executor {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+@media (max-width: 650px) {
+  .bancario-resumo,
+  .bancario-historicos {
+    grid-template-columns: 1fr;
+  }
+  .bancario-faixa-seguranca {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

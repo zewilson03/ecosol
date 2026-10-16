@@ -26,7 +26,9 @@ export function usinaDaUnidadeNaCompetencia(banco, unidadeId, mes) {
   // herdar a usina atual (especialmente após uma transferência).
   if (
     banco
-      .prepare("SELECT 1 FROM faturamento_vinculos_usina WHERE unidade_id=? LIMIT 1")
+      .prepare(
+        "SELECT 1 FROM faturamento_vinculos_usina WHERE unidade_id=? LIMIT 1",
+      )
       .get(unidadeId)
   )
     return null;

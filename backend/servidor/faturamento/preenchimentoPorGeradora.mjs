@@ -40,7 +40,9 @@ export function preencherDadosPorGeradora(banco, extracao, dados = {}) {
       origem: "mensagens_scee_vazias",
     };
   }
-  const competencia = String(extracao?.dados?.competencia ?? dados.competencia ?? "");
+  const competencia = String(
+    extracao?.dados?.competencia ?? dados.competencia ?? "",
+  );
   const uc = ucCanonica(extracao?.dados?.uc ?? dados.uc);
   const unidade = uc
     ? banco
@@ -53,11 +55,7 @@ export function preencherDadosPorGeradora(banco, extracao, dados = {}) {
   if (identificacao.situacao !== "identificada")
     return { dados: { ...dados }, identificacao, unidade, modalidade: null };
   const modalidade = competencia
-    ? modalidadeVigenteDaUsina(
-        banco,
-        identificacao.usina.id,
-        competencia,
-      )
+    ? modalidadeVigenteDaUsina(banco, identificacao.usina.id, competencia)
     : null;
   const novos = {
     ...dados,
@@ -89,7 +87,11 @@ export function sincronizarVinculoDaGeradora(
   banco,
   { unidade, identificacao, competencia },
 ) {
-  if (!unidade || identificacao?.situacao !== "identificada" || !/^20\d{2}-(?:0[1-9]|1[0-2])$/.test(competencia))
+  if (
+    !unidade ||
+    identificacao?.situacao !== "identificada" ||
+    !/^20\d{2}-(?:0[1-9]|1[0-2])$/.test(competencia)
+  )
     return { alterado: false, motivo: "dados_insuficientes" };
   const unidadeAtual = banco
     .prepare("SELECT * FROM faturamento_unidades WHERE id=?")
@@ -106,10 +108,7 @@ export function sincronizarVinculoDaGeradora(
       "SELECT id,usina_id FROM faturamento_vinculos_usina WHERE unidade_id=? AND inicio=?",
     )
     .get(unidadeAtual.id, competencia);
-  if (
-    existente?.usina_id === destinoId &&
-    unidadeAtual.usina_id === destinoId
-  )
+  if (existente?.usina_id === destinoId && unidadeAtual.usina_id === destinoId)
     return { alterado: false, motivo: "ja_vinculada", usina_id: destinoId };
 
   const operacao = randomUUID();

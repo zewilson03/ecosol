@@ -42,6 +42,11 @@ function IconeModulo({ modulo }: { modulo: string }) {
         <path d="M15 7h4v4" />
       </>
     ),
+    bancario: (
+      <>
+        <path d="M3 9h18M5 9V7l7-4 7 4v2M6 9v9m4-9v9m4-9v9m4-9v9M3 21h18" />
+      </>
+    ),
     gmail: (
       <>
         <rect x="2.5" y="5" width="19" height="14" rx="2" />
@@ -114,6 +119,7 @@ export default function EstruturaAdministrativa() {
   if (sessao?.perfil !== "equipe") return <Navigate to="/equipe" replace />;
 
   const administrador = sessao.administrador;
+  const papeisBancarios = sessao.papeis_bancarios ?? [];
   const lateralExpandida = !lateralRecolhida || lateralTemporaria;
   const itens = [
     { rota: "usinas", nome: "Usinas" },
@@ -121,6 +127,9 @@ export default function EstruturaAdministrativa() {
     { rota: "clientes", nome: "Cadastros" },
     ...(administrador.nivel >= 2
       ? [{ rota: "financeiro", nome: "Financeiro" }]
+      : []),
+    ...(papeisBancarios.length
+      ? [{ rota: "bancario", nome: "Banco · homologação" }]
       : []),
     ...(administrador.nivel >= 3
       ? [{ rota: "gmail", nome: "Integração Gmail" }]
@@ -163,7 +172,7 @@ export default function EstruturaAdministrativa() {
               definirLateralTemporaria(false);
             }}
           >
-            <span aria-hidden="true">{lateralRecolhida ? "»" : "«"}</span>
+            <span aria-hidden="true">‹</span>
           </button>
         </div>
         <span className="admin-legenda">ESPAÇO DE GESTÃO</span>

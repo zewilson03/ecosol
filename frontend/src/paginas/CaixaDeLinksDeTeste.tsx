@@ -21,7 +21,8 @@ export default function CaixaDeLinksDeTeste() {
           <h1>Links de acesso</h1>
           <p>
             Esta caixa simula o recebimento de email para testar o projeto
-            localmente.
+            localmente. Entre com uma conta da equipe de nível 3 para consultar
+            os links.
           </p>
           {carregando && <p>Carregando links...</p>}
           {links?.map((link, indice) => (

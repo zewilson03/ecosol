@@ -1,0 +1,6 @@
+node_modules/
+frontend/dist/
+backend/data/
+output/
+pnpm-lock.yaml
+**/__pycache__/

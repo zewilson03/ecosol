@@ -55,7 +55,11 @@ const resumo = {
 };
 for (const item of leituras) {
   if (item.erro) {
-    resumo.falhas.push({ id: item.documento.id, nome: item.documento.nome, erro: item.erro });
+    resumo.falhas.push({
+      id: item.documento.id,
+      nome: item.documento.nome,
+      erro: item.erro,
+    });
     continue;
   }
   const situacao = item.preenchimento.identificacao.situacao;
@@ -70,7 +74,10 @@ for (const item of leituras) {
       situacao,
       identificador: item.preenchimento.identificacao.numero,
     });
-  if (item.documento.status !== "Pendente de revisão" || item.documento.memoria !== null)
+  if (
+    item.documento.status !== "Pendente de revisão" ||
+    item.documento.memoria !== null
+  )
     resumo.protegidas++;
   else {
     const mudariaDocumento =
@@ -82,12 +89,13 @@ for (const item of leituras) {
     const usina = item.preenchimento.identificacao.usina;
     const competencia = item.preenchimento.dados.competencia;
     if (unidade && usina && competencia) {
-      const vigente = banco
-        .prepare(
-          `SELECT usina_id FROM faturamento_vinculos_usina
+      const vigente =
+        banco
+          .prepare(
+            `SELECT usina_id FROM faturamento_vinculos_usina
            WHERE unidade_id=? AND inicio<=? ORDER BY inicio DESC LIMIT 1`,
-        )
-        .get(unidade.id, competencia)?.usina_id ?? unidade.usina_id;
+          )
+          .get(unidade.id, competencia)?.usina_id ?? unidade.usina_id;
       if (vigente !== usina.id) resumo.vinculos_previstos++;
     }
   }
@@ -97,7 +105,10 @@ if (confirmar) {
   const pasta = resolve("backend/data/backups");
   mkdirSync(pasta, { recursive: true });
   const carimbo = new Date().toISOString().replace(/[-:.]/g, "");
-  const backup = resolve(pasta, `ecosol-antes-reanalise-geradoras-${carimbo}.db`);
+  const backup = resolve(
+    pasta,
+    `ecosol-antes-reanalise-geradoras-${carimbo}.db`,
+  );
   if (existsSync(backup)) throw new Error("O arquivo de backup já existe.");
   banco.prepare("VACUUM INTO ?").run(backup);
   resumo.backup = backup;
@@ -137,7 +148,9 @@ if (confirmar) {
           documento.versao,
         );
         if (gravacao.changes !== 1)
-          throw new Error(`A fatura #${documento.id} mudou durante a reanálise.`);
+          throw new Error(
+            `A fatura #${documento.id} mudou durante a reanálise.`,
+          );
         resumo.atualizadas++;
       }
       if (vinculo.alterado) resumo.vinculos_atualizados++;
@@ -165,4 +178,10 @@ if (confirmar) {
   }
 }
 
-console.log(JSON.stringify({ modo: confirmar ? "confirmado" : "previa", ...resumo }, null, 2));
+console.log(
+  JSON.stringify(
+    { modo: confirmar ? "confirmado" : "previa", ...resumo },
+    null,
+    2,
+  ),
+);

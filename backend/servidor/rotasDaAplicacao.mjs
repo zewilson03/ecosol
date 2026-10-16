@@ -22,6 +22,7 @@ import {
   cpfValidoParaCadastro,
 } from "./validacaoDeCpf.mjs";
 import { validarContatoCliente } from "./validacaoDeContato.mjs";
+import { papeisDoAdministrador } from "./bancario/permissoes.mjs";
 
 export const rotas = express.Router();
 const formatoDeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -119,7 +120,13 @@ rotas.get("/api/sessao", (requisicao, resposta) => {
 
   const administrador = identificarAdministrador(requisicao);
   return resposta.json(
-    administrador ? { perfil: "equipe", administrador } : { perfil: null },
+    administrador
+      ? {
+          perfil: "equipe",
+          administrador,
+          papeis_bancarios: papeisDoAdministrador(administrador.id),
+        }
+      : { perfil: null },
   );
 });
 
@@ -155,16 +162,23 @@ rotas.get("/api/equipe/dados", exigirEquipe, (_requisicao, resposta) => {
   resposta.json(dados);
 });
 
-rotas.get("/api/dev/links", (_requisicao, resposta) => {
-  if (!emDesenvolvimento) return resposta.sendStatus(404);
-  resposta.json(
-    obterBanco()
-      .prepare(
-        "SELECT recipient, subject, url, created_at FROM dev_mail ORDER BY id DESC LIMIT 20",
-      )
-      .all(),
-  );
-});
+rotas.get(
+  "/api/dev/links",
+  (_requisicao, resposta, proximo) => {
+    if (!emDesenvolvimento) return resposta.sendStatus(404);
+    proximo();
+  },
+  exigirNivel(3),
+  (_requisicao, resposta) => {
+    resposta.json(
+      obterBanco()
+        .prepare(
+          "SELECT recipient, subject, url, created_at FROM dev_mail ORDER BY id DESC LIMIT 20",
+        )
+        .all(),
+    );
+  },
+);
 
 rotas.get("/api/acesso/validar", (requisicao, resposta) => {
   const token = String(requisicao.query.token ?? "");
@@ -360,17 +374,39 @@ rotas.post("/api/acesso/definir-senha", async (requisicao, resposta) => {
 
   const hash = await protegerSenha(senha);
   const banco = obterBanco();
-  banco
-    .prepare("UPDATE customers SET password_hash = ? WHERE id = ?")
-    .run(hash, registro.customer_id);
-  banco
-    .prepare(
-      "UPDATE auth_tokens SET used_at = ? WHERE customer_id = ? AND used_at IS NULL",
-    )
-    .run(Date.now(), registro.customer_id);
-  banco
-    .prepare("DELETE FROM sessions WHERE customer_id = ?")
-    .run(registro.customer_id);
+  banco.exec("BEGIN IMMEDIATE");
+  try {
+    // O hash é assíncrono: o token pode ter sido usado ou expirado enquanto isso.
+    const consumido = banco
+      .prepare(
+        "UPDATE auth_tokens SET used_at = ? WHERE token_hash = ? AND customer_id = ? AND used_at IS NULL AND expires_at > ?",
+      )
+      .run(
+        Date.now(),
+        resumoCriptografico(token),
+        registro.customer_id,
+        Date.now(),
+      );
+    if (consumido.changes !== 1) {
+      banco.exec("ROLLBACK");
+      return redirecionar(resposta, "/acesso?status=expirado");
+    }
+    banco
+      .prepare("UPDATE customers SET password_hash = ? WHERE id = ?")
+      .run(hash, registro.customer_id);
+    banco
+      .prepare(
+        "UPDATE auth_tokens SET used_at = ? WHERE customer_id = ? AND used_at IS NULL",
+      )
+      .run(Date.now(), registro.customer_id);
+    banco
+      .prepare("DELETE FROM sessions WHERE customer_id = ?")
+      .run(registro.customer_id);
+    banco.exec("COMMIT");
+  } catch (erro) {
+    banco.exec("ROLLBACK");
+    throw erro;
+  }
   redirecionar(resposta, "/entrar?status=senha-definida");
 });
 
