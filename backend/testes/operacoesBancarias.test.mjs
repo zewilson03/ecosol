@@ -9,13 +9,20 @@ process.env.ECOSOL_DATA_DIR = mkdtempSync(join(tmpdir(), "ecosol-operacoes-"));
 process.env.NODE_ENV = "test";
 process.env.SICOOB_AMBIENTE = "homologacao";
 process.env.SICOOB_CONTA_REFERENCIA = "conta-teste";
+process.env.BANCARIO_MFA_ENCRYPTION_KEY = randomBytes(32).toString("base64");
 
-const { resumoCriptografico } = await import("../servidor/autenticacao.mjs");
+const { resumoCriptografico, protegerSenha } =
+  await import("../servidor/autenticacao.mjs");
 const { obterBanco } = await import("../servidor/bancoDeDados.mjs");
 const { prepararBancario } = await import("../servidor/bancario/esquema.mjs");
 const { rotasAdministrativas } =
   await import("../servidor/rotasAdministrativas.mjs");
+const { gerarSegredoTotp, cifrarSegredoTotp, codigoTotp } =
+  await import("../servidor/bancario/totp.mjs");
 const banco = obterBanco();
+const senhaDeTeste = "Senha bancaria de teste 2026";
+const hashDeTeste = await protegerSenha(senhaDeTeste);
+const segredosPorCookie = new Map();
 prepararBancario(banco);
 
 function criarPessoa(nome, nivel, papeis = []) {
@@ -24,7 +31,7 @@ function criarPessoa(nome, nivel, papeis = []) {
       .prepare(
         "INSERT INTO staff_users(name,email,password_hash,access_level) VALUES(?,?,?,?)",
       )
-      .run(nome, `${nome}@teste.local`, "hash", nivel).lastInsertRowid,
+      .run(nome, `${nome}@teste.local`, hashDeTeste, nivel).lastInsertRowid,
   );
   for (const papel of papeis)
     banco
@@ -38,7 +45,15 @@ function criarPessoa(nome, nivel, papeis = []) {
       "INSERT INTO sessions(staff_id,token_hash,role,expires_at) VALUES(?,?,?,?)",
     )
     .run(id, resumoCriptografico(token), "staff", Date.now() + 60_000);
-  return { id, cookie: `ecosol_session=${token}` };
+  const cookie = `ecosol_session=${token}`;
+  const segredo = gerarSegredoTotp();
+  banco
+    .prepare(
+      "INSERT INTO bancario_mfa_equipe(staff_id,segredo_cifrado,ativado_em) VALUES(?,?,CURRENT_TIMESTAMP)",
+    )
+    .run(id, cifrarSegredoTotp(segredo, id));
+  segredosPorCookie.set(cookie, segredo);
+  return { id, cookie };
 }
 
 const preparador = criarPessoa("preparador", 3, [
@@ -113,13 +128,55 @@ aplicacao.use(express.json(), rotasAdministrativas);
 const servidor = aplicacao.listen(0, "127.0.0.1");
 await new Promise((resolver) => servidor.once("listening", resolver));
 const base = `http://127.0.0.1:${servidor.address().port}`;
+process.env.APP_URL = base;
+const confirmacoes = new Map();
+const confirmacoesPendentes = new Map();
 
 async function chamar(caminho, cookie, metodo = "GET", corpo) {
+  if (
+    metodo !== "GET" &&
+    caminho.startsWith("/api/admin/bancario/") &&
+    cookie
+  ) {
+    if (!confirmacoes.has(cookie)) {
+      if (!confirmacoesPendentes.has(cookie))
+        confirmacoesPendentes.set(
+          cookie,
+          (async () => {
+            const confirmacao = await fetch(
+              base + "/api/admin/bancario/confirmar-identidade",
+              {
+                method: "POST",
+                headers: {
+                  Cookie: cookie,
+                  Origin: base,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  senha: senhaDeTeste,
+                  codigo: codigoTotp(
+                    segredosPorCookie.get(cookie),
+                    Math.floor(Date.now() / 30_000),
+                  ),
+                }),
+              },
+            );
+            assert.equal(confirmacao.status, 200);
+            confirmacoes.set(cookie, (await confirmacao.json()).prova);
+          })(),
+        );
+      await confirmacoesPendentes.get(cookie);
+    }
+  }
   return fetch(base + caminho, {
     method: metodo,
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
+      ...(metodo !== "GET" ? { Origin: base } : {}),
+      ...(confirmacoes.has(cookie)
+        ? { "X-Ecosol-Confirmacao-Bancaria": confirmacoes.get(cookie) }
+        : {}),
       ...(cookie ? { Cookie: cookie } : {}),
     },
     ...(corpo ? { body: JSON.stringify(corpo) } : {}),
@@ -363,8 +420,126 @@ try {
       .get().n,
     7,
   );
+  banco
+    .prepare(
+      "UPDATE faturamento_unidades SET pendencia_cadastro=NULL WHERE id=?",
+    )
+    .run(unidadeId);
+  banco
+    .prepare(
+      "INSERT INTO equipe_papeis_criticos(staff_id,papel) VALUES(?,'proprietario')",
+    )
+    .run(semPapel.id);
+  banco
+    .prepare(
+      "INSERT INTO equipe_papeis_criticos(staff_id,papel) VALUES(?,'proprietario')",
+    )
+    .run(administradorIntegracao.id);
+  assert.throws(
+    () =>
+      banco
+        .prepare(
+          "INSERT INTO equipe_papeis_criticos(staff_id,papel) VALUES(?,'proprietario')",
+        )
+        .run(preparador.id),
+    /Limite de contas/,
+  );
+  assert.throws(
+    () =>
+      banco
+        .prepare("UPDATE staff_users SET access_level=2 WHERE id=?")
+        .run(semPapel.id),
+    /Remova o papel crítico/,
+  );
+  const faturaProprietarioId = criarFatura("proprietario", 33333);
+  const propria = await (
+    await chamar(
+      "/api/admin/bancario/operacoes/cobrancas",
+      semPapel.cookie,
+      "POST",
+      { documento_id: faturaProprietarioId },
+    )
+  ).json();
+  assert.equal(
+    (
+      await chamar(
+        `/api/admin/bancario/operacoes/${propria.operacao.id}/aprovar`,
+        semPapel.cookie,
+        "POST",
+      )
+    ).status,
+    400,
+  );
+  const autoaprovada = await (
+    await chamar(
+      `/api/admin/bancario/operacoes/${propria.operacao.id}/aprovar`,
+      semPapel.cookie,
+      "POST",
+      { confirmacao_autoaprovacao: true },
+    )
+  ).json();
+  assert.equal(autoaprovada.operacao.estado, "aprovada");
+  assert.equal(autoaprovada.operacao.autoaprovada, 1);
+  assert.equal(autoaprovada.operacao.aprovador_id, semPapel.id);
+  assert.equal(
+    banco
+      .prepare("SELECT COUNT(*) AS n FROM bancario_autoaprovacoes_proprietario")
+      .get().n,
+    1,
+  );
+  banco
+    .prepare("DELETE FROM equipe_papeis_criticos WHERE staff_id=?")
+    .run(semPapel.id);
+  assert.equal(
+    (
+      await chamar(
+        `/api/admin/bancario/operacoes/${propria.operacao.id}/enfileirar`,
+        preparador.cookie,
+        "POST",
+      )
+    ).status,
+    409,
+  );
+  banco
+    .prepare(
+      "INSERT INTO equipe_papeis_criticos(staff_id,papel) VALUES(?,'proprietario')",
+    )
+    .run(semPapel.id);
+  assert.equal(
+    (
+      await chamar(
+        `/api/admin/bancario/operacoes/${propria.operacao.id}/enfileirar`,
+        semPapel.cookie,
+        "POST",
+      )
+    ).status,
+    200,
+  );
+  const guardiao = criarPessoa("guardiao-recuperacao", 1);
+  banco
+    .prepare(
+      "INSERT INTO equipe_papeis_criticos(staff_id,papel) VALUES(?,'guardiao_recuperacao')",
+    )
+    .run(guardiao.id);
+  assert.equal(
+    (await chamar("/api/admin/usinas", guardiao.cookie)).status,
+    403,
+  );
+  assert.equal(
+    (await chamar("/api/admin/bancario/operacoes", guardiao.cookie)).status,
+    403,
+  );
+  assert.throws(
+    () =>
+      banco
+        .prepare(
+          "INSERT INTO equipe_papeis_criticos(staff_id,papel) VALUES(?,'guardiao_recuperacao')",
+        )
+        .run(preparador.id),
+    /Limite de contas/,
+  );
   console.log(
-    "OK: snapshot, aprovação segregada, idempotência, fila única e bloqueio por versão.",
+    "OK: snapshot, aprovação segregada, autoaprovação restrita ao Proprietário, fila e bloqueio por versão.",
   );
 } finally {
   await new Promise((resolver) => servidor.close(resolver));

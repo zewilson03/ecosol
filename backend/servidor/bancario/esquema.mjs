@@ -7,6 +7,107 @@ export const papeisBancarios = [
 
 export function prepararBancario(banco) {
   banco.exec(`
+    CREATE TABLE IF NOT EXISTS equipe_papeis_criticos (
+      staff_id INTEGER PRIMARY KEY REFERENCES staff_users(id) ON DELETE CASCADE,
+      papel TEXT NOT NULL CHECK(papel IN ('proprietario','guardiao_recuperacao')),
+      concedido_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    DROP TRIGGER IF EXISTS equipe_papel_critico_nivel_insert;
+    CREATE TRIGGER equipe_papel_critico_nivel_insert
+    BEFORE INSERT ON equipe_papeis_criticos
+    WHEN NEW.papel='proprietario' AND
+      (SELECT access_level FROM staff_users WHERE id=NEW.staff_id)<>3
+    BEGIN
+      SELECT RAISE(ABORT, 'Papel crítico exige nível 3');
+    END;
+    DROP TRIGGER IF EXISTS equipe_papel_critico_nivel_update;
+    CREATE TRIGGER equipe_papel_critico_nivel_update
+    BEFORE UPDATE OF access_level ON staff_users
+    WHEN NEW.access_level<>3 AND EXISTS(
+      SELECT 1 FROM equipe_papeis_criticos
+      WHERE staff_id=NEW.id AND papel='proprietario'
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'Remova o papel crítico antes de reduzir o nível');
+    END;
+    CREATE TRIGGER IF NOT EXISTS equipe_papel_critico_limite_insert
+    BEFORE INSERT ON equipe_papeis_criticos
+    WHEN (SELECT COUNT(*) FROM equipe_papeis_criticos WHERE papel=NEW.papel)>=
+      CASE NEW.papel WHEN 'proprietario' THEN 2 ELSE 1 END
+    BEGIN
+      SELECT RAISE(ABORT, 'Limite de contas para papel crítico atingido');
+    END;
+    CREATE TRIGGER IF NOT EXISTS equipe_papel_critico_limite_update
+    BEFORE UPDATE OF papel ON equipe_papeis_criticos
+    WHEN OLD.papel<>NEW.papel AND
+      (SELECT COUNT(*) FROM equipe_papeis_criticos WHERE papel=NEW.papel)>=
+      CASE NEW.papel WHEN 'proprietario' THEN 2 ELSE 1 END
+    BEGIN
+      SELECT RAISE(ABORT, 'Limite de contas para papel crítico atingido');
+    END;
+    CREATE TABLE IF NOT EXISTS bancario_mfa_equipe (
+      staff_id INTEGER PRIMARY KEY REFERENCES staff_users(id) ON DELETE CASCADE,
+      segredo_cifrado TEXT,
+      pendente_cifrado TEXT,
+      pendente_ate INTEGER,
+      pendente_sessao_id INTEGER,
+      pendente_recuperacao_hash TEXT,
+      pendente_recuperacao_id TEXT,
+      ultimo_contador INTEGER NOT NULL DEFAULT -1,
+      ativado_em TEXT,
+      CHECK((segredo_cifrado IS NULL) = (ativado_em IS NULL))
+    );
+    CREATE TABLE IF NOT EXISTS bancario_mfa_recuperacao (
+      staff_id INTEGER NOT NULL REFERENCES staff_users(id) ON DELETE CASCADE,
+      codigo_hash TEXT NOT NULL CHECK(length(codigo_hash)=64),
+      usado_em TEXT,
+      PRIMARY KEY(staff_id,codigo_hash)
+    );
+    CREATE TABLE IF NOT EXISTS bancario_mfa_auditoria (
+      id INTEGER PRIMARY KEY,
+      staff_id INTEGER NOT NULL,
+      evento TEXT NOT NULL CHECK(evento IN
+        ('inicio','substituicao_iniciada','ativacao','substituicao',
+         'confirmacao_totp','recuperacao')),
+      criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS bancario_mfa_auditoria_staff
+      ON bancario_mfa_auditoria(staff_id,criado_em DESC);
+
+    CREATE TABLE IF NOT EXISTS bancario_mfa_pedidos_recuperacao (
+      id TEXT PRIMARY KEY,
+      staff_id INTEGER NOT NULL REFERENCES staff_users(id) ON DELETE RESTRICT,
+      senha_hash TEXT NOT NULL,
+      exige_guardiao INTEGER NOT NULL CHECK(exige_guardiao IN (0,1)),
+      estado TEXT NOT NULL CHECK(estado IN
+        ('pendente','aprovado','consumido','expirado')),
+      solicitado_em INTEGER NOT NULL,
+      expira_em INTEGER NOT NULL,
+      consumido_em INTEGER,
+      CHECK(expira_em>solicitado_em)
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS bancario_mfa_recuperacao_ativa
+      ON bancario_mfa_pedidos_recuperacao(staff_id)
+      WHERE estado IN ('pendente','aprovado');
+    CREATE TABLE IF NOT EXISTS bancario_mfa_aprovacoes_recuperacao (
+      pedido_id TEXT NOT NULL REFERENCES bancario_mfa_pedidos_recuperacao(id)
+        ON DELETE RESTRICT,
+      aprovador_id INTEGER NOT NULL REFERENCES staff_users(id)
+        ON DELETE RESTRICT,
+      papel TEXT NOT NULL CHECK(papel IN ('proprietario','guardiao_recuperacao')),
+      autenticador_id TEXT NOT NULL CHECK(length(autenticador_id)=64),
+      confirmado_em INTEGER NOT NULL,
+      PRIMARY KEY(pedido_id,aprovador_id)
+    );
+    CREATE TABLE IF NOT EXISTS bancario_mfa_auditoria_recuperacao (
+      id INTEGER PRIMARY KEY,
+      pedido_id TEXT NOT NULL,
+      ator_id INTEGER NOT NULL,
+      evento TEXT NOT NULL CHECK(evento IN
+        ('solicitado','aprovado','pronto','cadastro_iniciado','concluido','expirado')),
+      criado_em INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS bancario_papeis_equipe (
       staff_id INTEGER NOT NULL REFERENCES staff_users(id) ON DELETE CASCADE,
       papel TEXT NOT NULL CHECK(papel IN (
@@ -49,7 +150,9 @@ export function prepararBancario(banco) {
       vencimento TEXT,
       snapshot TEXT NOT NULL CHECK(json_valid(snapshot)),
       snapshot_hash TEXT NOT NULL CHECK(length(snapshot_hash)=64),
-      provedor_id TEXT,
+      provedor_id TEXT CHECK(
+        provedor_id IS NULL OR length(trim(provedor_id))>0
+      ),
       ultimo_codigo TEXT,
       estado TEXT NOT NULL CHECK(estado IN (
         'aguardando_aprovacao','aprovada','envio_pendente',
@@ -77,6 +180,18 @@ export function prepararBancario(banco) {
       aprovador_id INTEGER NOT NULL REFERENCES staff_users(id) ON DELETE RESTRICT,
       criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       CHECK(preparador_id<>aprovador_id),
+      UNIQUE(operacao_id,operacao_versao)
+    );
+
+    -- Exceção explícita: o Proprietário pode aprovar a própria operação.
+    -- A tabela separada preserva o CHECK de segregação das aprovações comuns.
+    CREATE TABLE IF NOT EXISTS bancario_autoaprovacoes_proprietario (
+      id INTEGER PRIMARY KEY,
+      operacao_id TEXT NOT NULL REFERENCES bancario_operacoes(id) ON DELETE RESTRICT,
+      operacao_versao INTEGER NOT NULL,
+      snapshot_hash TEXT NOT NULL CHECK(length(snapshot_hash)=64),
+      proprietario_id INTEGER NOT NULL REFERENCES staff_users(id) ON DELETE RESTRICT,
+      criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(operacao_id,operacao_versao)
     );
 
@@ -189,9 +304,28 @@ export function prepararBancario(banco) {
       SELECT RAISE(ABORT, 'Aprovação não corresponde à operação atual');
     END;
 
-    CREATE TRIGGER IF NOT EXISTS bancario_intencao_exige_aprovacao
-    BEFORE INSERT ON bancario_intencoes
+    CREATE TRIGGER IF NOT EXISTS bancario_autoaprovacao_confere_operacao
+    BEFORE INSERT ON bancario_autoaprovacoes_proprietario
     WHEN NOT EXISTS (
+      SELECT 1 FROM bancario_operacoes o
+      JOIN equipe_papeis_criticos p
+        ON p.staff_id=NEW.proprietario_id AND p.papel='proprietario'
+      JOIN staff_users s ON s.id=p.staff_id AND s.access_level=3
+      WHERE o.id=NEW.operacao_id
+        AND o.versao=NEW.operacao_versao
+        AND o.snapshot_hash=NEW.snapshot_hash
+        AND o.preparado_por=NEW.proprietario_id
+        AND o.estado='aguardando_aprovacao'
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'Autoaprovação exige Proprietário e operação própria atual');
+    END;
+
+    DROP TRIGGER IF EXISTS bancario_intencao_exige_aprovacao;
+    CREATE TRIGGER bancario_intencao_exige_aprovacao
+    BEFORE INSERT ON bancario_intencoes
+    WHEN NOT (
+      EXISTS (
       SELECT 1
       FROM bancario_operacoes o
       JOIN bancario_aprovacoes a
@@ -204,6 +338,24 @@ export function prepararBancario(banco) {
           (o.tipo='cobranca' AND NEW.acao IN ('registrar_cobranca','cancelar_cobranca')) OR
           (o.tipo='pagamento' AND NEW.acao='executar_pagamento')
         )
+      ) OR EXISTS (
+        SELECT 1
+        FROM bancario_operacoes o
+        JOIN bancario_autoaprovacoes_proprietario a
+          ON a.operacao_id=o.id AND a.operacao_versao=o.versao
+         AND a.snapshot_hash=o.snapshot_hash
+         AND a.proprietario_id=o.preparado_por
+        JOIN equipe_papeis_criticos p
+          ON p.staff_id=a.proprietario_id AND p.papel='proprietario'
+        JOIN staff_users s ON s.id=p.staff_id AND s.access_level=3
+        WHERE o.id=NEW.operacao_id
+          AND o.versao=NEW.operacao_versao
+          AND o.estado='aprovada'
+          AND (
+            (o.tipo='cobranca' AND NEW.acao IN ('registrar_cobranca','cancelar_cobranca')) OR
+            (o.tipo='pagamento' AND NEW.acao='executar_pagamento')
+          )
+      )
     )
     BEGIN
       SELECT RAISE(ABORT, 'Intenção bancária sem aprovação válida');
@@ -218,4 +370,75 @@ export function prepararBancario(banco) {
     banco.exec("ALTER TABLE bancario_operacoes ADD COLUMN provedor_id TEXT");
   if (!colunasOperacoes.some((coluna) => coluna.name === "ultimo_codigo"))
     banco.exec("ALTER TABLE bancario_operacoes ADD COLUMN ultimo_codigo TEXT");
+  const colunasMfa = banco
+    .prepare("PRAGMA table_info(bancario_mfa_equipe)")
+    .all();
+  if (!colunasMfa.some((coluna) => coluna.name === "pendente_recuperacao_id"))
+    banco.exec(
+      "ALTER TABLE bancario_mfa_equipe ADD COLUMN pendente_recuperacao_id TEXT",
+    );
+
+  // Não tente "corrigir" identificadores financeiros durante a inicialização.
+  // Dados antigos ambíguos exigem conciliação humana antes que a unicidade possa
+  // ser imposta com segurança.
+  const identificadorVazio = banco
+    .prepare(
+      `SELECT 1
+       FROM bancario_operacoes
+       WHERE provedor_id IS NOT NULL AND length(trim(provedor_id))=0
+       LIMIT 1`,
+    )
+    .get();
+  if (identificadorVazio) {
+    const erro = new Error(
+      "Há operação bancária com identificador do provedor vazio. Concilie os dados antes de iniciar o serviço.",
+    );
+    erro.codigo = "PROVEDOR_ID_INVALIDO_EXISTENTE";
+    throw erro;
+  }
+
+  const identificadorDuplicado = banco
+    .prepare(
+      `SELECT 1
+       FROM bancario_operacoes
+       WHERE provedor_id IS NOT NULL AND length(trim(provedor_id))>0
+       GROUP BY
+         lower(trim(ambiente)),
+         lower(trim(conta_referencia)),
+         trim(provedor_id)
+       HAVING COUNT(*)>1
+       LIMIT 1`,
+    )
+    .get();
+  if (identificadorDuplicado) {
+    const erro = new Error(
+      "Há identificadores bancários duplicados na mesma conta e ambiente. Concilie os dados antes de iniciar o serviço.",
+    );
+    erro.codigo = "PROVEDOR_ID_DUPLICADO_EXISTENTE";
+    throw erro;
+  }
+
+  banco.exec(`
+    CREATE TRIGGER IF NOT EXISTS bancario_provedor_id_nao_vazio_insert
+    BEFORE INSERT ON bancario_operacoes
+    WHEN NEW.provedor_id IS NOT NULL AND length(trim(NEW.provedor_id))=0
+    BEGIN
+      SELECT RAISE(ABORT, 'Identificador do provedor não pode ser vazio');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS bancario_provedor_id_nao_vazio_update
+    BEFORE UPDATE OF provedor_id ON bancario_operacoes
+    WHEN NEW.provedor_id IS NOT NULL AND length(trim(NEW.provedor_id))=0
+    BEGIN
+      SELECT RAISE(ABORT, 'Identificador do provedor não pode ser vazio');
+    END;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS bancario_operacoes_provedor_unico
+      ON bancario_operacoes(
+        lower(trim(ambiente)),
+        lower(trim(conta_referencia)),
+        trim(provedor_id)
+      )
+      WHERE provedor_id IS NOT NULL AND length(trim(provedor_id))>0;
+  `);
 }

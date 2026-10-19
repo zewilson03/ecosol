@@ -12,8 +12,28 @@ export function papelBancarioValido(papel) {
   return papeisBancarios.includes(String(papel));
 }
 
+export function temPapelCritico(administradorId, papel) {
+  if (
+    !administradorId ||
+    !["proprietario", "guardiao_recuperacao"].includes(papel)
+  )
+    return false;
+  return Boolean(
+    obterBanco()
+      .prepare(
+        `SELECT 1 FROM equipe_papeis_criticos p
+         JOIN staff_users s ON s.id=p.staff_id
+         WHERE p.staff_id=? AND p.papel=?
+           AND (p.papel<>'proprietario' OR s.access_level=3)`,
+      )
+      .get(administradorId, papel),
+  );
+}
+
 export function papeisDoAdministrador(administradorId) {
   if (!administradorId) return [];
+  if (temPapelCritico(administradorId, "proprietario"))
+    return [...papeisBancarios];
   return obterBanco()
     .prepare(
       "SELECT papel FROM bancario_papeis_equipe WHERE staff_id=? ORDER BY papel",
@@ -23,6 +43,8 @@ export function papeisDoAdministrador(administradorId) {
 }
 
 export function temPapelBancario(administradorId, papel) {
+  if (!papelBancarioValido(papel)) return false;
+  if (temPapelCritico(administradorId, "proprietario")) return true;
   return Boolean(
     administradorId &&
     obterBanco()

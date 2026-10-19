@@ -163,8 +163,23 @@
 }
 .bancario-acoes {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   margin: 16px 0;
+}
+.bancario-autoaprovacao {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  flex-basis: 100%;
+  color: #76541d;
+  line-height: 1.4;
+}
+.bancario-autoaprovacao input {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
 }
 .bancario-historicos {
   display: grid;

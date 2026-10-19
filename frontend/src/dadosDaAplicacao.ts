@@ -38,7 +38,13 @@ export type Sessao =
   | { perfil: null }
   | {
       perfil: "equipe";
-      administrador: { id: number | null; nome: string; nivel: number };
+      administrador: {
+        id: number | null;
+        nome: string;
+        nivel: number;
+        proprietario?: boolean;
+        guardiao_recuperacao?: boolean;
+      };
       papeis_bancarios: string[];
     }
   | {

@@ -101,7 +101,7 @@ const mensagensDeCadastro = {
   "admin-erro": "Confira nome, email, nível e senha de 8 a 128 caracteres.",
 };
 function exigirEquipe(requisicao, resposta, proximo) {
-  if (!identificarAdministrador(requisicao)) {
+  if ((identificarAdministrador(requisicao)?.nivel ?? 0) < 1) {
     return resposta.status(403).json({ erro: "Acesso restrito à equipe." });
   }
   proximo();

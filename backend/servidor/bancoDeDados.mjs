@@ -76,6 +76,13 @@ export function obterBanco() {
       attempts INTEGER NOT NULL,
       reset_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS auditoria_exportacoes_clientes (
+      id INTEGER PRIMARY KEY,
+      responsavel_id INTEGER NOT NULL REFERENCES staff_users(id),
+      total_clientes INTEGER NOT NULL,
+      total_unidades INTEGER NOT NULL,
+      criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
     const colunasDosClientes = banco

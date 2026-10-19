@@ -1,5 +1,6 @@
 import { sessaoAtual } from "./autenticacao.mjs";
 import { obterBanco } from "./bancoDeDados.mjs";
+import { temPapelCritico } from "./bancario/permissoes.mjs";
 
 export function identificarAdministrador(requisicao) {
   const sessao = sessaoAtual(requisicao);
@@ -12,13 +13,18 @@ export function identificarAdministrador(requisicao) {
       ? null
       : { id: null, nome: "Acesso inicial", nivel: 3 };
   }
-  return (
-    obterBanco()
-      .prepare(
-        "SELECT id, name AS nome, access_level AS nivel FROM staff_users WHERE id = ?",
-      )
-      .get(sessao.staff_id) ?? null
-  );
+  const administrador = obterBanco()
+    .prepare(
+      "SELECT id, name AS nome, access_level AS nivel FROM staff_users WHERE id = ?",
+    )
+    .get(sessao.staff_id);
+  if (!administrador) return null;
+  if (temPapelCritico(sessao.staff_id, "guardiao_recuperacao"))
+    return { ...administrador, nivel: 0, guardiao_recuperacao: true };
+  return {
+    ...administrador,
+    proprietario: temPapelCritico(sessao.staff_id, "proprietario"),
+  };
 }
 
 export function exigirNivel(nivelMinimo) {

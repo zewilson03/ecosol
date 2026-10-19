@@ -1,0 +1,116 @@
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import { obterBanco } from "../bancoDeDados.mjs";
+import {
+  limitarTentativas,
+  resumoCriptografico,
+  senhaConfere,
+  sessaoAtual,
+} from "../autenticacao.mjs";
+import { consumirSegundoFator, identificadorMfa, mfaAtivo } from "./mfa.mjs";
+
+const validadeMs = 5 * 60_000;
+const confirmacoes = new Map();
+
+export function origemConfiavel(req) {
+  try {
+    const enderecoEsperado = new URL(
+      process.env.APP_URL ?? `http://localhost:${process.env.PORT ?? 3000}`,
+    );
+    if (
+      process.env.NODE_ENV === "production" &&
+      enderecoEsperado.protocol !== "https:"
+    )
+      return false;
+    return (
+      req.headers.origin &&
+      new URL(req.headers.origin).origin === enderecoEsperado.origin &&
+      req.headers["sec-fetch-site"] !== "cross-site"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function chaveDaSessao(req) {
+  const sessao = sessaoAtual(req);
+  return sessao?.role === "staff" && sessao.staff_id
+    ? { sessao, chave: sessao.id }
+    : null;
+}
+
+export async function confirmarIdentidadeBancaria(req, res) {
+  if (!origemConfiavel(req)) return res.sendStatus(403);
+  const atual = chaveDaSessao(req);
+  if (!atual || atual.sessao.staff_id !== req.administrador?.id)
+    return res.status(403).json({ erro: "Use uma conta nominal da equipe." });
+
+  const senha = req.body?.senha;
+  if (typeof senha !== "string" || senha.length < 1 || senha.length > 128)
+    return res.status(400).json({ erro: "Informe sua senha atual." });
+  const chaveLimite = `bancario-reauth:${atual.sessao.staff_id}`;
+  if (limitarTentativas(chaveLimite, 5))
+    return res
+      .status(429)
+      .json({ erro: "Muitas tentativas. Aguarde 15 minutos." });
+  const pessoa = obterBanco()
+    .prepare("SELECT password_hash FROM staff_users WHERE id=?")
+    .get(atual.sessao.staff_id);
+  if (!pessoa || !(await senhaConfere(senha, pessoa.password_hash)))
+    return res.status(401).json({ erro: "Senha incorreta." });
+
+  if (!mfaAtivo(atual.sessao.staff_id))
+    return res.status(428).json({
+      erro: "Ative o aplicativo autenticador antes de realizar ações bancárias.",
+      codigo: "MFA_NAO_CONFIGURADO",
+    });
+  if (!consumirSegundoFator(atual.sessao.staff_id, req.body?.codigo))
+    return res
+      .status(401)
+      .json({ erro: "Código MFA incorreto, repetido ou expirado." });
+
+  obterBanco()
+    .prepare("DELETE FROM login_attempts WHERE key=?")
+    .run(chaveLimite);
+  const prova = randomBytes(32).toString("hex");
+  const agora = Date.now();
+  const expiraEm = agora + validadeMs;
+  for (const [id, registro] of confirmacoes)
+    if (registro.expiraEm <= agora) confirmacoes.delete(id);
+  confirmacoes.set(atual.chave, {
+    hash: resumoCriptografico(prova),
+    expiraEm,
+    senhaHash: pessoa.password_hash,
+    mfaId: identificadorMfa(atual.sessao.staff_id),
+  });
+  return res.json({ prova, expira_em: expiraEm });
+}
+
+export function exigirConfirmacaoBancaria(req, res, next) {
+  if (!origemConfiavel(req)) return res.sendStatus(403);
+  const atual = chaveDaSessao(req);
+  const prova = req.headers["x-ecosol-confirmacao-bancaria"];
+  const registro = atual && confirmacoes.get(atual.chave);
+  if (!atual || !registro || registro.expiraEm <= Date.now()) {
+    if (atual) confirmacoes.delete(atual.chave);
+    return res
+      .status(403)
+      .json({ erro: "Confirme sua senha para esta ação bancária." });
+  }
+  const hashAtual = obterBanco()
+    .prepare("SELECT password_hash FROM staff_users WHERE id=?")
+    .get(atual.sessao.staff_id)?.password_hash;
+  if (
+    hashAtual !== registro.senhaHash ||
+    identificadorMfa(atual.sessao.staff_id) !== registro.mfaId
+  ) {
+    confirmacoes.delete(atual.chave);
+    return res.status(403).json({ erro: "Confirme novamente sua senha." });
+  }
+  if (typeof prova !== "string" || !/^[a-f0-9]{64}$/.test(prova))
+    return res.status(403).json({ erro: "Confirmação bancária ausente." });
+  const recebida = Buffer.from(resumoCriptografico(prova), "hex");
+  const esperada = Buffer.from(registro.hash, "hex");
+  if (!timingSafeEqual(recebida, esperada))
+    return res.status(403).json({ erro: "Confirmação bancária inválida." });
+  next();
+}

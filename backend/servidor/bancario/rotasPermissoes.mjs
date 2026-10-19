@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { obterBanco } from "../bancoDeDados.mjs";
+import { exigirConfirmacaoBancaria } from "./confirmacaoSensivel.mjs";
 import {
   nomesDosPapeisBancarios,
   papelBancarioValido,
@@ -7,6 +8,14 @@ import {
 } from "./permissoes.mjs";
 
 export const rotasPermissoesBancarias = Router();
+rotasPermissoesBancarias.use(
+  "/api/admin/bancario/permissoes",
+  (req, res, next) => {
+    if (["PUT", "PATCH", "DELETE", "POST"].includes(req.method))
+      return exigirConfirmacaoBancaria(req, res, next);
+    next();
+  },
+);
 
 function podeGerenciar(req) {
   if (!req.administrador?.id || req.administrador.nivel !== 3) return false;

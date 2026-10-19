@@ -1,5 +1,23 @@
 import { Router } from "express";
 import {
+  confirmarIdentidadeBancaria,
+  exigirConfirmacaoBancaria,
+  origemConfiavel,
+} from "./confirmacaoSensivel.mjs";
+import {
+  ativarMfa,
+  estadoMfa,
+  iniciarMfa,
+  iniciarMfaAposRecuperacao,
+  substituirMfa,
+} from "./mfa.mjs";
+import {
+  aprovarRecuperacaoMfa,
+  listarRecuperacoesMfa,
+  minhaRecuperacaoMfa,
+  solicitarRecuperacaoMfa,
+} from "./recuperacaoMfa.mjs";
+import {
   exigirPapelBancario,
   exigirUmDosPapeisBancarios,
 } from "./permissoes.mjs";
@@ -16,6 +34,56 @@ import {
 } from "./controleExecutor.mjs";
 
 export const rotasOperacoesBancarias = Router();
+
+rotasOperacoesBancarias.get("/api/admin/bancario/mfa", estadoMfa);
+rotasOperacoesBancarias.post(
+  "/api/admin/bancario/mfa/iniciar",
+  (req, res, next) => (origemConfiavel(req) ? next() : res.sendStatus(403)),
+  iniciarMfa,
+);
+rotasOperacoesBancarias.post(
+  "/api/admin/bancario/mfa/ativar",
+  (req, res, next) => (origemConfiavel(req) ? next() : res.sendStatus(403)),
+  ativarMfa,
+);
+rotasOperacoesBancarias.post(
+  "/api/admin/bancario/mfa/substituir",
+  (req, res, next) => (origemConfiavel(req) ? next() : res.sendStatus(403)),
+  substituirMfa,
+);
+rotasOperacoesBancarias.get(
+  "/api/admin/bancario/mfa/recuperacao/minha",
+  minhaRecuperacaoMfa,
+);
+rotasOperacoesBancarias.post(
+  "/api/admin/bancario/mfa/recuperacao/solicitar",
+  (req, res, next) => (origemConfiavel(req) ? next() : res.sendStatus(403)),
+  solicitarRecuperacaoMfa,
+);
+rotasOperacoesBancarias.post(
+  "/api/admin/bancario/mfa/recuperacao/:id/iniciar",
+  (req, res, next) => (origemConfiavel(req) ? next() : res.sendStatus(403)),
+  iniciarMfaAposRecuperacao,
+);
+rotasOperacoesBancarias.get(
+  "/api/admin/bancario/mfa/recuperacoes",
+  listarRecuperacoesMfa,
+);
+rotasOperacoesBancarias.post(
+  "/api/admin/bancario/mfa/recuperacoes/:id/aprovar",
+  exigirConfirmacaoBancaria,
+  aprovarRecuperacaoMfa,
+);
+
+rotasOperacoesBancarias.post(
+  "/api/admin/bancario/confirmar-identidade",
+  confirmarIdentidadeBancaria,
+);
+rotasOperacoesBancarias.use("/api/admin/bancario", (req, res, next) => {
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method))
+    return exigirConfirmacaoBancaria(req, res, next);
+  next();
+});
 
 const podeConsultar = exigirUmDosPapeisBancarios(
   "consulta_auditoria",
@@ -64,7 +132,13 @@ rotasOperacoesBancarias.post(
   "/api/admin/bancario/operacoes/:id/aprovar",
   exigirPapelBancario("aprovador_financeiro"),
   (req, res) =>
-    res.json(aprovarOperacao(String(req.params.id), req.administrador)),
+    res.json(
+      aprovarOperacao(
+        String(req.params.id),
+        req.administrador,
+        req.body?.confirmacao_autoaprovacao === true,
+      ),
+    ),
 );
 
 rotasOperacoesBancarias.post(

@@ -9,16 +9,23 @@ process.env.ECOSOL_DATA_DIR = mkdtempSync(join(tmpdir(), "ecosol-bancario-"));
 process.env.NODE_ENV = "test";
 process.env.BANCARIO_EXECUTOR_MODO = "simulado";
 process.env.SICOOB_AMBIENTE = "homologacao";
+process.env.BANCARIO_MFA_ENCRYPTION_KEY = randomBytes(32).toString("base64");
 
-const { resumoCriptografico } = await import("../servidor/autenticacao.mjs");
+const { resumoCriptografico, protegerSenha } =
+  await import("../servidor/autenticacao.mjs");
 const { obterBanco } = await import("../servidor/bancoDeDados.mjs");
 const { exigirPapelBancario } =
   await import("../servidor/bancario/permissoes.mjs");
 const { rotasAdministrativas } =
   await import("../servidor/rotasAdministrativas.mjs");
+const { gerarSegredoTotp, cifrarSegredoTotp, codigoTotp } =
+  await import("../servidor/bancario/totp.mjs");
 
 const banco = obterBanco();
+const senhaDeTeste = "Senha bancaria de teste 2026";
+const hashDeTeste = await protegerSenha(senhaDeTeste);
 const pessoas = {};
+const segredos = {};
 for (const [chave, nivel] of [
   ["auditor", 1],
   ["operador", 2],
@@ -31,12 +38,19 @@ for (const [chave, nivel] of [
       .prepare(
         "INSERT INTO staff_users(name,email,password_hash,access_level) VALUES(?,?,?,?)",
       )
-      .run(chave, `${chave}@teste.local`, "hash-de-teste", nivel)
-      .lastInsertRowid,
+      .run(chave, `${chave}@teste.local`, hashDeTeste, nivel).lastInsertRowid,
   );
+  const segredo = gerarSegredoTotp();
+  segredos[chave] = segredo;
+  banco
+    .prepare(
+      "INSERT INTO bancario_mfa_equipe(staff_id,segredo_cifrado,ativado_em) VALUES(?,?,CURRENT_TIMESTAMP)",
+    )
+    .run(pessoas[chave], cifrarSegredoTotp(segredo, pessoas[chave]));
 }
 
 const cookies = {};
+const segredosPorCookie = new Map();
 for (const [chave, id] of Object.entries(pessoas)) {
   const token = randomBytes(32).toString("hex");
   banco
@@ -45,6 +59,7 @@ for (const [chave, id] of Object.entries(pessoas)) {
     )
     .run(id, resumoCriptografico(token), "staff", Date.now() + 60_000);
   cookies[chave] = `ecosol_session=${token}`;
+  segredosPorCookie.set(cookies[chave], segredos[chave]);
 }
 
 const aplicacao = express();
@@ -52,13 +67,47 @@ aplicacao.use(express.json(), rotasAdministrativas);
 const servidor = aplicacao.listen(0, "127.0.0.1");
 await new Promise((resolver) => servidor.once("listening", resolver));
 const base = `http://127.0.0.1:${servidor.address().port}`;
+process.env.APP_URL = base;
+const confirmacoes = new Map();
 
 async function chamar(caminho, cookie, metodo = "GET", corpo) {
+  if (
+    metodo !== "GET" &&
+    caminho.startsWith("/api/admin/bancario/") &&
+    cookie
+  ) {
+    if (!confirmacoes.has(cookie)) {
+      const confirmacao = await fetch(
+        base + "/api/admin/bancario/confirmar-identidade",
+        {
+          method: "POST",
+          headers: {
+            Cookie: cookie,
+            Origin: base,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            senha: senhaDeTeste,
+            codigo: codigoTotp(
+              segredosPorCookie.get(cookie),
+              Math.floor(Date.now() / 30_000),
+            ),
+          }),
+        },
+      );
+      assert.equal(confirmacao.status, 200);
+      confirmacoes.set(cookie, (await confirmacao.json()).prova);
+    }
+  }
   return fetch(base + caminho, {
     method: metodo,
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
+      ...(metodo !== "GET" ? { Origin: base } : {}),
+      ...(confirmacoes.has(cookie)
+        ? { "X-Ecosol-Confirmacao-Bancaria": confirmacoes.get(cookie) }
+        : {}),
       ...(cookie ? { Cookie: cookie } : {}),
     },
     ...(corpo ? { body: JSON.stringify(corpo) } : {}),
@@ -70,6 +119,57 @@ function rotaPapel(id, papel) {
 }
 
 try {
+  const rotaProtegida = rotaPapel(pessoas.operador, "operador_financeiro");
+  const semConfirmacao = await fetch(base + rotaProtegida, {
+    method: "PUT",
+    headers: { Cookie: cookies.gestorA, Origin: base },
+  });
+  assert.equal(semConfirmacao.status, 403);
+  assert.equal(
+    (
+      await chamar(
+        "/api/admin/bancario/confirmar-identidade",
+        cookies.gestorA,
+        "GET",
+      )
+    ).status,
+    404,
+  );
+  const origemEstranha = await fetch(
+    base + "/api/admin/bancario/confirmar-identidade",
+    {
+      method: "POST",
+      headers: {
+        Cookie: cookies.gestorA,
+        Origin: "https://outro.example",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ senha: senhaDeTeste }),
+    },
+  );
+  assert.equal(origemEstranha.status, 403);
+  const senhaErrada = await fetch(
+    base + "/api/admin/bancario/confirmar-identidade",
+    {
+      method: "POST",
+      headers: {
+        Cookie: cookies.gestorA,
+        Origin: base,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ senha: "incorreta" }),
+    },
+  );
+  assert.equal(senhaErrada.status, 401);
+  const tokenFalso = await fetch(base + rotaProtegida, {
+    method: "PUT",
+    headers: {
+      Cookie: cookies.gestorA,
+      Origin: base,
+      "X-Ecosol-Confirmacao-Bancaria": "0".repeat(64),
+    },
+  });
+  assert.equal(tokenFalso.status, 403);
   assert.equal(
     banco.prepare("SELECT COUNT(*) AS n FROM bancario_papeis_equipe").get().n,
     0,
@@ -254,6 +354,18 @@ try {
       .get().n,
     4,
   );
+  banco
+    .prepare("UPDATE sessions SET expires_at=0 WHERE staff_id=?")
+    .run(pessoas.gestorA);
+  const sessaoExpirada = await fetch(base + rotaProtegida, {
+    method: "PUT",
+    headers: {
+      Cookie: cookies.gestorA,
+      Origin: base,
+      "X-Ecosol-Confirmacao-Bancaria": confirmacoes.get(cookies.gestorA),
+    },
+  });
+  assert.equal(sessaoExpirada.status, 401);
   console.log(
     "OK: permissões bancárias negadas por padrão, delegação nominal, segregação e auditoria.",
   );

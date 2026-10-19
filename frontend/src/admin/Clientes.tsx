@@ -8,6 +8,7 @@ import { usarAdministrador } from "./EstruturaAdministrativa";
 import {
   alterarDados,
   consultarServidor,
+  consultarServidorBancario,
   nomesDosNiveis,
   usarConsulta,
 } from "./comunicacaoComServidor";
@@ -175,6 +176,7 @@ export default function Clientes() {
   const [erro, definirErro] = useState("");
   const [mensagem, definirMensagem] = useState("");
   const [ocupado, definirOcupado] = useState(false);
+  const [exportando, definirExportando] = useState(false);
   const todosClientes = consulta.dados?.clientes ?? [];
   const administradores = consulta.dados?.administradores ?? [];
   const contatos = consulta.dados?.contatos ?? [];
@@ -241,7 +243,7 @@ export default function Clientes() {
     definirErro("");
     definirMensagem("");
     try {
-      await consultarServidor(
+      await consultarServidorBancario(
         `/api/admin/bancario/permissoes/${pessoaId}/${papel}`,
         { method: conceder ? "PUT" : "DELETE" },
       );
@@ -294,6 +296,42 @@ export default function Clientes() {
     }
   }
 
+  async function exportarPlanilha() {
+    if (exportando) return;
+    definirExportando(true);
+    definirErro("");
+    try {
+      const resposta = await fetch("/api/admin/clientes/exportar", {
+        credentials: "same-origin",
+        headers: {
+          Accept:
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        },
+      });
+      if (
+        !resposta.ok ||
+        !resposta.headers.get("content-type")?.includes("spreadsheetml")
+      )
+        throw new Error(
+          resposta.status === 403
+            ? "Seu acesso não permite exportar os cadastros."
+            : "Não foi possível gerar a planilha. Tente novamente.",
+        );
+      const arquivo = URL.createObjectURL(await resposta.blob());
+      const link = document.createElement("a");
+      link.href = arquivo;
+      link.download = `clientes-ecosol-${new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date())}.xlsx`;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(arquivo), 60_000);
+    } catch (falha) {
+      definirErro((falha as Error).message);
+    } finally {
+      definirExportando(false);
+    }
+  }
+
   return (
     <>
       <CabecalhoDoModulo
@@ -301,12 +339,23 @@ export default function Clientes() {
         descricao="Organize unidades de cobrança, clientes, contatos e acessos da equipe."
       >
         {secao === "clientes" && (
-          <button
-            className="admin-botao"
-            onClick={() => definirFormulario(!formulario)}
-          >
-            {formulario ? "Fechar cadastro" : "+ Novo cliente"}
-          </button>
+          <>
+            {administrador.nivel >= 3 && (
+              <button
+                className="admin-botao secundario"
+                disabled={exportando}
+                onClick={exportarPlanilha}
+              >
+                {exportando ? "Gerando planilha…" : "Exportar clientes"}
+              </button>
+            )}
+            <button
+              className="admin-botao"
+              onClick={() => definirFormulario(!formulario)}
+            >
+              {formulario ? "Fechar cadastro" : "+ Novo cliente"}
+            </button>
+          </>
         )}
       </CabecalhoDoModulo>
       <nav

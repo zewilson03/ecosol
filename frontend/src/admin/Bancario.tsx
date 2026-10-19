@@ -6,8 +6,9 @@ import {
   ListaVazia,
 } from "./ComponentesDoPainel";
 import {
-  alterarDados,
   consultarServidor,
+  consultarServidorBancario,
+  configurarMfaRecuperado,
   formatarData,
   formatarDinheiro,
   usarConsulta,
@@ -31,6 +32,8 @@ type Operacao = {
 };
 
 type Detalhe = Operacao & {
+  preparado_por: number;
+  autoaprovada: number;
   snapshot: {
     origem: { nome: string };
     cliente: { nome: string; documento: string };
@@ -67,6 +70,17 @@ type Executor = {
   alterado_em: string;
 };
 
+type PedidoRecuperacao = {
+  id: string;
+  staff_id: number;
+  pessoa: string;
+  estado: string;
+  exige_guardiao: number;
+  solicitado_em: number;
+  expira_em: number;
+  total_aprovacoes: number;
+};
+
 const nomesEstados: Record<string, string> = {
   aguardando_aprovacao: "Aguardando aprovação",
   aprovada: "Aprovada",
@@ -96,6 +110,20 @@ export default function Bancario() {
   const operador = papeis.includes("operador_financeiro");
   const aprovador = papeis.includes("aprovador_financeiro");
   const gestor = papeis.includes("administrador_integracao");
+  const podeAprovarRecuperacao =
+    sessao.dados?.perfil === "equipe" &&
+    (sessao.dados.administrador.proprietario === true ||
+      sessao.dados.administrador.guardiao_recuperacao === true);
+  const minhaRecuperacao = usarConsulta<{
+    pedido: Pick<PedidoRecuperacao, "id" | "estado" | "expira_em"> | null;
+  }>(
+    sessao.dados?.perfil === "equipe"
+      ? "/api/admin/bancario/mfa/recuperacao/minha"
+      : null,
+  );
+  const recuperacoes = usarConsulta<PedidoRecuperacao[]>(
+    podeAprovarRecuperacao ? "/api/admin/bancario/mfa/recuperacoes" : null,
+  );
   const operacoes = usarConsulta<Operacao[]>(
     podeConsultar ? "/api/admin/bancario/operacoes" : null,
   );
@@ -110,8 +138,14 @@ export default function Bancario() {
     selecionado ? `/api/admin/bancario/operacoes/${selecionado}` : null,
   );
   const [ocupado, setOcupado] = useState(false);
+  const [autoaprovacaoConfirmadaPara, setAutoaprovacaoConfirmadaPara] =
+    useState<string | null>(null);
   const [mensagem, setMensagem] = useState("");
   const [erro, setErro] = useState("");
+  const [senhaRecuperacao, setSenhaRecuperacao] = useState("");
+  const [identidadeConferida, setIdentidadeConferida] = useState<string | null>(
+    null,
+  );
 
   const prontas = useMemo(() => {
     const usados = new Set(
@@ -135,6 +169,8 @@ export default function Bancario() {
       operacoes.atualizar();
       detalhe.atualizar();
       executor.atualizar();
+      minhaRecuperacao.atualizar();
+      recuperacoes.atualizar();
     } catch (falha) {
       setErro((falha as Error).message);
     } finally {
@@ -143,6 +179,15 @@ export default function Bancario() {
   }
 
   const operacao = detalhe.dados;
+  const propriaOperacao = Boolean(
+    operacao &&
+    sessao.dados?.perfil === "equipe" &&
+    operacao.preparado_por === sessao.dados.administrador.id,
+  );
+  const podeAutoaprovar =
+    propriaOperacao &&
+    sessao.dados?.perfil === "equipe" &&
+    sessao.dados.administrador.proprietario === true;
   return (
     <>
       <CabecalhoDoModulo
@@ -174,6 +219,135 @@ export default function Bancario() {
       )}
       <EstadoDaConsulta {...sessao} repetir={sessao.atualizar} />
 
+      {sessao.dados?.perfil === "equipe" && (
+        <section className="bancario-executor">
+          <div>
+            <span className="admin-legenda">RECUPERAÇÃO DE ACESSO</span>
+            <h2>Perdeu o autenticador e todos os códigos?</h2>
+            <p>
+              A recuperação exige conferência presencial e duas aprovações
+              nominais. Ela não desativa o MFA atual.
+            </p>
+            {minhaRecuperacao.dados?.pedido && (
+              <p>
+                Seu pedido está {minhaRecuperacao.dados.pedido.estado}. Expira
+                em{" "}
+                {new Date(
+                  minhaRecuperacao.dados.pedido.expira_em,
+                ).toLocaleString("pt-BR")}
+                .
+              </p>
+            )}
+          </div>
+          {minhaRecuperacao.dados?.pedido?.estado === "aprovado" ? (
+            <button
+              className="admin-botao"
+              disabled={ocupado}
+              onClick={() =>
+                executar(
+                  () =>
+                    configurarMfaRecuperado(minhaRecuperacao.dados!.pedido!.id),
+                  "Novo autenticador ativado. Guarde os novos códigos.",
+                )
+              }
+            >
+              Cadastrar novo autenticador
+            </button>
+          ) : !minhaRecuperacao.dados?.pedido ? (
+            <form
+              onSubmit={(evento) => {
+                evento.preventDefault();
+                executar(async () => {
+                  await consultarServidor(
+                    "/api/admin/bancario/mfa/recuperacao/solicitar",
+                    {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ senha: senhaRecuperacao }),
+                    },
+                  );
+                  setSenhaRecuperacao("");
+                }, "Pedido registrado. Procure os aprovadores para conferir sua identidade presencialmente.");
+              }}
+            >
+              <label>
+                Senha da equipe
+                <input
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  maxLength={128}
+                  value={senhaRecuperacao}
+                  onChange={(evento) =>
+                    setSenhaRecuperacao(evento.target.value)
+                  }
+                />
+              </label>
+              <button className="admin-botao secundario" disabled={ocupado}>
+                Solicitar recuperação
+              </button>
+            </form>
+          ) : null}
+        </section>
+      )}
+      {podeAprovarRecuperacao && (recuperacoes.dados?.length ?? 0) > 0 && (
+        <section className="bancario-preparar">
+          <span className="admin-legenda">PEDIDOS PARA CONFERÊNCIA</span>
+          <h2>Recuperações de MFA</h2>
+          <p>
+            Confirme a identidade presencialmente antes de aprovar. A aprovação
+            exige seu próprio MFA.
+          </p>
+          {recuperacoes.dados?.map((pedido) => (
+            <div className="bancario-documentos" key={pedido.id}>
+              <div>
+                <span>
+                  <strong>{pedido.pessoa}</strong>
+                  <small>
+                    {pedido.total_aprovacoes} aprovação(ões) · expira em{" "}
+                    {new Date(pedido.expira_em).toLocaleString("pt-BR")}
+                  </small>
+                </span>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={identidadeConferida === pedido.id}
+                    onChange={(evento) =>
+                      setIdentidadeConferida(
+                        evento.target.checked ? pedido.id : null,
+                      )
+                    }
+                  />{" "}
+                  Conferi a identidade presencialmente
+                </label>
+                <button
+                  className="admin-botao"
+                  disabled={ocupado || identidadeConferida !== pedido.id}
+                  onClick={() =>
+                    executar(
+                      () =>
+                        consultarServidorBancario(
+                          `/api/admin/bancario/mfa/recuperacoes/${pedido.id}/aprovar`,
+                          {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              identidade_conferida_presencialmente: true,
+                            }),
+                          },
+                        ),
+                      "Aprovação registrada.",
+                    )
+                  }
+                >
+                  Aprovar recuperação
+                </button>
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
+
       {gestor && executor.dados && (
         <section className="bancario-executor">
           <div>
@@ -194,11 +368,11 @@ export default function Bancario() {
             onClick={() =>
               executar(
                 () =>
-                  alterarDados(
-                    "/api/admin/bancario/executor",
-                    { pausado: !executor.dados!.pausado },
-                    "PATCH",
-                  ),
+                  consultarServidorBancario("/api/admin/bancario/executor", {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ pausado: !executor.dados!.pausado }),
+                  }),
                 executor.dados!.pausado
                   ? "Executor retomado."
                   : "Executor pausado.",
@@ -241,7 +415,7 @@ export default function Bancario() {
                   disabled={ocupado}
                   onClick={() =>
                     executar(async () => {
-                      const resposta = await consultarServidor<{
+                      const resposta = await consultarServidorBancario<{
                         operacao: Operacao;
                       }>("/api/admin/bancario/operacoes/cobrancas", {
                         method: "POST",
@@ -356,22 +530,68 @@ export default function Bancario() {
                     <div className="bancario-acoes">
                       {aprovador &&
                         operacao.estado === "aguardando_aprovacao" && (
-                          <button
-                            className="admin-botao"
-                            disabled={ocupado}
-                            onClick={() =>
-                              executar(
-                                () =>
-                                  consultarServidor(
-                                    `/api/admin/bancario/operacoes/${operacao.id}/aprovar`,
-                                    { method: "POST" },
-                                  ),
-                                "Operação aprovada.",
-                              )
-                            }
-                          >
-                            Aprovar operação
-                          </button>
+                          <>
+                            {podeAutoaprovar && (
+                              <label className="bancario-autoaprovacao">
+                                <input
+                                  type="checkbox"
+                                  checked={
+                                    autoaprovacaoConfirmadaPara === operacao.id
+                                  }
+                                  onChange={(evento) =>
+                                    setAutoaprovacaoConfirmadaPara(
+                                      evento.target.checked
+                                        ? operacao.id
+                                        : null,
+                                    )
+                                  }
+                                />
+                                Confirmo que estou aprovando uma operação que eu
+                                mesmo preparei.
+                              </label>
+                            )}
+                            {!propriaOperacao || podeAutoaprovar ? (
+                              <button
+                                className="admin-botao"
+                                disabled={
+                                  ocupado ||
+                                  (podeAutoaprovar &&
+                                    autoaprovacaoConfirmadaPara !== operacao.id)
+                                }
+                                onClick={() =>
+                                  executar(
+                                    () =>
+                                      consultarServidorBancario(
+                                        `/api/admin/bancario/operacoes/${operacao.id}/aprovar`,
+                                        {
+                                          method: "POST",
+                                          ...(podeAutoaprovar
+                                            ? {
+                                                headers: {
+                                                  "Content-Type":
+                                                    "application/json",
+                                                },
+                                                body: JSON.stringify({
+                                                  confirmacao_autoaprovacao: true,
+                                                }),
+                                              }
+                                            : {}),
+                                        },
+                                      ),
+                                    "Operação aprovada.",
+                                  )
+                                }
+                              >
+                                {podeAutoaprovar
+                                  ? "Autoaprovar operação"
+                                  : "Aprovar operação"}
+                              </button>
+                            ) : (
+                              <small>
+                                Esta operação exige aprovação de outra pessoa.
+                              </small>
+                            )}
+                          </>
                         )}
                       {operador && operacao.estado === "aprovada" && (
                         <button
@@ -380,7 +600,7 @@ export default function Bancario() {
                           onClick={() =>
                             executar(
                               () =>
-                                consultarServidor(
+                                consultarServidorBancario(
                                   `/api/admin/bancario/operacoes/${operacao.id}/enfileirar`,
                                   { method: "POST" },
                                 ),

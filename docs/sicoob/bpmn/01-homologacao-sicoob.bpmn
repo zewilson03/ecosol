@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions
+  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+  id="Definitions_HomologacaoSicoob"
+  targetNamespace="https://ecosol.com.br/bpmn/sicoob"
+>
+  <!-- O Sicoob fica como participante externo. Seus procedimentos internos dependem do contrato oficial. -->
+  <bpmn:collaboration id="Collaboration_Homologacao">
+    <bpmn:participant
+      id="Participant_Ecosol"
+      name="Ecosol"
+      processRef="Process_Homologacao"
+    />
+    <bpmn:participant id="Participant_Sicoob" name="Sicoob" />
+
+    <bpmn:messageFlow
+      id="Message_Solicitacao"
+      name="Solicitação de acesso"
+      sourceRef="Task_SolicitarAcesso"
+      targetRef="Participant_Sicoob"
+    />
+    <bpmn:messageFlow
+      id="Message_Contrato"
+      name="Contrato e dados oficiais"
+      sourceRef="Participant_Sicoob"
+      targetRef="Catch_Contrato"
+    />
+    <bpmn:messageFlow
+      id="Message_Teste"
+      name="Teste técnico"
+      sourceRef="Task_Testar"
+      targetRef="Participant_Sicoob"
+    />
+    <bpmn:messageFlow
+      id="Message_Resultado"
+      name="Resultado do teste"
+      sourceRef="Participant_Sicoob"
+      targetRef="Catch_Resultado"
+    />
+  </bpmn:collaboration>
+
+  <bpmn:process id="Process_Homologacao" isExecutable="false">
+    <!-- 1. Receber a documentação oficial e configurar o ambiente. -->
+    <bpmn:startEvent id="Start_Preparacao" name="Iniciar preparação" />
+    <bpmn:task id="Task_SolicitarAcesso" name="Solicitar acesso de homologação" />
+    <bpmn:intermediateCatchEvent id="Catch_Contrato" name="Contrato recebido">
+      <bpmn:messageEventDefinition />
+    </bpmn:intermediateCatchEvent>
+    <bpmn:task id="Task_Configurar" name="Configurar segredos e certificado" />
+    <bpmn:task id="Task_Implementar" name="Implementar contrato oficial" />
+
+    <!-- 2. Testar sem movimentar dinheiro e registrar o resultado. -->
+    <bpmn:task id="Task_Testar" name="Testar OAuth e consulta" />
+    <bpmn:intermediateCatchEvent id="Catch_Resultado" name="Resultado recebido">
+      <bpmn:messageEventDefinition />
+    </bpmn:intermediateCatchEvent>
+    <bpmn:exclusiveGateway id="Gateway_Aprovado" name="Teste aprovado?" />
+
+    <!-- 3. Avançar ou corrigir antes de repetir o teste. -->
+    <bpmn:task id="Task_Evidenciar" name="Registrar evidências" />
+    <bpmn:endEvent id="End_Pronto" name="Teste de cobrança liberado" />
+    <bpmn:task id="Task_Corrigir" name="Corrigir configuração ou contrato" />
+
+    <!-- As conexões abaixo determinam a ordem; os elementos acima descrevem as ações. -->
+    <bpmn:sequenceFlow id="Flow_01" sourceRef="Start_Preparacao" targetRef="Task_SolicitarAcesso" />
+    <bpmn:sequenceFlow id="Flow_02" sourceRef="Task_SolicitarAcesso" targetRef="Catch_Contrato" />
+    <bpmn:sequenceFlow id="Flow_03" sourceRef="Catch_Contrato" targetRef="Task_Configurar" />
+    <bpmn:sequenceFlow id="Flow_04" sourceRef="Task_Configurar" targetRef="Task_Implementar" />
+    <bpmn:sequenceFlow id="Flow_05" sourceRef="Task_Implementar" targetRef="Task_Testar" />
+    <bpmn:sequenceFlow id="Flow_06" sourceRef="Task_Testar" targetRef="Catch_Resultado" />
+    <bpmn:sequenceFlow id="Flow_07" sourceRef="Catch_Resultado" targetRef="Gateway_Aprovado" />
+    <bpmn:sequenceFlow
+      id="Flow_Aprovado"
+      name="Sim"
+      sourceRef="Gateway_Aprovado"
+      targetRef="Task_Evidenciar"
+    />
+    <bpmn:sequenceFlow id="Flow_08" sourceRef="Task_Evidenciar" targetRef="End_Pronto" />
+    <bpmn:sequenceFlow
+      id="Flow_Corrigir"
+      name="Não"
+      sourceRef="Gateway_Aprovado"
+      targetRef="Task_Corrigir"
+    />
+    <bpmn:sequenceFlow id="Flow_Repetir" sourceRef="Task_Corrigir" targetRef="Task_Configurar" />
+  </bpmn:process>
+
+  <!-- Coordenadas do desenho para abertura direta em um modelador BPMN. -->
+  <bpmndi:BPMNDiagram id="Diagram_Homologacao">
+    <bpmndi:BPMNPlane id="Plane_Homologacao" bpmnElement="Collaboration_Homologacao">
+      <bpmndi:BPMNShape id="Participant_Ecosol_di" bpmnElement="Participant_Ecosol" isHorizontal="true">
+        <dc:Bounds x="60" y="60" width="1740" height="320" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Participant_Sicoob_di" bpmnElement="Participant_Sicoob" isHorizontal="true">
+        <dc:Bounds x="60" y="430" width="1740" height="105" />
+      </bpmndi:BPMNShape>
+
+      <!-- Linha principal Ecosol: da esquerda para a direita. -->
+      <bpmndi:BPMNShape id="Start_Preparacao_di" bpmnElement="Start_Preparacao">
+        <dc:Bounds x="135" y="172" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_SolicitarAcesso_di" bpmnElement="Task_SolicitarAcesso">
+        <dc:Bounds x="215" y="150" width="155" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Catch_Contrato_di" bpmnElement="Catch_Contrato">
+        <dc:Bounds x="420" y="172" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Configurar_di" bpmnElement="Task_Configurar">
+        <dc:Bounds x="505" y="150" width="165" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Implementar_di" bpmnElement="Task_Implementar">
+        <dc:Bounds x="720" y="150" width="165" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Testar_di" bpmnElement="Task_Testar">
+        <dc:Bounds x="935" y="150" width="165" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Catch_Resultado_di" bpmnElement="Catch_Resultado">
+        <dc:Bounds x="1145" y="172" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_Aprovado_di" bpmnElement="Gateway_Aprovado" isMarkerVisible="true">
+        <dc:Bounds x="1230" y="165" width="50" height="50" />
+      </bpmndi:BPMNShape>
+
+      <!-- Saída superior: aprovado. Saída inferior: corrigir e voltar à configuração. -->
+      <bpmndi:BPMNShape id="Task_Evidenciar_di" bpmnElement="Task_Evidenciar">
+        <dc:Bounds x="1360" y="95" width="170" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Pronto_di" bpmnElement="End_Pronto">
+        <dc:Bounds x="1620" y="112" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Corrigir_di" bpmnElement="Task_Corrigir">
+        <dc:Bounds x="1360" y="245" width="170" height="70" />
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNEdge id="Flow_01_di" bpmnElement="Flow_01">
+        <di:waypoint x="171" y="190" /><di:waypoint x="215" y="190" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_02_di" bpmnElement="Flow_02">
+        <di:waypoint x="370" y="190" /><di:waypoint x="420" y="190" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_03_di" bpmnElement="Flow_03">
+        <di:waypoint x="456" y="190" /><di:waypoint x="505" y="190" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_04_di" bpmnElement="Flow_04">
+        <di:waypoint x="670" y="190" /><di:waypoint x="720" y="190" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_05_di" bpmnElement="Flow_05">
+        <di:waypoint x="885" y="190" /><di:waypoint x="935" y="190" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_06_di" bpmnElement="Flow_06">
+        <di:waypoint x="1100" y="190" /><di:waypoint x="1145" y="190" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_07_di" bpmnElement="Flow_07">
+        <di:waypoint x="1181" y="190" /><di:waypoint x="1230" y="190" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Aprovado_di" bpmnElement="Flow_Aprovado">
+        <di:waypoint x="1255" y="165" /><di:waypoint x="1255" y="130" /><di:waypoint x="1360" y="130" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_08_di" bpmnElement="Flow_08">
+        <di:waypoint x="1530" y="130" /><di:waypoint x="1620" y="130" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Corrigir_di" bpmnElement="Flow_Corrigir">
+        <di:waypoint x="1255" y="215" /><di:waypoint x="1255" y="280" /><di:waypoint x="1360" y="280" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Repetir_di" bpmnElement="Flow_Repetir">
+        <di:waypoint x="1530" y="280" /><di:waypoint x="1690" y="280" /><di:waypoint x="1690" y="75" /><di:waypoint x="587" y="75" /><di:waypoint x="587" y="150" />
+      </bpmndi:BPMNEdge>
+
+      <!-- Mensagens cruzam apenas a fronteira entre Ecosol e Sicoob. -->
+      <bpmndi:BPMNEdge id="Message_Solicitacao_di" bpmnElement="Message_Solicitacao">
+        <di:waypoint x="292" y="230" /><di:waypoint x="292" y="430" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Message_Contrato_di" bpmnElement="Message_Contrato">
+        <di:waypoint x="438" y="430" /><di:waypoint x="438" y="208" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Message_Teste_di" bpmnElement="Message_Teste">
+        <di:waypoint x="1018" y="230" /><di:waypoint x="1018" y="430" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Message_Resultado_di" bpmnElement="Message_Resultado">
+        <di:waypoint x="1163" y="430" /><di:waypoint x="1163" y="208" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { obterBanco } from "../bancoDeDados.mjs";
+import { temPapelCritico } from "./permissoes.mjs";
 
 const STATUS_FATURA_APROVADA = "Aprovada — aguardando emissão";
 
@@ -136,13 +137,17 @@ function linhaCompleta(banco, operacaoId) {
     .prepare(
       `SELECT o.*,
               p.name AS preparador_nome,
-              a.aprovador_id,a.criado_em AS aprovado_em,
+              COALESCE(a.aprovador_id,auto.proprietario_id) AS aprovador_id,
+              COALESCE(a.criado_em,auto.criado_em) AS aprovado_em,
+              (auto.id IS NOT NULL) AS autoaprovada,
               aprov.name AS aprovador_nome
        FROM bancario_operacoes o
        JOIN staff_users p ON p.id=o.preparado_por
        LEFT JOIN bancario_aprovacoes a
          ON a.operacao_id=o.id AND a.operacao_versao=o.versao
-       LEFT JOIN staff_users aprov ON aprov.id=a.aprovador_id
+       LEFT JOIN bancario_autoaprovacoes_proprietario auto
+         ON auto.operacao_id=o.id AND auto.operacao_versao=o.versao
+       LEFT JOIN staff_users aprov ON aprov.id=COALESCE(a.aprovador_id,auto.proprietario_id)
        WHERE o.id=?`,
     )
     .get(operacaoId);
@@ -286,7 +291,11 @@ export function criarOperacaoDeCobranca(documentoId, administrador) {
   });
 }
 
-export function aprovarOperacao(operacaoId, administrador) {
+export function aprovarOperacao(
+  operacaoId,
+  administrador,
+  confirmacaoAutoaprovacao = false,
+) {
   if (!/^[0-9a-f-]{36}$/.test(String(operacaoId)))
     falhar("Operação bancária inválida.");
   return transacaoImediata((banco) => {
@@ -294,30 +303,52 @@ export function aprovarOperacao(operacaoId, administrador) {
       .prepare("SELECT * FROM bancario_operacoes WHERE id=?")
       .get(operacaoId);
     if (!operacao) falhar("Operação bancária não encontrada.", 404);
-    if (operacao.preparado_por === administrador.id)
+    const autoaprovacao = operacao.preparado_por === administrador.id;
+    if (autoaprovacao && !temPapelCritico(administrador.id, "proprietario"))
       falhar("Quem preparou a operação não pode aprová-la.", 409);
+    if (autoaprovacao && confirmacaoAutoaprovacao !== true)
+      falhar("Confirme explicitamente a autoaprovação desta operação.", 400);
     const aprovacaoExistente = banco
       .prepare(
-        "SELECT aprovador_id FROM bancario_aprovacoes WHERE operacao_id=? AND operacao_versao=?",
+        `SELECT aprovador_id FROM bancario_aprovacoes
+         WHERE operacao_id=? AND operacao_versao=?
+         UNION ALL
+         SELECT proprietario_id FROM bancario_autoaprovacoes_proprietario
+         WHERE operacao_id=? AND operacao_versao=?`,
       )
-      .get(operacao.id, operacao.versao);
+      .get(operacao.id, operacao.versao, operacao.id, operacao.versao);
     if (aprovacaoExistente)
       return { alterada: false, operacao: linhaCompleta(banco, operacao.id) };
     if (operacao.estado !== "aguardando_aprovacao")
       falhar("Esta operação não está aguardando aprovação.", 409);
-    banco
-      .prepare(
-        `INSERT INTO bancario_aprovacoes
-         (operacao_id,operacao_versao,snapshot_hash,preparador_id,aprovador_id)
-         VALUES(?,?,?,?,?)`,
-      )
-      .run(
-        operacao.id,
-        operacao.versao,
-        operacao.snapshot_hash,
-        operacao.preparado_por,
-        administrador.id,
-      );
+    if (autoaprovacao) {
+      banco
+        .prepare(
+          `INSERT INTO bancario_autoaprovacoes_proprietario
+           (operacao_id,operacao_versao,snapshot_hash,proprietario_id)
+           VALUES(?,?,?,?)`,
+        )
+        .run(
+          operacao.id,
+          operacao.versao,
+          operacao.snapshot_hash,
+          administrador.id,
+        );
+    } else {
+      banco
+        .prepare(
+          `INSERT INTO bancario_aprovacoes
+           (operacao_id,operacao_versao,snapshot_hash,preparador_id,aprovador_id)
+           VALUES(?,?,?,?,?)`,
+        )
+        .run(
+          operacao.id,
+          operacao.versao,
+          operacao.snapshot_hash,
+          operacao.preparado_por,
+          administrador.id,
+        );
+    }
     banco
       .prepare(
         `UPDATE bancario_operacoes
@@ -329,10 +360,10 @@ export function aprovarOperacao(operacaoId, administrador) {
       banco,
       operacao.id,
       administrador,
-      "Operação aprovada",
+      autoaprovacao ? "Autoaprovação pelo Proprietário" : "Operação aprovada",
       "aguardando_aprovacao",
       "aprovada",
-      { snapshot_hash: operacao.snapshot_hash },
+      { snapshot_hash: operacao.snapshot_hash, autoaprovacao },
     );
     return { alterada: true, operacao: linhaCompleta(banco, operacao.id) };
   });
@@ -356,6 +387,22 @@ function conferirOrigemImutavel(banco, operacao) {
 }
 
 function conferirAprovacaoAindaValida(banco, operacao) {
+  const autoaprovacao = banco
+    .prepare(
+      `SELECT 1 FROM bancario_autoaprovacoes_proprietario a
+       JOIN equipe_papeis_criticos p
+         ON p.staff_id=a.proprietario_id AND p.papel='proprietario'
+       JOIN staff_users s ON s.id=p.staff_id AND s.access_level=3
+       WHERE a.operacao_id=? AND a.operacao_versao=?
+         AND a.snapshot_hash=? AND a.proprietario_id=?`,
+    )
+    .get(
+      operacao.id,
+      operacao.versao,
+      operacao.snapshot_hash,
+      operacao.preparado_por,
+    );
+  if (autoaprovacao) return;
   const aprovacao = banco
     .prepare(
       `SELECT 1
@@ -436,7 +483,9 @@ export function listarOperacoes() {
       `SELECT o.id,o.tipo,o.ambiente,o.conta_referencia,o.origem_tipo,
               o.origem_id,o.origem_versao,o.moeda,o.valor_centavos,
               o.vencimento,o.estado,o.versao,o.criado_em,o.atualizado_em,
-              p.name AS preparador_nome,a.aprovador_id,
+              p.name AS preparador_nome,
+              COALESCE(a.aprovador_id,auto.proprietario_id) AS aprovador_id,
+              (auto.id IS NOT NULL) AS autoaprovada,
               aprov.name AS aprovador_nome,
               (SELECT COUNT(*) FROM bancario_tentativas t
                WHERE t.operacao_id=o.id) AS total_tentativas
@@ -444,7 +493,9 @@ export function listarOperacoes() {
        JOIN staff_users p ON p.id=o.preparado_por
        LEFT JOIN bancario_aprovacoes a
          ON a.operacao_id=o.id AND a.operacao_versao=o.versao
-       LEFT JOIN staff_users aprov ON aprov.id=a.aprovador_id
+       LEFT JOIN bancario_autoaprovacoes_proprietario auto
+         ON auto.operacao_id=o.id AND auto.operacao_versao=o.versao
+       LEFT JOIN staff_users aprov ON aprov.id=COALESCE(a.aprovador_id,auto.proprietario_id)
        ORDER BY o.criado_em DESC,o.id DESC`,
     )
     .all();

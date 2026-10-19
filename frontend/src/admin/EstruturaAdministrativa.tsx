@@ -1,6 +1,7 @@
 import { CSSProperties, useEffect, useState } from "react";
 import {
   Link,
+  useLocation,
   NavLink,
   Navigate,
   Outlet,
@@ -74,6 +75,7 @@ export function usarAdministrador() {
 }
 
 export default function EstruturaAdministrativa() {
+  const location = useLocation();
   const {
     dados: sessao,
     carregando,
@@ -119,22 +121,29 @@ export default function EstruturaAdministrativa() {
   if (sessao?.perfil !== "equipe") return <Navigate to="/equipe" replace />;
 
   const administrador = sessao.administrador;
+  if (
+    administrador.guardiao_recuperacao &&
+    location.pathname !== "/admin/bancario"
+  )
+    return <Navigate to="/admin/bancario" replace />;
   const papeisBancarios = sessao.papeis_bancarios ?? [];
   const lateralExpandida = !lateralRecolhida || lateralTemporaria;
-  const itens = [
-    { rota: "usinas", nome: "Usinas" },
-    { rota: "faturas", nome: "Faturas" },
-    { rota: "clientes", nome: "Cadastros" },
-    ...(administrador.nivel >= 2
-      ? [{ rota: "financeiro", nome: "Financeiro" }]
-      : []),
-    ...(papeisBancarios.length
-      ? [{ rota: "bancario", nome: "Banco · homologação" }]
-      : []),
-    ...(administrador.nivel >= 3
-      ? [{ rota: "gmail", nome: "Integração Gmail" }]
-      : []),
-  ];
+  const itens = administrador.guardiao_recuperacao
+    ? [{ rota: "bancario", nome: "Recuperação de acesso" }]
+    : [
+        { rota: "usinas", nome: "Usinas" },
+        { rota: "faturas", nome: "Faturas" },
+        { rota: "clientes", nome: "Cadastros" },
+        ...(administrador.nivel >= 2
+          ? [{ rota: "financeiro", nome: "Financeiro" }]
+          : []),
+        ...(papeisBancarios.length
+          ? [{ rota: "bancario", nome: "Banco · homologação" }]
+          : []),
+        ...(administrador.nivel >= 3
+          ? [{ rota: "gmail", nome: "Integração Gmail" }]
+          : []),
+      ];
 
   return (
     <div
@@ -199,8 +208,9 @@ export default function EstruturaAdministrativa() {
           <div className="admin-perfil-texto">
             <strong>{administrador.nome}</strong>
             <small>
-              Nível {administrador.nivel} ·{" "}
-              {nomesDosNiveis[administrador.nivel]}
+              {administrador.guardiao_recuperacao
+                ? "Guardião de recuperação"
+                : `Nível ${administrador.nivel} · ${nomesDosNiveis[administrador.nivel]}`}
             </small>
           </div>
         </div>

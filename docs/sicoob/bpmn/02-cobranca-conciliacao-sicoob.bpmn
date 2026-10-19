@@ -1,0 +1,363 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions
+  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+  id="Definitions_CobrancaSicoob"
+  targetNamespace="https://ecosol.com.br/bpmn/sicoob"
+>
+  <!-- Equipe e Ecosol têm processos próprios. O Sicoob é um participante externo sem fluxo interno presumido. -->
+  <bpmn:collaboration id="Collaboration_Cobranca">
+    <bpmn:participant
+      id="Participant_Equipe"
+      name="Equipe financeira"
+      processRef="Process_Equipe"
+    />
+    <bpmn:participant
+      id="Participant_Ecosol"
+      name="Ecosol"
+      processRef="Process_Cobranca"
+    />
+    <bpmn:participant id="Participant_Sicoob" name="Sicoob" />
+
+    <bpmn:messageFlow
+      id="Message_Aprovacao"
+      name="Cobrança aprovada"
+      sourceRef="Task_Aprovar"
+      targetRef="Start_Aprovacao"
+    />
+    <bpmn:messageFlow
+      id="Message_Registro"
+      name="Registrar cobrança"
+      sourceRef="Task_Registrar"
+      targetRef="Participant_Sicoob"
+    />
+    <bpmn:messageFlow
+      id="Message_RespostaRegistro"
+      name="Resultado do registro"
+      sourceRef="Participant_Sicoob"
+      targetRef="Catch_RespostaRegistro"
+    />
+    <bpmn:messageFlow
+      id="Message_Consulta"
+      name="Consultar estado"
+      sourceRef="Task_Consultar"
+      targetRef="Participant_Sicoob"
+    />
+    <bpmn:messageFlow
+      id="Message_RespostaConsulta"
+      name="Estado atual"
+      sourceRef="Participant_Sicoob"
+      targetRef="Catch_RespostaConsulta"
+    />
+    <bpmn:messageFlow
+      id="Message_Liquidacao"
+      name="Retorno de liquidação"
+      sourceRef="Participant_Sicoob"
+      targetRef="Catch_Liquidacao"
+    />
+  </bpmn:collaboration>
+
+  <bpmn:process id="Process_Equipe" isExecutable="false">
+    <!-- A mesma pessoa não prepara e aprova uma cobrança. -->
+    <bpmn:startEvent id="Start_Equipe" name="Fatura calculada" />
+    <bpmn:task id="Task_Preparar" name="Conferir e preparar cobrança" />
+    <bpmn:task id="Task_Aprovar" name="Aprovar por outra pessoa" />
+    <bpmn:endEvent id="End_Equipe" name="Aprovação enviada" />
+
+    <bpmn:sequenceFlow id="Flow_E01" sourceRef="Start_Equipe" targetRef="Task_Preparar" />
+    <bpmn:sequenceFlow id="Flow_E02" sourceRef="Task_Preparar" targetRef="Task_Aprovar" />
+    <bpmn:sequenceFlow id="Flow_E03" sourceRef="Task_Aprovar" targetRef="End_Equipe" />
+  </bpmn:process>
+
+  <bpmn:process id="Process_Cobranca" isExecutable="false">
+    <!-- 1. Gravar uma intenção única antes da chamada externa. -->
+    <bpmn:startEvent id="Start_Aprovacao" name="Aprovação recebida">
+      <bpmn:messageEventDefinition />
+    </bpmn:startEvent>
+    <bpmn:task id="Task_Persistir" name="Salvar snapshot e intenção única" />
+    <bpmn:task id="Task_Registrar" name="Enviar registro ao Sicoob" />
+    <bpmn:intermediateCatchEvent id="Catch_RespostaRegistro" name="Resposta do registro">
+      <bpmn:messageEventDefinition />
+    </bpmn:intermediateCatchEvent>
+    <bpmn:exclusiveGateway id="Gateway_Resultado" name="Qual foi o resultado?" />
+
+    <!-- 2A. Registro confirmado: aguardar e conciliar a liquidação. -->
+    <bpmn:task id="Task_SalvarRegistro" name="Salvar ID externo e estado" />
+    <bpmn:intermediateCatchEvent id="Catch_Liquidacao" name="Liquidação recebida">
+      <bpmn:messageEventDefinition />
+    </bpmn:intermediateCatchEvent>
+    <bpmn:task id="Task_ValidarRetorno" name="Validar, deduplicar e conferir valores" />
+    <bpmn:exclusiveGateway id="Gateway_Conferencia" name="Retorno confere?" />
+    <bpmn:task id="Task_RegistrarBaixa" name="Registrar baixa uma vez" />
+    <bpmn:endEvent id="End_Liquidada" name="Liquidação conciliada" />
+    <bpmn:task id="Task_Divergencia" name="Abrir divergência para conferência" />
+    <bpmn:endEvent id="End_Divergencia" name="Divergência pendente" />
+
+    <!-- 2B. Rejeição confirmada: preservar motivo e pedir correção. -->
+    <bpmn:task id="Task_Rejeicao" name="Registrar rejeição e motivo" />
+    <bpmn:endEvent id="End_Rejeitada" name="Cobrança rejeitada" />
+
+    <!-- 2C. Resultado incerto: consultar; nunca reenviar o registro às cegas. -->
+    <bpmn:task id="Task_Inconclusiva" name="Marcar resultado desconhecido" />
+    <bpmn:intermediateCatchEvent id="Catch_Prazo" name="Aguardar prazo de consulta">
+      <bpmn:timerEventDefinition />
+    </bpmn:intermediateCatchEvent>
+    <bpmn:task id="Task_Consultar" name="Consultar por referência oficial" />
+    <bpmn:intermediateCatchEvent id="Catch_RespostaConsulta" name="Resposta da consulta">
+      <bpmn:messageEventDefinition />
+    </bpmn:intermediateCatchEvent>
+    <bpmn:exclusiveGateway id="Gateway_Consulta" name="Estado confirmado?" />
+    <bpmn:task id="Task_AtualizarEstado" name="Aplicar estado confirmado" />
+    <bpmn:endEvent id="End_Resolvida" name="Estado conciliado" />
+    <bpmn:task id="Task_Revisao" name="Encaminhar para revisão humana" />
+    <bpmn:endEvent id="End_Pendente" name="Conciliação pendente" />
+
+    <!-- Caminho comum até a resposta do registro. -->
+    <bpmn:sequenceFlow id="Flow_01" sourceRef="Start_Aprovacao" targetRef="Task_Persistir" />
+    <bpmn:sequenceFlow id="Flow_02" sourceRef="Task_Persistir" targetRef="Task_Registrar" />
+    <bpmn:sequenceFlow id="Flow_03" sourceRef="Task_Registrar" targetRef="Catch_RespostaRegistro" />
+    <bpmn:sequenceFlow id="Flow_04" sourceRef="Catch_RespostaRegistro" targetRef="Gateway_Resultado" />
+
+    <!-- Resultado: registrada. -->
+    <bpmn:sequenceFlow id="Flow_Registrada" name="Registrada" sourceRef="Gateway_Resultado" targetRef="Task_SalvarRegistro" />
+    <bpmn:sequenceFlow id="Flow_05" sourceRef="Task_SalvarRegistro" targetRef="Catch_Liquidacao" />
+    <bpmn:sequenceFlow id="Flow_06" sourceRef="Catch_Liquidacao" targetRef="Task_ValidarRetorno" />
+    <bpmn:sequenceFlow id="Flow_07" sourceRef="Task_ValidarRetorno" targetRef="Gateway_Conferencia" />
+    <bpmn:sequenceFlow id="Flow_Confere" name="Sim" sourceRef="Gateway_Conferencia" targetRef="Task_RegistrarBaixa" />
+    <bpmn:sequenceFlow id="Flow_08" sourceRef="Task_RegistrarBaixa" targetRef="End_Liquidada" />
+    <bpmn:sequenceFlow id="Flow_Divergente" name="Não" sourceRef="Gateway_Conferencia" targetRef="Task_Divergencia" />
+    <bpmn:sequenceFlow id="Flow_09" sourceRef="Task_Divergencia" targetRef="End_Divergencia" />
+
+    <!-- Resultado: rejeitada. -->
+    <bpmn:sequenceFlow id="Flow_Rejeitada" name="Rejeitada" sourceRef="Gateway_Resultado" targetRef="Task_Rejeicao" />
+    <bpmn:sequenceFlow id="Flow_10" sourceRef="Task_Rejeicao" targetRef="End_Rejeitada" />
+
+    <!-- Resultado: incerto; a consulta pode resolver ou deixar pendência humana. -->
+    <bpmn:sequenceFlow id="Flow_Incerta" name="Inconclusiva" sourceRef="Gateway_Resultado" targetRef="Task_Inconclusiva" />
+    <bpmn:sequenceFlow id="Flow_11" sourceRef="Task_Inconclusiva" targetRef="Catch_Prazo" />
+    <bpmn:sequenceFlow id="Flow_12" sourceRef="Catch_Prazo" targetRef="Task_Consultar" />
+    <bpmn:sequenceFlow id="Flow_13" sourceRef="Task_Consultar" targetRef="Catch_RespostaConsulta" />
+    <bpmn:sequenceFlow id="Flow_14" sourceRef="Catch_RespostaConsulta" targetRef="Gateway_Consulta" />
+    <bpmn:sequenceFlow id="Flow_Resolvida" name="Sim" sourceRef="Gateway_Consulta" targetRef="Task_AtualizarEstado" />
+    <bpmn:sequenceFlow id="Flow_15" sourceRef="Task_AtualizarEstado" targetRef="End_Resolvida" />
+    <bpmn:sequenceFlow id="Flow_Pendente" name="Não" sourceRef="Gateway_Consulta" targetRef="Task_Revisao" />
+    <bpmn:sequenceFlow id="Flow_16" sourceRef="Task_Revisao" targetRef="End_Pendente" />
+  </bpmn:process>
+
+  <!-- O desenho agrupa as três saídas da resposta em linhas separadas. -->
+  <bpmndi:BPMNDiagram id="Diagram_Cobranca">
+    <bpmndi:BPMNPlane id="Plane_Cobranca" bpmnElement="Collaboration_Cobranca">
+      <bpmndi:BPMNShape id="Participant_Equipe_di" bpmnElement="Participant_Equipe" isHorizontal="true">
+        <dc:Bounds x="60" y="60" width="1940" height="130" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Participant_Ecosol_di" bpmnElement="Participant_Ecosol" isHorizontal="true">
+        <dc:Bounds x="60" y="230" width="1940" height="490" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Participant_Sicoob_di" bpmnElement="Participant_Sicoob" isHorizontal="true">
+        <dc:Bounds x="60" y="770" width="1940" height="100" />
+      </bpmndi:BPMNShape>
+
+      <!-- Equipe financeira. -->
+      <bpmndi:BPMNShape id="Start_Equipe_di" bpmnElement="Start_Equipe">
+        <dc:Bounds x="130" y="107" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Preparar_di" bpmnElement="Task_Preparar">
+        <dc:Bounds x="220" y="85" width="180" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Aprovar_di" bpmnElement="Task_Aprovar">
+        <dc:Bounds x="460" y="85" width="180" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Equipe_di" bpmnElement="End_Equipe">
+        <dc:Bounds x="700" y="107" width="36" height="36" />
+      </bpmndi:BPMNShape>
+
+      <!-- Linha comum Ecosol. -->
+      <bpmndi:BPMNShape id="Start_Aprovacao_di" bpmnElement="Start_Aprovacao">
+        <dc:Bounds x="130" y="302" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Persistir_di" bpmnElement="Task_Persistir">
+        <dc:Bounds x="210" y="280" width="170" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Registrar_di" bpmnElement="Task_Registrar">
+        <dc:Bounds x="430" y="280" width="170" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Catch_RespostaRegistro_di" bpmnElement="Catch_RespostaRegistro">
+        <dc:Bounds x="650" y="302" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_Resultado_di" bpmnElement="Gateway_Resultado" isMarkerVisible="true">
+        <dc:Bounds x="740" y="295" width="50" height="50" />
+      </bpmndi:BPMNShape>
+
+      <!-- Faixa superior: registrada, seguida de liquidação e conferência. -->
+      <bpmndi:BPMNShape id="Task_SalvarRegistro_di" bpmnElement="Task_SalvarRegistro">
+        <dc:Bounds x="850" y="245" width="170" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Catch_Liquidacao_di" bpmnElement="Catch_Liquidacao">
+        <dc:Bounds x="1070" y="262" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_ValidarRetorno_di" bpmnElement="Task_ValidarRetorno">
+        <dc:Bounds x="1160" y="245" width="180" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_Conferencia_di" bpmnElement="Gateway_Conferencia" isMarkerVisible="true">
+        <dc:Bounds x="1390" y="255" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_RegistrarBaixa_di" bpmnElement="Task_RegistrarBaixa">
+        <dc:Bounds x="1510" y="245" width="170" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Liquidada_di" bpmnElement="End_Liquidada">
+        <dc:Bounds x="1760" y="262" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Divergencia_di" bpmnElement="Task_Divergencia">
+        <dc:Bounds x="1510" y="350" width="170" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Divergencia_di" bpmnElement="End_Divergencia">
+        <dc:Bounds x="1760" y="367" width="36" height="36" />
+      </bpmndi:BPMNShape>
+
+      <!-- Faixa central: rejeitada. -->
+      <bpmndi:BPMNShape id="Task_Rejeicao_di" bpmnElement="Task_Rejeicao">
+        <dc:Bounds x="850" y="365" width="180" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Rejeitada_di" bpmnElement="End_Rejeitada">
+        <dc:Bounds x="1110" y="382" width="36" height="36" />
+      </bpmndi:BPMNShape>
+
+      <!-- Faixa inferior: inconclusiva, com consulta e revisão se necessário. -->
+      <bpmndi:BPMNShape id="Task_Inconclusiva_di" bpmnElement="Task_Inconclusiva">
+        <dc:Bounds x="850" y="490" width="180" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Catch_Prazo_di" bpmnElement="Catch_Prazo">
+        <dc:Bounds x="1080" y="507" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Consultar_di" bpmnElement="Task_Consultar">
+        <dc:Bounds x="1160" y="490" width="170" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Catch_RespostaConsulta_di" bpmnElement="Catch_RespostaConsulta">
+        <dc:Bounds x="1380" y="507" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_Consulta_di" bpmnElement="Gateway_Consulta" isMarkerVisible="true">
+        <dc:Bounds x="1470" y="500" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_AtualizarEstado_di" bpmnElement="Task_AtualizarEstado">
+        <dc:Bounds x="1580" y="460" width="170" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Resolvida_di" bpmnElement="End_Resolvida">
+        <dc:Bounds x="1830" y="477" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Revisao_di" bpmnElement="Task_Revisao">
+        <dc:Bounds x="1580" y="585" width="170" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Pendente_di" bpmnElement="End_Pendente">
+        <dc:Bounds x="1830" y="602" width="36" height="36" />
+      </bpmndi:BPMNShape>
+
+      <!-- Sequência da equipe e entrada na operação. -->
+      <bpmndi:BPMNEdge id="Flow_E01_di" bpmnElement="Flow_E01">
+        <di:waypoint x="166" y="125" /><di:waypoint x="220" y="125" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_E02_di" bpmnElement="Flow_E02">
+        <di:waypoint x="400" y="125" /><di:waypoint x="460" y="125" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_E03_di" bpmnElement="Flow_E03">
+        <di:waypoint x="640" y="125" /><di:waypoint x="700" y="125" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_01_di" bpmnElement="Flow_01">
+        <di:waypoint x="166" y="320" /><di:waypoint x="210" y="320" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_02_di" bpmnElement="Flow_02">
+        <di:waypoint x="380" y="320" /><di:waypoint x="430" y="320" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_03_di" bpmnElement="Flow_03">
+        <di:waypoint x="600" y="320" /><di:waypoint x="650" y="320" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_04_di" bpmnElement="Flow_04">
+        <di:waypoint x="686" y="320" /><di:waypoint x="740" y="320" />
+      </bpmndi:BPMNEdge>
+
+      <!-- Registrada e retorno de liquidação. -->
+      <bpmndi:BPMNEdge id="Flow_Registrada_di" bpmnElement="Flow_Registrada">
+        <di:waypoint x="765" y="295" /><di:waypoint x="765" y="280" /><di:waypoint x="850" y="280" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_05_di" bpmnElement="Flow_05">
+        <di:waypoint x="1020" y="280" /><di:waypoint x="1070" y="280" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_06_di" bpmnElement="Flow_06">
+        <di:waypoint x="1106" y="280" /><di:waypoint x="1160" y="280" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_07_di" bpmnElement="Flow_07">
+        <di:waypoint x="1340" y="280" /><di:waypoint x="1390" y="280" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Confere_di" bpmnElement="Flow_Confere">
+        <di:waypoint x="1440" y="280" /><di:waypoint x="1510" y="280" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_08_di" bpmnElement="Flow_08">
+        <di:waypoint x="1680" y="280" /><di:waypoint x="1760" y="280" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Divergente_di" bpmnElement="Flow_Divergente">
+        <di:waypoint x="1415" y="305" /><di:waypoint x="1415" y="385" /><di:waypoint x="1510" y="385" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_09_di" bpmnElement="Flow_09">
+        <di:waypoint x="1680" y="385" /><di:waypoint x="1760" y="385" />
+      </bpmndi:BPMNEdge>
+
+      <!-- Rejeitada. -->
+      <bpmndi:BPMNEdge id="Flow_Rejeitada_di" bpmnElement="Flow_Rejeitada">
+        <di:waypoint x="790" y="320" /><di:waypoint x="820" y="400" /><di:waypoint x="850" y="400" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_10_di" bpmnElement="Flow_10">
+        <di:waypoint x="1030" y="400" /><di:waypoint x="1110" y="400" />
+      </bpmndi:BPMNEdge>
+
+      <!-- Inconclusiva: consulta e decisão. -->
+      <bpmndi:BPMNEdge id="Flow_Incerta_di" bpmnElement="Flow_Incerta">
+        <di:waypoint x="765" y="345" /><di:waypoint x="765" y="525" /><di:waypoint x="850" y="525" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_11_di" bpmnElement="Flow_11">
+        <di:waypoint x="1030" y="525" /><di:waypoint x="1080" y="525" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_12_di" bpmnElement="Flow_12">
+        <di:waypoint x="1116" y="525" /><di:waypoint x="1160" y="525" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_13_di" bpmnElement="Flow_13">
+        <di:waypoint x="1330" y="525" /><di:waypoint x="1380" y="525" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_14_di" bpmnElement="Flow_14">
+        <di:waypoint x="1416" y="525" /><di:waypoint x="1470" y="525" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Resolvida_di" bpmnElement="Flow_Resolvida">
+        <di:waypoint x="1495" y="500" /><di:waypoint x="1495" y="495" /><di:waypoint x="1580" y="495" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_15_di" bpmnElement="Flow_15">
+        <di:waypoint x="1750" y="495" /><di:waypoint x="1830" y="495" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Pendente_di" bpmnElement="Flow_Pendente">
+        <di:waypoint x="1495" y="550" /><di:waypoint x="1495" y="620" /><di:waypoint x="1580" y="620" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_16_di" bpmnElement="Flow_16">
+        <di:waypoint x="1750" y="620" /><di:waypoint x="1830" y="620" />
+      </bpmndi:BPMNEdge>
+
+      <!-- Mensagens; o Sicoob aparece como caixa externa sem etapas internas inventadas. -->
+      <bpmndi:BPMNEdge id="Message_Aprovacao_di" bpmnElement="Message_Aprovacao">
+        <di:waypoint x="550" y="165" /><di:waypoint x="550" y="205" /><di:waypoint x="148" y="205" /><di:waypoint x="148" y="302" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Message_Registro_di" bpmnElement="Message_Registro">
+        <di:waypoint x="515" y="360" /><di:waypoint x="515" y="770" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Message_RespostaRegistro_di" bpmnElement="Message_RespostaRegistro">
+        <di:waypoint x="668" y="770" /><di:waypoint x="668" y="338" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Message_Consulta_di" bpmnElement="Message_Consulta">
+        <di:waypoint x="1245" y="560" /><di:waypoint x="1245" y="770" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Message_RespostaConsulta_di" bpmnElement="Message_RespostaConsulta">
+        <di:waypoint x="1398" y="770" /><di:waypoint x="1398" y="543" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Message_Liquidacao_di" bpmnElement="Message_Liquidacao">
+        <di:waypoint x="1045" y="770" /><di:waypoint x="1045" y="325" /><di:waypoint x="1088" y="325" /><di:waypoint x="1088" y="298" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
