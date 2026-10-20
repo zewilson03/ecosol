@@ -2,6 +2,8 @@ import { Worker } from "node:worker_threads";
 import ExcelJS from "exceljs";
 import Decimal from "decimal.js";
 import { validarContrato, validarUnidade, falhar } from "./regras.mjs";
+import { apenasDigitos, cpfValidoParaCadastro } from "../validacaoDeCpf.mjs";
+import { validarContatoCliente } from "../validacaoDeContato.mjs";
 
 export const camposImportacao = [
   {
@@ -29,6 +31,11 @@ export const camposImportacao = [
     chave: "email",
     rotulo: "E-mail de cobrança",
     aliases: ["email", "e mail", "email de cobranca", "e mail de cobranca"],
+  },
+  {
+    chave: "telefone",
+    rotulo: "Telefone",
+    aliases: ["telefone", "celular", "fone", "whatsapp"],
   },
   {
     chave: "dia_vencimento",
@@ -68,6 +75,48 @@ const normal = (s) =>
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
+
+function planoDoCliente(banco, unidade, telefone) {
+  const cpf = apenasDigitos(unidade.documento);
+  const documentoPessoa = cpfValidoParaCadastro(cpf) || /^\d{14}$/.test(cpf);
+  if (!documentoPessoa)
+    return { acao: "sem_cadastro", mensagem: "Documento inválido." };
+  const existente = banco
+    .prepare("SELECT id,name,cpf,email,phone FROM customers WHERE cpf=?")
+    .get(cpf);
+  if (existente) {
+    if (normal(existente.name) !== normal(unidade.nome))
+      return {
+        acao: "conferir",
+        mensagem:
+          "Possível mudança de titularidade: este CPF já pertence a outro nome. Nenhum vínculo será criado.",
+      };
+    return {
+      acao: "vincular",
+      cliente_id: existente.id,
+      cpf,
+      mensagem: "Cliente existente será vinculado à nova UC.",
+    };
+  }
+  const contato = validarContatoCliente(unidade.email, telefone);
+  if (!contato)
+    return {
+      acao: "sem_cadastro",
+      mensagem:
+        "Sem e-mail ou telefone válido: a UC será importada sem criar cliente do portal.",
+    };
+  return {
+    acao: "criar",
+    cpf,
+    nome: unidade.nome,
+    email: contato.email,
+    telefone: contato.phone,
+    mensagem:
+      cpf.length === 14
+        ? "Novo cliente com CNPJ será criado sem senha e vinculado à UC. O acesso ao portal permanece inativo."
+        : "Novo cliente será criado sem senha e vinculado à UC. O acesso ao portal continua inativo até a ativação.",
+  };
+}
 
 const meses = new Set([
   "janeiro",
@@ -373,8 +422,16 @@ export function prepararImportacao(abas, config, banco) {
     }
     try {
       if (errosLeitura.length) throw new Error(errosLeitura.join(" "));
-      item.unidade = validarUnidade({ ...raw, usina_id: config.usina_id });
+      item.unidade = validarUnidade(
+        { ...raw, usina_id: config.usina_id },
+        { emailOpcional: true },
+      );
       item.contrato = validarContrato(raw);
+      item.cliente = planoDoCliente(banco, item.unidade, raw.telefone);
+      if (item.cliente.acao === "conferir") {
+        item.status = "Conflito";
+        item.mensagem = item.cliente.mensagem;
+      }
       const modalidadeUsina = banco
         .prepare(
           "SELECT modalidade FROM usinas_modalidades WHERE usina_id=? AND inicio<=? ORDER BY inicio DESC LIMIT 1",
@@ -435,6 +492,21 @@ export function prepararImportacao(abas, config, banco) {
       l.mensagem =
         "UC repetida nesta planilha. Mantenha uma linha por unidade nesta importação.";
     }
+  const novosClientes = new Map();
+  for (const linha of linhas) {
+    if (linha.status !== "Válida" || linha.cliente?.acao !== "criar") continue;
+    const assinatura = `${normal(linha.cliente.nome)}:${linha.cliente.email}:${linha.cliente.telefone}`;
+    const anterior = novosClientes.get(linha.cliente.cpf);
+    if (anterior && anterior.assinatura !== assinatura) {
+      anterior.linha.status = "Conflito";
+      anterior.linha.mensagem =
+        "O mesmo CPF aparece com nome ou contato diferente nesta planilha. Confira manualmente.";
+      linha.status = "Conflito";
+      linha.mensagem = anterior.linha.mensagem;
+      continue;
+    }
+    novosClientes.set(linha.cliente.cpf, { assinatura, linha });
+  }
   return {
     aba: aba.nome,
     cabecalho,
@@ -443,6 +515,14 @@ export function prepararImportacao(abas, config, banco) {
     ignoradas: linhas.filter((l) => l.status === "Já cadastrada").length,
     problemas: linhas.filter((l) => ["Erro", "Conflito"].includes(l.status))
       .length,
+    clientes_criar: new Set(
+      linhas
+        .filter((l) => l.status === "Válida" && l.cliente?.acao === "criar")
+        .map((l) => l.cliente.cpf),
+    ).size,
+    clientes_vincular: linhas.filter(
+      (l) => l.status === "Válida" && l.cliente?.acao === "vincular",
+    ).length,
   };
 }
 
@@ -466,8 +546,8 @@ export async function criarModelo() {
   const wb = new ExcelJS.Workbook(),
     s = wb.addWorksheet("Cadastros");
   s.addRow(camposImportacao.map((c) => c.rotulo));
-  formatar(s, [32, 23, 23, 32, 22, 22, 18, 24]);
-  for (const coluna of [2, 3, 8]) s.getColumn(coluna).numFmt = "@";
+  formatar(s, [32, 23, 23, 32, 20, 22, 22, 18, 24]);
+  for (const coluna of [2, 3, 5, 9]) s.getColumn(coluna).numFmt = "@";
   const ajuda = wb.addWorksheet("Orientações");
   ajuda.addRow(["Como preparar os cadastros"]);
   [
@@ -475,7 +555,8 @@ export async function criarModelo() {
     "CPF/CNPJ e UC: mantenha como texto para preservar zeros à esquerda.",
     "Desconto: digite 25 ou 25%. Células percentuais do Excel também são aceitas.",
     "Vigência: use AAAA-MM (ex.: 2026-09). Dia preferido: número de 1 a 31.",
-    "Modalidade: GDI ou GDII. Todos os oito campos são obrigatórios.",
+    "Telefone é opcional para a UC, mas CPF válido e e-mail ou telefone criam o cliente e vinculam a UC automaticamente.",
+    "Modalidade: GDI ou GDII. Nome, CPF/CNPJ, UC, dia, modalidade, desconto e vigência são obrigatórios.",
     "Use valores, não fórmulas. A importação mostrará uma prévia antes de gravar.",
     "Cadastros existentes não serão sobrescritos. Revise divergências no painel.",
   ].forEach((t) => ajuda.addRow([t]));

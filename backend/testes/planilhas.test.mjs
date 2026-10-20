@@ -86,7 +86,7 @@ async function arquivo(rows) {
     s = w.addWorksheet("Clientes");
   s.addRow(camposImportacao.map((c) => c.rotulo));
   for (const row of rows) s.addRow(row);
-  s.getCell("G2").numFmt = "0%";
+  s.getCell("H2").numFmt = "0%";
   return Buffer.from(await w.xlsx.writeBuffer());
 }
 const linha = [
@@ -94,6 +94,7 @@ const linha = [
   "11.222.333/0001-81",
   "000423652401252",
   "cliente@example.test",
+  "",
   10,
   "GDII",
   0.25,
@@ -301,7 +302,7 @@ try {
   );
   const original = await arquivo([
     linha,
-    ["Cliente inválido", "123", "999", "ruim", 0, "GDI", 25, "2026-09"],
+    ["Cliente inválido", "123", "999", "ruim", "", 0, "GDI", 25, "2026-09"],
   ]);
   const hash = createHash("sha256").update(original).digest("hex");
   process.env.ECOSOL_PLANILHAS_DIR = mkdtempSync(
@@ -362,7 +363,7 @@ try {
   const abas = await lerExcel(original),
     mapa = sugerirMapeamento(abas[0].linhas[0]);
   assert.equal(mapa.documento, 1);
-  assert.equal(mapa.desconto, 6);
+  assert.equal(mapa.desconto, 7);
   const configuracao = {
     aba: "Clientes",
     cabecalho: 1,
@@ -376,9 +377,10 @@ try {
     await arquivo([
       [
         "Cliente histórico",
-        "11.222.333/0001-81",
+        "45.723.174/0001-10",
         "000423652401253",
         "historico@example.test",
+        "",
         10,
         "GDII",
         0.25,
@@ -393,7 +395,7 @@ try {
   );
   assert.equal(previaHistorica.validas, 1);
   const modalidadeIncorreta = await lerExcel(
-    await arquivo([[...linha.slice(0, 5), "GDI", ...linha.slice(6)]]),
+    await arquivo([[...linha.slice(0, 6), "GDI", ...linha.slice(7)]]),
   );
   const previaIncorreta = prepararImportacao(
     modalidadeIncorreta,
@@ -464,6 +466,76 @@ try {
     banco.prepare("SELECT COUNT(*) AS n FROM faturamento_unidades").get().n,
     1,
   );
+  const linhaComCliente = [
+    "Cliente com telefone",
+    "529.982.247-25",
+    "000423652401254",
+    "",
+    "(62) 99999-8888",
+    12,
+    "GDII",
+    0.25,
+    "2026-09",
+  ];
+  const origemComCliente = await arquivo([linhaComCliente]);
+  const abasComCliente = await lerExcel(origemComCliente);
+  const previaComCliente = prepararImportacao(
+    abasComCliente,
+    configuracao,
+    banco,
+  );
+  assert.equal(previaComCliente.validas, 1);
+  assert.equal(previaComCliente.clientes_criar, 1);
+  assert.equal(previaComCliente.linhas[0].cliente.acao, "criar");
+  const analiseComCliente = await ok(
+    "/planilhas/analisar?nome=com-cliente.xlsx&usina_id=" + usina.id,
+    "POST",
+    origemComCliente,
+    201,
+  );
+  const previaSalvaComCliente = await ok(
+    `/planilhas/${analiseComCliente.id}/previa`,
+    "POST",
+    configuracao,
+  );
+  const importacaoComCliente = await ok(
+    `/planilhas/${analiseComCliente.id}/confirmar`,
+    "POST",
+    { confirmado: true, previa_id: previaSalvaComCliente.previa_id },
+  );
+  assert.equal(importacaoComCliente.clientes_criados, 1);
+  const clienteCriado = banco
+    .prepare("SELECT id,email,phone FROM customers WHERE cpf=?")
+    .get("52998224725");
+  assert.equal(clienteCriado.email, "");
+  assert.equal(clienteCriado.phone, "62999998888");
+  assert.equal(
+    banco
+      .prepare("SELECT cliente_id FROM faturamento_unidades WHERE uc=?")
+      .get("423652401254").cliente_id,
+    clienteCriado.id,
+  );
+  const titularDivergente = prepararImportacao(
+    await lerExcel(
+      await arquivo([
+        [
+          "Outro titular",
+          "529.982.247-25",
+          "000423652401255",
+          "",
+          "(62) 99999-8888",
+          12,
+          "GDII",
+          0.25,
+          "2026-09",
+        ],
+      ]),
+    ),
+    configuracao,
+    banco,
+  );
+  assert.equal(titularDivergente.validas, 0);
+  assert.match(titularDivergente.linhas[0].mensagem, /titularidade/);
   assert.equal(prepararImportacao(abas, configuracao, banco).ignoradas, 1);
   assert.equal(
     prepararImportacao(abas, { ...configuracao, usina_id: outra.id }, banco)
@@ -474,7 +546,7 @@ try {
   assert.equal(prepararImportacao(duplicadas, configuracao, banco).validas, 0);
   const formulas = await lerExcel(
     await arquivo([
-      [...linha.slice(0, 6), { formula: "25", result: 25 }, "2026-09"],
+      [...linha.slice(0, 7), { formula: "25", result: 25 }, "2026-09"],
     ]),
   );
   assert.match(
@@ -482,7 +554,7 @@ try {
     /fórmula/,
   );
   const data = await lerExcel(
-    await arquivo([[...linha.slice(0, 7), new Date("2026-09-01T00:00:00Z")]]),
+    await arquivo([[...linha.slice(0, 8), new Date("2026-09-01T00:00:00Z")]]),
   );
   assert.equal(
     prepararImportacao(data, configuracao, banco).linhas[0].contrato.inicio,
@@ -550,9 +622,10 @@ try {
   const valido2 = await arquivo([
     [
       "Segundo",
-      "52998224725",
+      "11144477735",
       "123456",
       "segundo@example.test",
+      "",
       15,
       "GDII",
       0.15,
@@ -570,7 +643,7 @@ try {
     .prepare(
       "INSERT INTO faturamento_unidades(uc,nome,documento,email,dia_vencimento) VALUES(?,?,?,?,?)",
     )
-    .run("123456", "Concorrente", "52998224725", "outro@example.test", 10);
+    .run("123456", "Concorrente", "11144477735", "outro@example.test", 10);
   await ok(
     `/planilhas/${a2.id}/confirmar`,
     "POST",
@@ -696,7 +769,7 @@ try {
     usina_id: outra.id,
     correcoes: {
       2: {
-        documento: "11222333000181",
+        documento: "45723174000110",
         email: "mensal@example.test",
         dia_vencimento: "15",
       },
@@ -751,9 +824,10 @@ try {
   const arquivoFuturo = await arquivo([
     [
       "Cliente futuro",
-      "52998224725",
+      "12345678909",
       "888888888888",
       "futuro@example.test",
+      "",
       10,
       "GDI",
       0.15,

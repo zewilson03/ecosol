@@ -27,11 +27,14 @@ type Previa = {
   validas: number;
   ignoradas: number;
   problemas: number;
+  clientes_criar: number;
+  clientes_vincular: number;
   linhas: {
     linha: number;
     status: string;
     mensagem: string;
     dados: Record<string, string>;
+    cliente?: { acao: string; mensagem: string };
   }[];
 };
 const base = "/api/admin/faturamento/planilhas";
@@ -178,19 +181,20 @@ export default function ImportacaoExcel({
     setOcupado(true);
     setErro("");
     try {
-      const r = await consultarServidor<{ quantidade: number }>(
-        `${base}/${analise!.id}/confirmar`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            previa_id: previa!.previa_id,
-            confirmado: confirma,
-          }),
-        },
-      );
+      const r = await consultarServidor<{
+        quantidade: number;
+        clientes_criados: number;
+        clientes_vinculados: number;
+      }>(`${base}/${analise!.id}/confirmar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          previa_id: previa!.previa_id,
+          confirmado: confirma,
+        }),
+      });
       setMensagem(
-        `${r.quantidade} unidade(s) importada(s) para ${analise!.usina}. A planilha original não foi alterada.`,
+        `${r.quantidade} UC(s) importada(s) para ${analise!.usina}; ${r.clientes_criados} cliente(s) criado(s) e ${r.clientes_vinculados} vínculo(s) realizado(s). A planilha original não foi alterada.`,
       );
       setAnalise(null);
       setPrevia(null);
@@ -206,18 +210,20 @@ export default function ImportacaoExcel({
     <section className="admin-cartao importacao-cartao">
       <div className="admin-barra">
         <h2>Importação de Excel por usina</h2>
-        {nivel >= 2 && (
-          <button
-            className="admin-botao secundario"
-            disabled={ocupado}
-            onClick={() => setAberto(!aberto)}
-          >
-            {aberto ? "Recolher importação" : "Importar planilha"}
-          </button>
-        )}
-        <a className="admin-botao secundario" href={base + "/modelo"}>
-          Baixar modelo vazio
-        </a>
+        <div className="admin-barra-acoes">
+          {nivel >= 2 && (
+            <button
+              className="admin-botao secundario"
+              disabled={ocupado}
+              onClick={() => setAberto(!aberto)}
+            >
+              {aberto ? "Recolher importação" : "Importar planilha"}
+            </button>
+          )}
+          <a className="admin-botao secundario" href={base + "/modelo"}>
+            Baixar modelo vazio
+          </a>
+        </div>
       </div>
       <p>
         Somente leitura do arquivo de origem. Novos cadastros são gravados no
@@ -475,7 +481,9 @@ export default function ImportacaoExcel({
             <div>
               <p className="admin-aviso">
                 {previa.validas} nova(s) válida(s) · {previa.ignoradas} já
-                cadastrada(s) · {previa.problemas} com pendência.
+                cadastrada(s) · {previa.problemas} com pendência. Nesta
+                importação: {previa.clientes_criar} cliente(s) novo(s) e{" "}
+                {previa.clientes_vincular} vínculo(s) a cliente existente.
               </p>
               <div className="admin-tabela importacao-previa">
                 <table>
@@ -484,6 +492,7 @@ export default function ImportacaoExcel({
                       <th>Linha</th>
                       <th>Cliente / UC</th>
                       <th>Desconto</th>
+                      <th>Cliente</th>
                       <th>Situação</th>
                       <th>Detalhe</th>
                       <th>Completar no sistema</th>
@@ -498,6 +507,16 @@ export default function ImportacaoExcel({
                           <small>{l.dados.uc}</small>
                         </td>
                         <td>{l.dados.desconto}%</td>
+                        <td>
+                          {l.cliente?.acao === "criar"
+                            ? "Criar e vincular"
+                            : l.cliente?.acao === "vincular"
+                              ? "Vincular existente"
+                              : "Sem cliente"}
+                          {l.cliente?.mensagem && (
+                            <small>{l.cliente.mensagem}</small>
+                          )}
+                        </td>
                         <td>{l.status}</td>
                         <td>{l.mensagem}</td>
                         <td className="importacao-previa-completar">
@@ -558,7 +577,8 @@ export default function ImportacaoExcel({
                   onChange={(e) => setConfirma(e.target.checked)}
                 />
                 Conferi a prévia. Importar somente as {previa.validas} linhas
-                válidas para {analise?.usina}; as demais não serão gravadas.
+                válidas para {analise?.usina}; os clientes indicados serão
+                criados ou vinculados, e as demais linhas não serão gravadas.
               </label>
               <button
                 className="admin-botao"

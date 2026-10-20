@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { request as requisicaoHttp } from "node:http";
 import express from "express";
 import { protecaoHttp, tratarErroHttp } from "../servidor/segurancaHttp.mjs";
 
@@ -57,10 +58,67 @@ async function post(url, dados, headers = {}) {
     body: JSON.stringify(dados),
   });
 }
+function postComHost(url, headers) {
+  return new Promise((resolve, reject) => {
+    const requisicao = requisicaoHttp(
+      base + url,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...headers },
+      },
+      (resposta) => {
+        resposta.resume();
+        resposta.on("end", () =>
+          resolve({
+            status: resposta.statusCode,
+            destino: resposta.headers.location,
+          }),
+        );
+      },
+    );
+    requisicao.on("error", reject);
+    requisicao.end("{}");
+  });
+}
 try {
-  for (const origin of ["null", "malformada", "https://outro.example"]) {
+  for (const origin of ["malformada", "https://outro.example"]) {
     assert.equal((await post("/teste", {}, { Origin: origin })).status, 403);
   }
+  assert.equal((await post("/teste", {}, { Origin: "null" })).status, 403);
+  assert.equal(
+    (
+      await post(
+        "/teste",
+        {},
+        { Origin: "null", "Sec-Fetch-Site": "cross-site" },
+      )
+    ).status,
+    403,
+  );
+  const cabecalhosNavegador = {
+    Host: "localhost:3000",
+    Origin: "null",
+    "Sec-Fetch-Site": "same-origin",
+  };
+  assert.equal((await postComHost("/teste", cabecalhosNavegador)).status, 200);
+  assert.deepEqual(
+    await postComHost("/api/equipe/login", cabecalhosNavegador),
+    { status: 303, destino: "/equipe?status=erro" },
+  );
+  assert.deepEqual(await postComHost("/api/sair", cabecalhosNavegador), {
+    status: 303,
+    destino: "/",
+  });
+  assert.equal(
+    (
+      await post(
+        "/teste",
+        {},
+        { Origin: "null", "Sec-Fetch-Site": "same-origin" },
+      )
+    ).status,
+    403,
+  );
   assert.equal(
     (await post("/teste", {}, { Origin: "http://localhost:3000" })).status,
     200,

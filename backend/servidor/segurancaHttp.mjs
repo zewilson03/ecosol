@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 
 export function protecaoHttp(origemConfigurada) {
-  const origemPermitida = new URL(origemConfigurada).origin;
+  const enderecoPermitido = new URL(origemConfigurada);
+  const origemPermitida = enderecoPermitido.origin;
   return (req, res, next) => {
     res.set("X-Content-Type-Options", "nosniff");
     res.set("Referrer-Policy", "no-referrer");
@@ -11,11 +12,21 @@ export function protecaoHttp(origemConfigurada) {
       if (req.headers["sec-fetch-site"] === "cross-site")
         return res.sendStatus(403);
       if (req.headers.origin !== undefined) {
-        try {
-          if (new URL(req.headers.origin).origin !== origemPermitida)
+        // Navegadores em contexto opaco podem enviar Origin: null mesmo para
+        // um formulário local. Aceitar somente quando o navegador confirma
+        // mesma origem e o Host corresponde ao endereço configurado.
+        const origemOpacaLocal =
+          req.headers.origin === "null" &&
+          req.headers["sec-fetch-site"] === "same-origin" &&
+          req.headers.host?.toLowerCase() ===
+            enderecoPermitido.host.toLowerCase();
+        if (!origemOpacaLocal) {
+          try {
+            if (new URL(req.headers.origin).origin !== origemPermitida)
+              return res.sendStatus(403);
+          } catch {
             return res.sendStatus(403);
-        } catch {
-          return res.sendStatus(403);
+          }
         }
       }
     }
