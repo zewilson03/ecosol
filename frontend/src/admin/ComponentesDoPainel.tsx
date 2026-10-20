@@ -17,7 +17,7 @@ export function CabecalhoDoModulo({
         <h1>{titulo}</h1>
         <p>{descricao}</p>
       </div>
-      {children}
+      {children && <div className="admin-titulo-acoes">{children}</div>}
     </div>
   );
 }

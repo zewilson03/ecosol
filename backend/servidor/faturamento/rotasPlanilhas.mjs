@@ -120,6 +120,40 @@ function sessao(req) {
   return s;
 }
 
+function clienteDaPrevia(banco, plano, criados) {
+  if (!plano || plano.acao === "sem_cadastro") return null;
+  if (plano.acao === "criar") {
+    if (criados.has(plano.cpf)) return criados.get(plano.cpf);
+    if (
+      banco.prepare("SELECT 1 FROM customers WHERE cpf=?").get(plano.cpf) ||
+      banco.prepare("SELECT 1 FROM staff_users WHERE cpf=?").get(plano.cpf)
+    )
+      falhar(
+        "Um cadastro com este CPF foi criado ou alterado desde a prévia. Gere uma nova prévia.",
+        409,
+      );
+    const id = Number(
+      banco
+        .prepare("INSERT INTO customers(name,cpf,email,phone) VALUES(?,?,?,?)")
+        .run(plano.nome, plano.cpf, plano.email, plano.telefone)
+        .lastInsertRowid,
+    );
+    criados.set(plano.cpf, id);
+    return id;
+  }
+  if (plano.acao !== "vincular")
+    falhar("A prévia de cliente é inválida. Gere uma nova prévia.", 409);
+  const cliente = banco
+    .prepare("SELECT id,name,cpf FROM customers WHERE id=? AND cpf=?")
+    .get(plano.cliente_id, plano.cpf);
+  if (!cliente)
+    falhar(
+      "O cliente mudou desde a prévia. Gere uma nova prévia antes de importar.",
+      409,
+    );
+  return cliente.id;
+}
+
 rotasPlanilhas.get("/modelo", (_req, res, next) => {
   criarModelo()
     .then((b) => baixar(res, "modelo-cadastros-ecosol.xlsx", b))
@@ -241,6 +275,9 @@ rotasPlanilhas.post("/:id/confirmar", exigirNivel(2), (req, res) => {
       validas = previa.linhas.filter((l) => l.status === "Válida");
     if (!validas.length)
       falhar("Não há novos cadastros válidos para importar.");
+    let clientesCriados = 0,
+      clientesVinculados = 0;
+    const clientesCriadosPorCpf = new Map();
     for (const l of validas) {
       const u = l.unidade,
         c = l.contrato;
@@ -272,13 +309,29 @@ rotasPlanilhas.post("/:id/confirmar", exigirNivel(2), (req, res) => {
           "Uma UC foi cadastrada após a prévia. Gere uma nova prévia antes de importar.",
           409,
         );
+      const clienteJaCriado =
+        l.cliente?.acao === "criar" && clientesCriadosPorCpf.has(l.cliente.cpf);
+      const clienteId = clienteDaPrevia(
+        banco,
+        l.cliente,
+        clientesCriadosPorCpf,
+      );
+      if (l.cliente?.acao === "criar" && !clienteJaCriado) clientesCriados++;
+      if (l.cliente?.acao === "vincular") clientesVinculados++;
       const numero = Number(
         banco
           .prepare(
-            "INSERT INTO faturamento_unidades(uc,nome,documento,email,dia_vencimento,usina_id) VALUES(?,?,?,?,?,?)",
+            "INSERT INTO faturamento_unidades(uc,nome,documento,email,dia_vencimento,usina_id,cliente_id) VALUES(?,?,?,?,?,?,?)",
           )
-          .run(u.uc, u.nome, u.documento, u.email, u.dia_vencimento, u.usina_id)
-          .lastInsertRowid,
+          .run(
+            u.uc,
+            u.nome,
+            u.documento,
+            u.email,
+            u.dia_vencimento,
+            u.usina_id,
+            clienteId,
+          ).lastInsertRowid,
       );
       banco
         .prepare(
@@ -304,6 +357,7 @@ rotasPlanilhas.post("/:id/confirmar", exigirNivel(2), (req, res) => {
             complementos_no_sistema: l.complementos ?? {},
             unidade: u,
             contrato: c,
+            cliente: l.cliente ?? { acao: "sem_cadastro" },
           }),
         );
     }
@@ -313,7 +367,11 @@ rotasPlanilhas.post("/:id/confirmar", exigirNivel(2), (req, res) => {
       )
       .run(validas.length, s.id);
     banco.exec("COMMIT");
-    res.json({ quantidade: validas.length });
+    res.json({
+      quantidade: validas.length,
+      clientes_criados: clientesCriados,
+      clientes_vinculados: clientesVinculados,
+    });
   } catch (e) {
     banco.exec("ROLLBACK");
     throw e;

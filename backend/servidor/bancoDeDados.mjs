@@ -83,6 +83,27 @@ export function obterBanco() {
       total_unidades INTEGER NOT NULL,
       criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS auditoria_exportacoes_usinas (
+      id INTEGER PRIMARY KEY,
+      responsavel_id INTEGER NOT NULL REFERENCES staff_users(id),
+      total_usinas INTEGER NOT NULL,
+      total_unidades INTEGER NOT NULL,
+      criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS importacoes_dados_clientes (
+      id TEXT PRIMARY KEY,
+      responsavel_id INTEGER NOT NULL REFERENCES staff_users(id),
+      arquivo TEXT NOT NULL,
+      hash TEXT NOT NULL,
+      linhas TEXT NOT NULL,
+      previa TEXT,
+      previa_id TEXT,
+      status TEXT NOT NULL DEFAULT 'Pendente'
+        CHECK(status IN ('Pendente','Concluída','Expirada')),
+      expira_em INTEGER NOT NULL,
+      quantidade INTEGER NOT NULL DEFAULT 0,
+      criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
     const colunasDosClientes = banco

@@ -12,6 +12,8 @@ import {
 } from "./bancario/rotasPermissoes.mjs";
 import { rotasOperacoesBancarias } from "./bancario/rotasOperacoes.mjs";
 import { exportarClientes } from "./exportacaoClientes.mjs";
+import { exportarUsinas } from "./exportacaoUsinas.mjs";
+import { rotasImportacaoDadosClientes } from "./importacaoDadosClientes.mjs";
 
 export const rotasAdministrativas = Router();
 const exigirAdministrador = exigirNivel(1);
@@ -56,10 +58,19 @@ rotasAdministrativas.use("/api/admin", (requisicao, resposta, proximo) => {
 });
 rotasAdministrativas.use(rotasPermissoesBancarias);
 rotasAdministrativas.use(rotasOperacoesBancarias);
+rotasAdministrativas.use(
+  "/api/admin/clientes/planilhas",
+  rotasImportacaoDadosClientes,
+);
 rotasAdministrativas.get(
   "/api/admin/clientes/exportar",
   exigirNivel(3),
   exportarClientes,
+);
+rotasAdministrativas.get(
+  "/api/admin/usinas/exportar",
+  exigirNivel(3),
+  exportarUsinas,
 );
 
 rotasAdministrativas.get("/api/admin/usinas", (_requisicao, resposta) => {

@@ -289,26 +289,29 @@ export default function UnidadesDeCobranca({
             value={busca}
             onChange={(e) => setBusca(e.target.value)}
           />
-          {busca && (
-            <button
-              className="admin-botao secundario"
-              onClick={() => setBusca("")}
-            >
-              Limpar
-            </button>
-          )}
-          {nivel >= 2 && usinaSelecionada?.nome.toLowerCase() !== "ecosol" && (
-            <button
-              className="admin-botao"
-              onClick={() => {
-                setEdicao("nova");
-                setDescontoPara(null);
-                setErro("");
-              }}
-            >
-              + Cadastrar unidade
-            </button>
-          )}
+          <div className="admin-barra-acoes">
+            {busca && (
+              <button
+                className="admin-botao secundario"
+                onClick={() => setBusca("")}
+              >
+                Limpar
+              </button>
+            )}
+            {nivel >= 2 &&
+              usinaSelecionada?.nome.toLowerCase() !== "ecosol" && (
+                <button
+                  className="admin-botao"
+                  onClick={() => {
+                    setEdicao("nova");
+                    setDescontoPara(null);
+                    setErro("");
+                  }}
+                >
+                  + Cadastrar unidade
+                </button>
+              )}
+          </div>
         </div>
         {usinaFiltroId !== null && nivel === 3 && (
           <div className="admin-transferencia-acoes">

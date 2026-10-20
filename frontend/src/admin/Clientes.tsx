@@ -337,27 +337,7 @@ export default function Clientes() {
       <CabecalhoDoModulo
         titulo="Cadastros"
         descricao="Organize unidades de cobrança, clientes, contatos e acessos da equipe."
-      >
-        {secao === "clientes" && (
-          <>
-            {administrador.nivel >= 3 && (
-              <button
-                className="admin-botao secundario"
-                disabled={exportando}
-                onClick={exportarPlanilha}
-              >
-                {exportando ? "Gerando planilha…" : "Exportar clientes"}
-              </button>
-            )}
-            <button
-              className="admin-botao"
-              onClick={() => definirFormulario(!formulario)}
-            >
-              {formulario ? "Fechar cadastro" : "+ Novo cliente"}
-            </button>
-          </>
-        )}
-      </CabecalhoDoModulo>
+      />
       <nav
         className="admin-abas admin-abas-destaque clientes-navegacao"
         aria-label="Seções de clientes"
@@ -468,14 +448,34 @@ export default function Clientes() {
                   value={busca}
                   onChange={(evento) => definirBusca(evento.target.value)}
                 />
-                {busca && (
+                <div className="admin-barra-acoes">
+                  {busca && (
+                    <button
+                      className="admin-botao secundario"
+                      type="button"
+                      onClick={() => definirBusca("")}
+                    >
+                      Limpar busca
+                    </button>
+                  )}
+                  {administrador.nivel >= 3 && (
+                    <button
+                      className="admin-botao secundario"
+                      type="button"
+                      disabled={exportando}
+                      onClick={exportarPlanilha}
+                    >
+                      {exportando ? "Gerando planilha…" : "Exportar clientes"}
+                    </button>
+                  )}
                   <button
-                    className="admin-botao secundario"
-                    onClick={() => definirBusca("")}
+                    className="admin-botao"
+                    type="button"
+                    onClick={() => definirFormulario(!formulario)}
                   >
-                    Limpar busca
+                    {formulario ? "Fechar cadastro" : "+ Novo cliente"}
                   </button>
-                )}
+                </div>
               </div>
               <div className="admin-tabela">
                 <table>
@@ -632,12 +632,14 @@ export default function Clientes() {
             <>
               <div className="admin-barra">
                 <h2>Acessos da equipe</h2>
-                <button
-                  className="admin-botao"
-                  onClick={() => definirNovoAcesso(!novoAcesso)}
-                >
-                  {novoAcesso ? "Fechar formulário" : "+ Novo acesso"}
-                </button>
+                <div className="admin-barra-acoes">
+                  <button
+                    className="admin-botao"
+                    onClick={() => definirNovoAcesso(!novoAcesso)}
+                  >
+                    {novoAcesso ? "Fechar formulário" : "+ Novo acesso"}
+                  </button>
+                </div>
               </div>
               <p>
                 Crie acessos com email e senha, escolha o nível e gerencie as
