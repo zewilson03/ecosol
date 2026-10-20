@@ -448,18 +448,20 @@ export default function Clientes() {
                   value={busca}
                   onChange={(evento) => definirBusca(evento.target.value)}
                 />
-                {busca && (
-                  <button
-                    className="admin-botao secundario"
-                    onClick={() => definirBusca("")}
-                  >
-                    Limpar busca
-                  </button>
-                )}
                 <div className="admin-barra-acoes">
+                  {busca && (
+                    <button
+                      className="admin-botao secundario"
+                      type="button"
+                      onClick={() => definirBusca("")}
+                    >
+                      Limpar busca
+                    </button>
+                  )}
                   {administrador.nivel >= 3 && (
                     <button
                       className="admin-botao secundario"
+                      type="button"
                       disabled={exportando}
                       onClick={exportarPlanilha}
                     >
@@ -468,6 +470,7 @@ export default function Clientes() {
                   )}
                   <button
                     className="admin-botao"
+                    type="button"
                     onClick={() => definirFormulario(!formulario)}
                   >
                     {formulario ? "Fechar cadastro" : "+ Novo cliente"}

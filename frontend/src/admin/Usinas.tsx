@@ -139,69 +139,11 @@ export default function Usinas() {
       <CabecalhoDoModulo
         titulo="Usinas"
         descricao="Cadastre a fonte de energia e sua modalidade. Cada UC será vinculada à usina que a atende."
-      >
-        {nivel === 3 && (
-          <button
-            className="admin-botao secundario"
-            type="button"
-            onClick={() => setImportacaoAberta((aberta) => !aberta)}
-          >
-            {importacaoAberta ? "Fechar análise" : "Receber planilha"}
-          </button>
-        )}
-        {nivel === 3 && (
-          <button
-            className="admin-botao secundario"
-            type="button"
-            disabled={exportando}
-            onClick={exportarPlanilha}
-          >
-            {exportando ? "Gerando planilha…" : "Exportar usinas"}
-          </button>
-        )}
-        {nivel === 3 && (
-          <button className="admin-botao" onClick={() => setNovo(!novo)}>
-            {novo ? "Fechar cadastro" : "+ Cadastrar usina"}
-          </button>
-        )}
-      </CabecalhoDoModulo>
+      />
       {erroExportacao && (
         <p className="admin-aviso erro" role="alert">
           {erroExportacao}
         </p>
-      )}
-      {novo && (
-        <FormularioAutomatico
-          titulo="Cadastrar usina para alocação"
-          endereco="/api/admin/faturamento/usinas"
-          aoSalvar={consulta.atualizar}
-        >
-          <label>
-            Nome da usina
-            <input name="nome" required maxLength={120} />
-          </label>
-          <label>
-            Localização
-            <input name="localizacao" required maxLength={160} />
-          </label>
-          <label>
-            Modalidade de geração
-            <select name="modalidade" required defaultValue="">
-              <option value="" disabled>
-                Selecione GDI ou GDII
-              </option>
-              <option value="GDI">GDI</option>
-              <option value="GDII">GDII</option>
-            </select>
-          </label>
-          <label>
-            Competência inicial da modalidade
-            <input name="inicio" type="month" required />
-            <small>
-              Informe o primeiro mês em que esta modalidade vale para a usina.
-            </small>
-          </label>
-        </FormularioAutomatico>
       )}
       <div className="admin-resumos">
         <article>
@@ -241,7 +183,66 @@ export default function Usinas() {
             value={busca}
             onChange={(evento) => definirBusca(evento.target.value)}
           />
+          {nivel === 3 && (
+            <div className="admin-barra-acoes" aria-label="Ações de usinas">
+              <button
+                className="admin-botao secundario"
+                type="button"
+                onClick={() => setImportacaoAberta((aberta) => !aberta)}
+              >
+                {importacaoAberta ? "Fechar análise" : "Receber planilha"}
+              </button>
+              <button
+                className="admin-botao secundario"
+                type="button"
+                disabled={exportando}
+                onClick={exportarPlanilha}
+              >
+                {exportando ? "Gerando planilha…" : "Exportar usinas"}
+              </button>
+              <button
+                className="admin-botao"
+                type="button"
+                onClick={() => setNovo(!novo)}
+              >
+                {novo ? "Fechar cadastro" : "+ Cadastrar usina"}
+              </button>
+            </div>
+          )}
         </div>
+        {novo && (
+          <FormularioAutomatico
+            titulo="Cadastrar usina para alocação"
+            endereco="/api/admin/faturamento/usinas"
+            aoSalvar={consulta.atualizar}
+          >
+            <label>
+              Nome da usina
+              <input name="nome" required maxLength={120} />
+            </label>
+            <label>
+              Localização
+              <input name="localizacao" required maxLength={160} />
+            </label>
+            <label>
+              Modalidade de geração
+              <select name="modalidade" required defaultValue="">
+                <option value="" disabled>
+                  Selecione GDI ou GDII
+                </option>
+                <option value="GDI">GDI</option>
+                <option value="GDII">GDII</option>
+              </select>
+            </label>
+            <label>
+              Competência inicial da modalidade
+              <input name="inicio" type="month" required />
+              <small>
+                Informe o primeiro mês em que esta modalidade vale para a usina.
+              </small>
+            </label>
+          </FormularioAutomatico>
+        )}
         <EstadoDaConsulta {...consulta} repetir={consulta.atualizar} />
         <EstadoDaConsulta {...unidades} repetir={unidades.atualizar} />
         {!consulta.carregando &&
@@ -405,7 +406,7 @@ export default function Usinas() {
                       )}
                       {nivel === 3 && usina.nome.toLowerCase() !== "ecosol" && (
                         <button
-                          className="admin-usina-acao"
+                          className="admin-botao secundario admin-usina-acao"
                           type="button"
                           onClick={() =>
                             setConfigurando(
@@ -422,7 +423,7 @@ export default function Usinas() {
                       )}
                       {nivel === 3 && usina.nome.toLowerCase() !== "ecosol" && (
                         <button
-                          className="admin-usina-acao"
+                          className="admin-botao secundario admin-usina-acao"
                           type="button"
                           onClick={() =>
                             setLocalizando(
@@ -469,7 +470,7 @@ export default function Usinas() {
                         usina.nome.toLowerCase() !== "ecosol" &&
                         usina.modalidades.length > 0 && (
                           <button
-                            className="admin-usina-acao"
+                            className="admin-botao secundario admin-usina-acao"
                             type="button"
                             onClick={() => {
                               setCadastroNaUsina(usina.id);
@@ -483,7 +484,7 @@ export default function Usinas() {
                         usina.nome.toLowerCase() !== "ecosol" &&
                         usina.modalidades.length > 0 && (
                           <button
-                            className="admin-usina-acao"
+                            className="admin-botao secundario admin-usina-acao"
                             type="button"
                             disabled={!semUsina.length}
                             onClick={() => {

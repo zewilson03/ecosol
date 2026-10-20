@@ -1556,25 +1556,7 @@
 }
 .admin-usina-modalidade > .admin-usina-acao {
   justify-self: stretch;
-  min-height: 38px;
-  padding: 8px 12px;
-  border: 1px solid #bfdcd5;
-  border-radius: 10px;
-  background: #f6faf8;
-  color: #176560;
-  cursor: pointer;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 700;
   text-align: left;
-  transition:
-    border-color 160ms ease,
-    background-color 160ms ease;
-}
-.admin-usina-modalidade > .admin-usina-acao:hover,
-.admin-usina-modalidade > .admin-usina-acao:focus-visible {
-  border-color: #70b5a6;
-  background: #e9f7f2;
 }
 .admin-usina-modalidade > .admin-usina-acao:disabled {
   opacity: 0.55;
