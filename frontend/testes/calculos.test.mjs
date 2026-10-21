@@ -172,6 +172,52 @@ try {
   assert.ok(gdiiHtml.includes("− Ajuste GDII"));
   assert.ok(gdiiHtml.includes("1.468,30"));
   assert.ok(gdiiHtml.includes("não salva"));
+  const memoriaEncargos = {
+    ...linhas[3].memoria,
+    juros_centavos: 7,
+    multa_centavos: 149,
+    total_centavos: linhas[3].memoria.total_centavos - 156,
+  };
+  const htmlEncargos = renderToStaticMarkup(
+    createElement(Demonstrativo, { memoria: memoriaEncargos }),
+  );
+  assert.ok(htmlEncargos.includes("− Juros Equatorial"));
+  assert.ok(htmlEncargos.includes("− Multa Equatorial"));
+  assert.ok(htmlEncargos.includes("1.757,45"));
+  const htmlPrecisao = renderToStaticMarkup(
+    createElement(Demonstrativo, {
+      memoria: {
+        ...linhas[3].memoria,
+        tarifa_completa: "1.200000",
+        consumo_bruto: "0.66666600333333",
+        precisao: {
+          tarifa: 6,
+          moeda: 2,
+          arredondamento: "ROUND_HALF_UP",
+          etapa: "total",
+        },
+      },
+    }),
+  );
+  assert.ok(htmlPrecisao.includes("1,200000"));
+  assert.ok(htmlPrecisao.includes("0,66666600333333"));
+  assert.ok(htmlPrecisao.includes("Somente o total"));
+  assert.ok(htmlPrecisao.includes("(HALF_UP)")); // Memória histórica intacta.
+  const htmlCentral = renderToStaticMarkup(
+    createElement(Demonstrativo, {
+      memoria: {
+        ...linhas[3].memoria,
+        precisao: {
+          tarifa: 6,
+          moeda: 2,
+          arredondamento: "ROUND_HALF_EVEN",
+          etapa: "total",
+        },
+      },
+    }),
+  );
+  assert.ok(htmlCentral.includes("(HALF_EVEN)"));
+  assert.ok(!htmlCentral.includes("(HALF_UP)"));
   console.log(
     "Cálculos: sugestões, pendências, histórico por competência, totais salvos e demonstrativos validados.",
   );

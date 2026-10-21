@@ -222,7 +222,7 @@ assert.equal(
     total_equatorial: "0",
     ajuste_gdii: "0",
   }).total_centavos,
-  101,
+  100,
 );
 for (const invalidos of [
   { bandeira: "" },
@@ -412,8 +412,8 @@ const tarifaFinalManual = calcularCobranca({
   ...entrada,
   tarifa_total: "1.25",
 });
-assert.equal(tarifaFinalManual.tarifa_completa, "1.25");
-assert.equal(tarifaFinalManual.entradas.unitario, "1.1");
+assert.equal(tarifaFinalManual.tarifa_completa, "1.250000");
+assert.equal(tarifaFinalManual.entradas.unitario, "1.100000");
 assert.equal(tarifaFinalManual.entradas.bandeira, "0.069969");
 const tarifaFinalSemComponentes = calcularCobranca({
   ...entrada,
@@ -421,7 +421,7 @@ const tarifaFinalSemComponentes = calcularCobranca({
   bandeira: "",
   tarifa_total: "1.25",
 });
-assert.equal(tarifaFinalSemComponentes.tarifa_completa, "1.25");
+assert.equal(tarifaFinalSemComponentes.tarifa_completa, "1.250000");
 assert.equal(tarifaFinalSemComponentes.entradas.unitario, "");
 assert.equal(tarifaFinalSemComponentes.entradas.bandeira, "");
 assert.equal(
@@ -1395,6 +1395,19 @@ try {
     201,
   );
   assert.equal(faturaSemInjecao.dados.injecao, "0");
+  assert.equal(
+    faturaSemInjecao.extracao.normalizacao_financeira.total_equatorial.bruto,
+    "128.69",
+  );
+  assert.equal(
+    faturaSemInjecao.extracao.normalizacao_financeira.total_equatorial
+      .normalizado,
+    "128.69",
+  );
+  assert.equal(
+    faturaSemInjecao.extracao.normalizacao_financeira.total_equatorial.origem,
+    "pdf:manual",
+  );
   assert.equal(faturaSemInjecao.dados.unitario, undefined);
   const dadosSemInjecao = {
     ...faturaSemInjecao.dados,
@@ -1782,6 +1795,10 @@ try {
     dados: campos,
     previa_hash: previa.hash,
   });
+  assert.match(d.dados.unitario, /^\d+\.\d{6}$/);
+  assert.match(d.dados.bandeira, /^\d+\.\d{6}$/);
+  assert.equal(d.memoria.precisao.etapa, "total");
+  assert.equal(d.memoria.tarifa_completa, "1.169969");
   await ok(
     `/documentos/${d.id}/excluir`,
     "POST",
@@ -2630,6 +2647,149 @@ try {
     0,
   );
   assert.equal(banco.prepare("SELECT COUNT(*) AS n FROM dev_mail").get().n, 0);
+  // Lotes reutilizam recebimentos e conservam cálculos, inclusive aprovados.
+  const dadosEncargos = {
+    ...dadosUsina,
+    competencia: "2026-11",
+    vencimento_equatorial: "2026-11-20",
+    vencimento_ecosol: "2026-11-25",
+    ajuste_gdii: "290.71",
+    juros: "0.07",
+    multa: "1.49",
+  };
+  const previaEncargos = await ok(
+    `/documentos/${documentoNovembro.id}/previa`,
+    "POST",
+    {
+      versao: documentoNovembro.versao,
+      dados: dadosEncargos,
+    },
+  );
+  assert.equal(
+    previaEncargos.memoria.total_centavos,
+    previaNovembro.memoria.total_centavos - 156,
+  );
+  assert.equal(previaEncargos.memoria.entradas.juros, "0.07");
+  assert.equal(previaEncargos.memoria.multa_centavos, 149);
+  // Pedidos não homologados não podem cair silenciosamente na fórmula fixa.
+  for (const extra of [
+    { modelo_calculo: "classico" },
+    { modelo_calculo: "somente_energia" },
+    { ajustes_pix: [{ origem: "teste", valor: "1.00" }] },
+  ]) {
+    await ok(
+      `/documentos/${documentoNovembro.id}/previa`,
+      "POST",
+      {
+        versao: documentoNovembro.versao,
+        dados: { ...dadosEncargos, ...extra },
+      },
+      400,
+    );
+  }
+  await ok(
+    `/documentos/${documentoNovembro.id}/previa`,
+    "POST",
+    {
+      versao: documentoNovembro.versao,
+      dados: { ...dadosEncargos, juros: "0.07000000000000001" },
+    },
+    400,
+  );
+  const prontaLote = await ok(`/documentos/${documentoNovembro.id}`, "PATCH", {
+    versao: documentoNovembro.versao,
+    dados: {
+      ...dadosUsina,
+      competencia: "2026-11",
+      vencimento_equatorial: "2026-11-20",
+      vencimento_ecosol: "2026-11-25",
+      ajuste_gdii: "290.71",
+    },
+  });
+  const calculoLote = await ok("/lotes/processar", "POST", {
+    lote: "usina",
+    conferido: true,
+    itens: [
+      { id: prontaLote.id, versao: prontaLote.versao },
+      { id: 999999, versao: 1 },
+    ],
+  });
+  assert.equal(
+    calculoLote.resultados[0].sucesso,
+    true,
+    JSON.stringify(calculoLote),
+  );
+  assert.equal(calculoLote.resultados[1].sucesso, false);
+  const calculadaLote = await ok(`/documentos/${prontaLote.id}`, "GET");
+  assert.equal(calculadaLote.status, "Calculada");
+  assert.equal(
+    calculadaLote.memoria.total_centavos,
+    previaNovembro.memoria.total_centavos,
+  );
+  const lotes = await ok("/lotes", "GET");
+  assert.ok(lotes.length > 0);
+  for (const lote of lotes) {
+    assert.equal(lote.recebido, lote.aptas + lote.pendentes + lote.duplicadas);
+    assert.equal(lote.recebido, lote.itens.length);
+    assert.equal(
+      lote.valor_centavos,
+      lote.itens.reduce((s, i) => s + i.valor_centavos, 0),
+    );
+    assert.ok(lote.itens.every((i) => i.motivo && i.origem));
+    assert.ok(
+      lote.itens
+        .filter((i) => i.estado === "duplicada")
+        .every((i) => i.valor_centavos === 0),
+    );
+  }
+  const original = banco
+    .prepare("SELECT * FROM faturamento_documentos WHERE id=?")
+    .get(d.id);
+  const loteOriginal = banco
+    .prepare(
+      "SELECT lote FROM faturamento_recebimentos_pdf WHERE documento_id=? AND codigo<>'duplicada' LIMIT 1",
+    )
+    .get(d.id).lote;
+  const pedidoLote = {
+    lote: loteOriginal,
+    conferido: true,
+    itens: [{ id: d.id, versao: original.versao }],
+  };
+  await ok("/lotes/processar", "POST", pedidoLote, 403, 1);
+  await ok(
+    "/lotes/processar",
+    "POST",
+    { ...pedidoLote, conferido: false },
+    400,
+  );
+  const preservado = await ok("/lotes/processar", "POST", pedidoLote);
+  assert.equal(
+    preservado.resultados[0].sucesso,
+    true,
+    JSON.stringify(preservado),
+  );
+  assert.deepEqual(
+    banco.prepare("SELECT * FROM faturamento_documentos WHERE id=?").get(d.id),
+    original,
+  );
+  const repetidoLote = await ok("/lotes/processar", "POST", pedidoLote);
+  assert.deepEqual(repetidoLote, preservado);
+  const alheio = await ok("/lotes/processar", "POST", {
+    ...pedidoLote,
+    lote: "lote-inexistente",
+  });
+  assert.equal(alheio.resultados[0].sucesso, false);
+  const obsoleto = await ok("/lotes/processar", "POST", {
+    ...pedidoLote,
+    itens: [{ id: d.id, versao: original.versao + 1 }],
+  });
+  assert.equal(obsoleto.resultados[0].sucesso, false);
+  await ok(
+    `/documentos/${d.id}/calcular`,
+    "POST",
+    { versao: original.versao, conferido: true },
+    409,
+  );
   console.log(
     "OK: Havilah, arredondamento, extração de PDF, UC sem contrato, condições manuais, permissões, duplicidade, referências de lote e aprovação sem emissão/envio.",
   );

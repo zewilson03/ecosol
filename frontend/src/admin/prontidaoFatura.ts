@@ -42,7 +42,7 @@ export function pendenciasParaCalculo(
           !dados.cliente_id)),
   );
   const semInjecao =
-    preenchido(dados.injecao) && Number(dados.injecao.replace(",", ".")) === 0;
+    preenchido(dados.injecao) && /^0+(?:[.,]0+)?$/.test(dados.injecao.trim());
   const pendencias: string[] = [];
   if (!unidade) pendencias.push("cliente e UC");
   else if (unidade.cliente_provisorio_id != null)

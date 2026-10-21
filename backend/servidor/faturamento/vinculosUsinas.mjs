@@ -39,6 +39,19 @@ export function usinaDaUnidadeNaCompetencia(banco, unidadeId, mes) {
   );
 }
 
+export function saidaDaCarteiraNaCompetencia(banco, unidadeId, mes) {
+  return (
+    banco
+      .prepare(
+        `SELECT inicio,data_efetiva,destino_externo,evidencia,operacao_id
+         FROM faturamento_saidas_carteira
+         WHERE unidade_id=? AND inicio<=?
+         ORDER BY inicio DESC LIMIT 1`,
+      )
+      .get(unidadeId, mes) ?? null
+  );
+}
+
 export function conferirVinculoComAprovadas(banco, unidadeId, usinaId) {
   const aprovadas = banco
     .prepare(

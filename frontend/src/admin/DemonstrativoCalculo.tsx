@@ -10,7 +10,7 @@ export default function DemonstrativoCalculo({
 }) {
   const entrada = memoria.entradas;
   const decimalBr = (valor: string) => valor.replace(".", ",");
-  const semInjecao = memoria.regra === "ecosol-v1-sem-injecao";
+  const semInjecao = memoria.regra.endsWith("-sem-injecao");
   return (
     <div className="faturamento-demonstrativo">
       <h3>
@@ -21,7 +21,8 @@ export default function DemonstrativoCalculo({
       {semInjecao && (
         <p>
           Sem injeção SCEE: não há cobrança de energia Ecosol, tarifa, desconto
-          ou ajuste GDII. O total é somente o valor Equatorial.
+          ou ajuste GDII. Do total Equatorial são abatidos os juros e a multa
+          informados.
         </p>
       )}
       <dl>
@@ -63,12 +64,28 @@ export default function DemonstrativoCalculo({
         )}
         <div>
           <dt>{semInjecao ? "Energia Ecosol" : "Consumo com desconto"}</dt>
-          <dd>{formatarDinheiro(memoria.consumo_centavos)}</dd>
+          <dd>
+            {memoria.consumo_bruto !== undefined
+              ? `R$ ${decimalBr(memoria.consumo_bruto)}`
+              : formatarDinheiro(memoria.consumo_centavos)}
+          </dd>
         </div>
         <div>
           <dt>+ Total Equatorial</dt>
           <dd>{formatarDinheiro(memoria.equatorial_centavos)}</dd>
         </div>
+        {Boolean(memoria.juros_centavos) && (
+          <div>
+            <dt>− Juros Equatorial</dt>
+            <dd>{formatarDinheiro(memoria.juros_centavos!)}</dd>
+          </div>
+        )}
+        {Boolean(memoria.multa_centavos) && (
+          <div>
+            <dt>− Multa Equatorial</dt>
+            <dd>{formatarDinheiro(memoria.multa_centavos!)}</dd>
+          </div>
+        )}
         {!semInjecao && entrada.modalidade === "GDII" && (
           <div>
             <dt>− Ajuste GDII</dt>
@@ -80,6 +97,12 @@ export default function DemonstrativoCalculo({
           <dd>{formatarDinheiro(memoria.total_centavos)}</dd>
         </div>
       </dl>
+      {Boolean(memoria.juros_centavos || memoria.multa_centavos) && (
+        <p>
+          Juros e multa já incluídos no total Equatorial são subtraídos, antes
+          do ajuste GDII.
+        </p>
+      )}
       <p>
         {entrada.modalidade} · Vencimento Ecosol:{" "}
         {memoria.vencimento_ecosol.split("-").reverse().join("/")} · Fonte da
@@ -88,10 +111,14 @@ export default function DemonstrativoCalculo({
       </p>
       <small>
         {semInjecao
-          ? "Cálculo: 0 kWh injetado; total Ecosol igual ao total Equatorial, sem desconto ou ajuste."
-          : entrada.modalidade === "GDII"
-            ? "Cálculo: energia injetada × tarifa completa × (1 − desconto/100), arredondado a centavos; depois soma o total Equatorial e subtrai o ajuste GDII."
-            : "Cálculo: energia injetada × tarifa completa × (1 − desconto/100), arredondado a centavos; depois soma o total Equatorial."}
+          ? memoria.juros_centavos || memoria.multa_centavos
+            ? "Cálculo: 0 kWh injetado; total Equatorial menos juros e multa, sem desconto ou ajuste GDII."
+            : "Cálculo: 0 kWh injetado; total Ecosol igual ao total Equatorial, sem desconto ou ajuste."
+          : memoria.precisao?.etapa === "total"
+            ? `Cálculo decimal sem arredondamento das parcelas: energia × tarifa × (1 − desconto/100) + total Equatorial − juros − multa − ajuste GDII. Somente o total da cobrança é arredondado a centavos (${memoria.precisao.arredondamento === "ROUND_HALF_EVEN" ? "HALF_EVEN" : "HALF_UP"}).`
+            : entrada.modalidade === "GDII"
+              ? "Cálculo: energia injetada × tarifa completa × (1 − desconto/100), arredondado a centavos; depois soma o total Equatorial e subtrai o ajuste GDII."
+              : "Cálculo: energia injetada × tarifa completa × (1 − desconto/100), arredondado a centavos; depois soma o total Equatorial."}
       </small>
     </div>
   );

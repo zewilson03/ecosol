@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { lerPdf } from "./extracao.mjs";
 import { falhar } from "./regras.mjs";
+import { normalizarDadosFinanceiros } from "./normalizacaoFinanceira.mjs";
 
 function elegivel(documento) {
   return (
@@ -51,6 +52,12 @@ export async function reanalisarFatura({
 
   // A leitura do PDF pode levar segundos. Não manter o banco bloqueado aqui.
   const novaExtracao = await lerPdf(Buffer.from(anterior.pdf));
+  const normalizacao = normalizarDadosFinanceiros(novaExtracao.dados, {
+    origem: "pdf:reanalise",
+    tipo: "texto",
+  });
+  novaExtracao.dados = normalizacao.dados;
+  novaExtracao.normalizacao_financeira = normalizacao.registros;
   banco.exec("BEGIN IMMEDIATE");
   try {
     const atual = banco

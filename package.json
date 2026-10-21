@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test:normalizacao-financeira": "node backend/testes/normalizacaoFinanceira.test.mjs",
+    "test:equivalencia-central": "node backend/testes/equivalenciaCentral.test.mjs",
+    "test:lotes": "node backend/testes/lotesFaturamento.test.mjs",
     "test:seguranca": "node backend/testes/segurancaHttp.test.mjs",
     "test:bancario": "node backend/testes/permissoesBancarias.test.mjs && node backend/testes/operacoesBancarias.test.mjs && node backend/testes/mfaBancario.test.mjs && node backend/testes/recuperacaoMfaDupla.test.mjs && node backend/testes/executorBancario.test.mjs && node backend/testes/sicoobPreToken.test.mjs",
     "format:check": "prettier --check frontend/src frontend/testes frontend/index.html frontend/vite.config.ts backend/servidor backend/scripts backend/testes docs README.md package.json .prettierrc.json",

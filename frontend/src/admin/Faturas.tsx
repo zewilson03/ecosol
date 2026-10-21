@@ -4,6 +4,7 @@ import Calculos from "./Calculos";
 import { Link, useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
 import Pagamentos from "./Pagamentos";
+import LotesFaturamento from "./LotesFaturamento";
 
 export default function Faturas() {
   const [parametros] = useSearchParams();
@@ -14,6 +15,7 @@ export default function Faturas() {
     "calcular",
     "aprovar",
     "pagamentos",
+    "lotes",
   ].includes(solicitada ?? "")
     ? solicitada!
     : parametros.has("documento")
@@ -35,6 +37,7 @@ export default function Faturas() {
   }, [etapa]);
 
   const etapas = [
+    { id: "lotes", nome: "Lotes" },
     { id: "receber", nome: "Receber PDF" },
     { id: "conferir", nome: "Conferir dados" },
     { id: "calcular", nome: "Calcular" },
@@ -63,7 +66,9 @@ export default function Faturas() {
           ))}
         </ol>
       </nav>
-      {etapa === "pagamentos" ? (
+      {etapa === "lotes" ? (
+        <LotesFaturamento />
+      ) : etapa === "pagamentos" ? (
         <Pagamentos />
       ) : etapa === "calcular" || etapa === "aprovar" ? (
         <Calculos incorporado modo={etapa} />

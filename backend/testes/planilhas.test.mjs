@@ -373,6 +373,42 @@ try {
   const previa = prepararImportacao(abas, configuracao, banco);
   assert.equal(previa.validas, 1);
   assert.equal(previa.problemas, 1);
+  const residuo = structuredClone(abas);
+  residuo[0].linhas[1][mapa.desconto] = {
+    valor: "0.20000000000000004",
+    tipo: "percentual",
+  };
+  const previaResiduo = prepararImportacao(residuo, configuracao, banco);
+  assert.equal(previaResiduo.linhas[0].contrato.desconto, "20");
+  const rastreio = previaResiduo.linhas[0].normalizacao_financeira.desconto;
+  assert.equal(rastreio.bruto, "0.20000000000000004");
+  assert.equal(rastreio.normalizado, "20");
+  assert.equal(rastreio.unidade_origem, "fracao");
+  assert.match(rastreio.origem, /planilha:Clientes:linha:2:coluna:8/);
+  const manualInvalido = prepararImportacao(
+    residuo,
+    { ...configuracao, correcoes: { 2: { desconto: "20.000000000000004" } } },
+    banco,
+  );
+  assert.equal(manualInvalido.linhas[0].status, "Erro");
+  const precisaoLegitima = structuredClone(residuo);
+  precisaoLegitima[0].linhas[1][mapa.desconto] = {
+    valor: "0.20001",
+    tipo: "percentual",
+  };
+  assert.equal(
+    prepararImportacao(precisaoLegitima, configuracao, banco).linhas[0].contrato
+      .desconto,
+    "20.001",
+  );
+  precisaoLegitima[0].linhas[1][mapa.desconto] = {
+    valor: "0.200000001",
+    tipo: "percentual",
+  };
+  assert.equal(
+    prepararImportacao(precisaoLegitima, configuracao, banco).linhas[0].status,
+    "Erro",
+  );
   const historicas = await lerExcel(
     await arquivo([
       [
@@ -817,6 +853,7 @@ try {
       .get(unidadeMensal.id).dados,
   );
   assert.equal(auditoria.complementos_no_sistema.email, "mensal@example.test");
+  assert.ok(auditoria.normalizacao_financeira.desconto.origem);
   assert.deepEqual(
     readFileSync(join(process.env.ECOSOL_PLANILHAS_DIR, nomeMensal)),
     mensalBuffer,

@@ -3,7 +3,11 @@ import { Router } from "express";
 import { obterBanco } from "../bancoDeDados.mjs";
 import { exigirNivel } from "../permissoesDaEquipe.mjs";
 import { falhar } from "./regras.mjs";
-import { chaveUsina, modalidadeVigenteDaUsina } from "./vinculosUsinas.mjs";
+import {
+  chaveUsina,
+  modalidadeVigenteDaUsina,
+  saidaDaCarteiraNaCompetencia,
+} from "./vinculosUsinas.mjs";
 
 export const rotasTransferenciasUsinas = Router();
 rotasTransferenciasUsinas.use(exigirNivel(3));
@@ -30,6 +34,34 @@ function proximoMes(mes) {
   return numero === 12
     ? `${ano + 1}-01`
     : `${ano}-${String(numero + 1).padStart(2, "0")}`;
+}
+
+function competencia(valor) {
+  if (!/^20\d{2}-(0[1-9]|1[0-2])$/.test(String(valor ?? "")))
+    falhar("Competência inválida.");
+  return valor;
+}
+
+function destinoExterno(valor) {
+  if (typeof valor !== "string") falhar("Informe a usina externa de destino.");
+  const destino = valor.trim().replace(/\s+/g, " ");
+  if (!destino || destino.length > 120)
+    falhar("Informe a usina externa de destino.");
+  return destino;
+}
+
+function dataEfetiva(valor, inicio) {
+  if (valor === undefined || valor === null || valor === "") return null;
+  const data = String(valor);
+  if (!/^20\d{2}-(0[1-9]|1[0-2])-([0-2]\d|3[01])$/.test(data))
+    falhar("Data efetiva inválida.");
+  if (!data.startsWith(`${inicio}-`))
+    falhar("A data efetiva deve pertencer à competência inicial.");
+  return data;
+}
+
+function unidadeSaida(valor) {
+  return { id: identificador(valor?.id), versao: identificador(valor?.versao) };
 }
 
 function selecao(valor) {
@@ -78,6 +110,11 @@ function preparar(banco, origemId, destinoId, itens) {
       ultimaFatura && ultimaFatura >= mesAtual
         ? proximoMes(ultimaFatura)
         : mesAtual;
+    if (saidaDaCarteiraNaCompetencia(banco, id, inicio))
+      falhar(
+        "Esta UC saiu da carteira operacional da Ecosol. Não é possível transferi-la para uma usina administrada.",
+        409,
+      );
     const ultimoVinculo = banco
       .prepare(
         "SELECT MAX(inicio) AS mes FROM faturamento_vinculos_usina WHERE unidade_id=? AND inicio<>'0000-01'",
@@ -119,6 +156,127 @@ rotasTransferenciasUsinas.post("/previa", (req, res) => {
     selecao(req.body?.unidades),
   );
   res.set("Cache-Control", "no-store").json(plano);
+});
+
+function prepararSaidaExterna(
+  banco,
+  { unidade, inicio, destino, dataEfetiva },
+) {
+  const atual = banco
+    .prepare(
+      "SELECT id,uc,versao,usina_id FROM faturamento_unidades WHERE id=?",
+    )
+    .get(unidade.id);
+  if (!atual || atual.versao !== unidade.versao)
+    falhar("A UC foi alterada. Atualize a lista e tente novamente.", 409);
+  const existente = banco
+    .prepare(
+      "SELECT inicio,data_efetiva,destino_externo FROM faturamento_saidas_carteira WHERE unidade_id=?",
+    )
+    .get(atual.id);
+  if (existente)
+    falhar(
+      `Esta UC já saiu da carteira desde ${existente.inicio} (destino: ${existente.destino_externo}).`,
+      409,
+    );
+  return {
+    ...atual,
+    inicio,
+    data_efetiva: dataEfetiva,
+    destino_externo: destino,
+  };
+}
+
+rotasTransferenciasUsinas.post("/saidas-externas/previa", (req, res) => {
+  const inicio = competencia(req.body?.inicio);
+  const plano = prepararSaidaExterna(obterBanco(), {
+    unidade: unidadeSaida(req.body?.unidade),
+    inicio,
+    destino: destinoExterno(req.body?.destino_externo),
+    dataEfetiva: dataEfetiva(req.body?.data_efetiva, inicio),
+  });
+  res.set("Cache-Control", "no-store").json(plano);
+});
+
+rotasTransferenciasUsinas.post("/saidas-externas/confirmar", (req, res) => {
+  if (req.body?.confirmado !== true)
+    falhar("Confirme a saída após conferir a prévia.");
+  const chave = String(req.body?.chave ?? "");
+  if (!/^[0-9a-f]{8}-[0-9a-f-]{27,36}$/i.test(chave))
+    falhar("Identificador da operação inválido.");
+  const inicio = competencia(req.body?.inicio);
+  const entrada = {
+    unidade: unidadeSaida(req.body?.unidade),
+    inicio,
+    destino: destinoExterno(req.body?.destino_externo),
+    dataEfetiva: dataEfetiva(req.body?.data_efetiva, inicio),
+  };
+  const banco = obterBanco();
+  banco.exec("BEGIN IMMEDIATE");
+  try {
+    const repetida = banco
+      .prepare(
+        `SELECT u.id,u.uc,s.inicio,s.data_efetiva,s.destino_externo
+         FROM faturamento_saidas_carteira s
+         JOIN faturamento_unidades u ON u.id=s.unidade_id
+         WHERE s.operacao_id=?`,
+      )
+      .get(chave);
+    if (repetida) {
+      if (
+        repetida.id !== entrada.unidade.id ||
+        repetida.inicio !== entrada.inicio ||
+        repetida.data_efetiva !== entrada.dataEfetiva ||
+        repetida.destino_externo !== entrada.destino
+      )
+        falhar("Esta operação já foi usada com outros dados.", 409);
+      banco.exec("COMMIT");
+      return res
+        .set("Cache-Control", "no-store")
+        .json({ ...repetida, ja_concluida: true });
+    }
+    const plano = prepararSaidaExterna(banco, entrada);
+    banco
+      .prepare(
+        `INSERT INTO faturamento_saidas_carteira
+         (unidade_id,inicio,data_efetiva,destino_externo,evidencia,operacao_id)
+         VALUES(?,?,?,?,?,?)`,
+      )
+      .run(
+        plano.id,
+        plano.inicio,
+        plano.data_efetiva,
+        plano.destino_externo,
+        JSON.stringify({
+          origem: "confirmação administrativa",
+          operacao: chave,
+        }),
+        chave,
+      );
+    banco
+      .prepare(
+        `INSERT INTO faturamento_historico
+         (unidade_id,responsavel,administrador_id,acao,dados) VALUES(?,?,?,?,?)`,
+      )
+      .run(
+        plano.id,
+        req.administrador.nome,
+        req.administrador.id,
+        "Saída operacional para usina externa",
+        JSON.stringify({
+          operacao: chave,
+          uc: plano.uc,
+          inicio: plano.inicio,
+          data_efetiva: plano.data_efetiva,
+          destino_externo: plano.destino_externo,
+        }),
+      );
+    banco.exec("COMMIT");
+    res.set("Cache-Control", "no-store").status(201).json(plano);
+  } catch (erro) {
+    banco.exec("ROLLBACK");
+    throw erro;
+  }
 });
 
 rotasTransferenciasUsinas.post("/confirmar", (req, res) => {

@@ -173,6 +173,27 @@ export function extrairCampos(texto, { ucQuadro = null } = {}) {
       guardar("vencimento_equatorial", resumos[0].vencimento, resumos[0].linha);
   }
   const linhas = normal.split(/\r?\n/);
+  // Mesmos encargos abatidos pela fórmula fixa da Central. Somar somente
+  // linhas rotuladas e preservar a evidência; rótulo ilegível bloqueia cálculo.
+  for (const [campo, rotulo] of [
+    ["juros", /^\s*JUROS\s+MORATORIA\b/],
+    ["multa", /^\s*MULTA\s*-/],
+  ]) {
+    const encontradas = linhas.filter((linha) => rotulo.test(linha));
+    if (!encontradas.length) continue;
+    const valores = encontradas.map((linha) =>
+      linha.match(/\d[\d.]*(?:,\d{2})(?!\d)/g)?.at(-1),
+    );
+    guardar(
+      campo,
+      valores.every(Boolean)
+        ? valores
+            .reduce((soma, valor) => soma.plus(br(valor)), new D(0))
+            .toFixed(2)
+        : "REVISAR",
+      encontradas.join(" | "),
+    );
+  }
   // Em determinadas contas da usina São Francisco o quadro "Mensagens
   // importantes" vem visualmente vazio. O título verde não entra sempre na
   // camada textual do PDF, mas nenhum dos marcadores internos do SCEE aparece.

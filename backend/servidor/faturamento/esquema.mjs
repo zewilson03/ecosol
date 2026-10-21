@@ -43,6 +43,18 @@ export function prepararFaturamento(banco) {
       id TEXT PRIMARY KEY, payload_hash TEXT NOT NULL,
       resultado TEXT NOT NULL, criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS faturamento_saidas_carteira (
+      id INTEGER PRIMARY KEY,
+      unidade_id INTEGER NOT NULL UNIQUE REFERENCES faturamento_unidades(id) ON DELETE RESTRICT,
+      inicio TEXT NOT NULL CHECK(inicio GLOB '20[0-9][0-9]-[0-1][0-9]'),
+      data_efetiva TEXT,
+      destino_externo TEXT NOT NULL CHECK(destino_externo<>''),
+      evidencia TEXT NOT NULL CHECK(evidencia<>''),
+      operacao_id TEXT NOT NULL UNIQUE,
+      criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS faturamento_saidas_carteira_vigencia
+      ON faturamento_saidas_carteira(unidade_id,inicio);
     CREATE TABLE IF NOT EXISTS faturamento_unidades (
       id INTEGER PRIMARY KEY, uc TEXT NOT NULL UNIQUE, nome TEXT NOT NULL,
       documento TEXT NOT NULL, email TEXT NOT NULL, dia_vencimento INTEGER NOT NULL,
@@ -107,6 +119,15 @@ export function prepararFaturamento(banco) {
       criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
   `);
+  if (
+    !banco
+      .prepare("PRAGMA table_info(faturamento_saidas_carteira)")
+      .all()
+      .some((c) => c.name === "data_efetiva")
+  )
+    banco.exec(
+      "ALTER TABLE faturamento_saidas_carteira ADD COLUMN data_efetiva TEXT",
+    );
   const colunasUsinas = banco.prepare("PRAGMA table_info(usinas)").all();
   if (colunasUsinas.length && !colunasUsinas.some((c) => c.name === "versao")) {
     banco.exec(
@@ -322,6 +343,31 @@ export function prepararFaturamento(banco) {
   banco.exec(`CREATE INDEX IF NOT EXISTS faturamento_unidades_operacional
     ON faturamento_unidades(cliente_operacional_id)
     WHERE cliente_operacional_id IS NOT NULL`);
+  banco.exec(`
+    CREATE TRIGGER IF NOT EXISTS faturamento_saida_carteira_sem_novo_calculo_insert
+    BEFORE INSERT ON faturamento_documentos
+    WHEN NEW.unidade_id IS NOT NULL AND NEW.competencia IS NOT NULL
+      AND NEW.status IN ('Calculada','Aprovada — aguardando emissão')
+      AND EXISTS (
+        SELECT 1 FROM faturamento_saidas_carteira s
+        WHERE s.unidade_id=NEW.unidade_id AND s.inicio<=NEW.competencia
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'UC fora da carteira operacional da Ecosol nesta competência');
+    END;
+    CREATE TRIGGER IF NOT EXISTS faturamento_saida_carteira_sem_novo_calculo_update
+    BEFORE UPDATE OF unidade_id,competencia,status ON faturamento_documentos
+    WHEN NEW.unidade_id IS NOT NULL AND NEW.competencia IS NOT NULL
+      AND NEW.status IN ('Calculada','Aprovada — aguardando emissão')
+      AND OLD.status NOT IN ('Calculada','Aprovada — aguardando emissão')
+      AND EXISTS (
+        SELECT 1 FROM faturamento_saidas_carteira s
+        WHERE s.unidade_id=NEW.unidade_id AND s.inicio<=NEW.competencia
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'UC fora da carteira operacional da Ecosol nesta competência');
+    END;
+  `);
   // Documentação pendente não impede conferir e calcular uma fatura. A barreira
   // precisa existir no marco de emissão, não na apuração interna.
   banco.exec(`
