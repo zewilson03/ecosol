@@ -1,0 +1,1074 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ecosol · Proposta de Contratos</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #173642;
+        --muted: #586f78;
+        --primary: #0f6670;
+        --solar: #e9b832;
+        --canvas: #f5f7f5;
+        --line: #dbe5e2;
+        --soft: #edf3f1;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--canvas);
+        color: var(--ink);
+        font:
+          16px/1.5 system-ui,
+          sans-serif;
+      }
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+      button {
+        cursor: pointer;
+        min-height: 44px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px 17px;
+        color: var(--primary);
+        background: white;
+        font-weight: 650;
+        transition: background 0.18s ease;
+      }
+      button:hover {
+        background: var(--soft);
+      }
+      button.primary {
+        background: var(--primary);
+        color: white;
+        border-color: var(--primary);
+      }
+      button.primary:hover {
+        background: #0a535c;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      :focus-visible {
+        outline: 3px solid #b27e00;
+        outline-offset: 3px;
+      }
+      input,
+      select {
+        min-width: 0;
+        width: 100%;
+        min-height: 48px;
+        padding: 12px;
+        border: 1px solid #bccdca;
+        border-radius: 10px;
+        color: var(--ink);
+        background: white;
+      }
+      h1,
+      h2,
+      p {
+        margin: 0;
+      }
+      h1 {
+        font-size: clamp(26px, 3vw, 36px);
+        letter-spacing: -0.04em;
+        font-weight: 650;
+      }
+      h2 {
+        font-size: 21px;
+        letter-spacing: -0.025em;
+      }
+      small,
+      .muted {
+        color: var(--muted);
+      }
+      [hidden] {
+        display: none !important;
+      }
+      .app {
+        display: grid;
+        grid-template-columns: 210px minmax(0, 1fr);
+        min-height: 100vh;
+      }
+      aside {
+        background: #173e44;
+        color: white;
+        padding: 30px 18px;
+      }
+      .brand {
+        font-size: 27px;
+        font-weight: 700;
+        letter-spacing: -0.05em;
+        padding: 0 10px 34px;
+      }
+      .brand span {
+        color: var(--solar);
+      }
+      .scope {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.15em;
+        opacity: 0.75;
+        padding: 10px;
+      }
+      .nav-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 13px 12px;
+        border-radius: 10px;
+      }
+      .nav-item.active {
+        background: #ffffff15;
+        box-shadow: inset 3px 0 var(--solar);
+      }
+      .nav-item.dim {
+        color: #c9dcde;
+      }
+      .nav-note {
+        font-size: 12px;
+        color: #c9dcde;
+        padding: 22px 10px;
+      }
+      main {
+        max-width: 1240px;
+        width: 100%;
+        padding: 28px 40px 45px;
+        margin: auto;
+      }
+      .demo {
+        display: flex;
+        gap: 9px;
+        flex-wrap: wrap;
+        align-items: center;
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 22px;
+      }
+      .demo strong {
+        background: #f9edc9;
+        color: #735510;
+        border-radius: 5px;
+        padding: 3px 7px;
+      }
+      .heading {
+        margin-bottom: 26px;
+      }
+      .eyebrow {
+        color: var(--primary);
+        text-transform: uppercase;
+        font-size: 11px;
+        letter-spacing: 0.15em;
+        font-weight: 750;
+        margin-bottom: 6px;
+      }
+      .heading p {
+        color: var(--muted);
+        margin-top: 7px;
+      }
+      .panel {
+        background: white;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        box-shadow: 0 4px 16px #14353b08;
+        overflow: visible;
+      }
+      .toolbar {
+        padding: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        flex-wrap: wrap;
+        border-bottom: 1px solid var(--line);
+      }
+      .toolbar small {
+        display: block;
+        margin-top: 4px;
+      }
+      .list-tools {
+        padding: 20px 24px;
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .list-tools label {
+        flex: 1 1 230px;
+      }
+      .list-tools select {
+        width: auto;
+        flex: 0 1 210px;
+      }
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+      }
+      .contract-list {
+        list-style: none;
+        margin: 0;
+        padding: 0 24px 12px;
+      }
+      .contract-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 18px;
+        align-items: center;
+        padding: 20px 0;
+        border-top: 1px solid var(--line);
+      }
+      .contract-row strong {
+        display: block;
+        font-size: 15px;
+      }
+      .contract-row small {
+        display: block;
+        margin-top: 5px;
+      }
+      .status {
+        white-space: nowrap;
+        font-size: 12px;
+        border-radius: 7px;
+        padding: 6px 9px;
+        background: var(--soft);
+      }
+      .status.pending {
+        color: #775516;
+        background: #faf1d8;
+      }
+      .status.success {
+        color: #24654d;
+        background: #eaf3ed;
+      }
+      .stepbar {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        list-style: none;
+        padding: 0;
+        margin: 0 0 24px;
+        gap: 10px;
+      }
+      .stepbar button {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        width: 100%;
+        height: 100%;
+        padding: 12px;
+        text-align: left;
+        font-size: 13px;
+        background: transparent;
+        border-color: transparent;
+        color: var(--muted);
+      }
+      .stepbar .number {
+        width: 28px;
+        height: 28px;
+        flex-shrink: 0;
+        display: grid;
+        place-items: center;
+        background: #e5eeeb;
+        border-radius: 50%;
+      }
+      .stepbar button[aria-current="step"] {
+        background: white;
+        color: var(--ink);
+        border-color: var(--line);
+      }
+      .stepbar button[aria-current="step"] .number {
+        background: var(--solar);
+        color: var(--ink);
+      }
+      .editor-body {
+        padding: 28px;
+        min-height: 350px;
+        animation: enter 0.2s ease;
+      }
+      .editor-body > p {
+        margin: 7px 0 23px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .fields {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 20px 24px;
+      }
+      .fields label {
+        display: grid;
+        align-content: start;
+        gap: 7px;
+        font-weight: 600;
+        font-size: 14px;
+      }
+      .fields label small {
+        font-weight: 400;
+      }
+      .fields .wide {
+        grid-column: 1 / -1;
+      }
+      .segmented {
+        display: inline-flex;
+        gap: 5px;
+        background: var(--soft);
+        padding: 4px;
+        border-radius: 12px;
+        margin-bottom: 22px;
+      }
+      .segmented button {
+        border-color: transparent;
+        background: transparent;
+        font-size: 13px;
+        padding: 8px 13px;
+      }
+      .segmented button[aria-pressed="true"] {
+        background: white;
+        box-shadow: 0 2px 6px #17364210;
+      }
+      .region-options,
+      .document-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        margin-bottom: 22px;
+      }
+      .region-option,
+      .document-card {
+        text-align: left;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #f9fbfa;
+        padding: 16px;
+      }
+      .region-option[aria-pressed="true"] {
+        border-color: var(--primary);
+        box-shadow: inset 0 0 0 1px var(--primary);
+        background: #f1f8f6;
+      }
+      .region-option strong,
+      .document-card strong,
+      .document-card small {
+        display: block;
+      }
+      .region-option small,
+      .document-card small {
+        margin-top: 5px;
+        font-weight: 400;
+      }
+      .uc-list {
+        display: grid;
+        gap: 12px;
+        margin-bottom: 18px;
+      }
+      .uc-row {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+        gap: 12px;
+        align-items: end;
+        padding: 16px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #f9fbfa;
+      }
+      .uc-row label {
+        display: grid;
+        gap: 7px;
+        font-weight: 600;
+        font-size: 14px;
+      }
+      .uc-row .go-field {
+        grid-column: span 2;
+      }
+      .remove-uc {
+        color: #8a3730;
+      }
+      .notice {
+        border-left: 3px solid var(--solar);
+        background: #fbf8ed;
+        padding: 13px 16px;
+        font-size: 13px;
+        margin-top: 22px;
+      }
+      .upload {
+        border: 1px dashed #94b9b7;
+        background: #f7faf9;
+        border-radius: 12px;
+        padding: 27px;
+        text-align: center;
+      }
+      .upload p {
+        color: var(--muted);
+        margin: 8px 0 18px;
+        font-size: 14px;
+      }
+      .review {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+      .review > div {
+        padding: 16px;
+        background: #f7f9f8;
+        border-radius: 10px;
+        overflow-wrap: anywhere;
+      }
+      .review small {
+        display: block;
+        margin-bottom: 6px;
+      }
+      .editor-footer {
+        padding: 18px 28px;
+        border-top: 1px solid var(--line);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 14px;
+      }
+      .editor-footer > div {
+        display: flex;
+        gap: 10px;
+      }
+      .back-list {
+        margin-bottom: 18px;
+        padding-left: 0;
+        border: 0;
+        background: transparent;
+      }
+      .feedback {
+        margin-top: 18px;
+        padding: 14px 18px;
+        background: #eaf3ed;
+        border-radius: 10px;
+        font-size: 14px;
+      }
+      .design-note {
+        margin-top: 18px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      @keyframes enter {
+        from {
+          opacity: 0.5;
+          transform: translateY(4px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      @media (max-width: 900px) {
+        .app {
+          grid-template-columns: 165px minmax(0, 1fr);
+        }
+        aside {
+          padding: 24px 10px;
+        }
+        main {
+          padding: 24px;
+        }
+        .stepbar {
+          gap: 4px;
+        }
+        .stepbar button {
+          flex-direction: column;
+          font-size: 12px;
+          text-align: center;
+          padding: 8px 4px;
+        }
+      }
+      @media (max-width: 600px) {
+        .app {
+          display: block;
+        }
+        aside {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 12px 18px;
+        }
+        .brand {
+          padding: 0;
+          font-size: 23px;
+        }
+        .scope,
+        .nav-note,
+        .nav-item.dim {
+          display: none;
+        }
+        .nav-item.active {
+          padding: 7px 12px;
+          font-size: 13px;
+          box-shadow: none;
+        }
+        main {
+          padding: 20px 16px 28px;
+        }
+        .heading {
+          margin-bottom: 20px;
+        }
+        .heading p {
+          font-size: 14px;
+        }
+        .toolbar {
+          padding: 20px;
+        }
+        .toolbar h2 {
+          font-size: 19px;
+        }
+        .toolbar button {
+          font-size: 14px;
+          padding: 10px 12px;
+        }
+        .list-tools {
+          padding: 18px 20px;
+        }
+        .list-tools select {
+          flex: 1 1 100%;
+        }
+        .contract-list {
+          padding: 0 20px 10px;
+        }
+        .contract-row {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .fields,
+        .review,
+        .region-options,
+        .document-grid {
+          grid-template-columns: 1fr;
+        }
+        .uc-row {
+          grid-template-columns: 1fr;
+        }
+        .uc-row .go-field {
+          grid-column: auto;
+        }
+        .editor-body {
+          padding: 22px 20px;
+        }
+        .editor-footer {
+          position: sticky;
+          bottom: 0;
+          background: #fff;
+          padding: 13px 16px calc(13px + env(safe-area-inset-bottom));
+          border-radius: 0 0 14px 14px;
+          flex-wrap: wrap;
+        }
+        .editor-footer > small {
+          width: 100%;
+          font-size: 11px;
+        }
+        .editor-footer > div {
+          width: 100%;
+          justify-content: space-between;
+        }
+        .editor-footer button {
+          font-size: 14px;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation: none !important;
+          transition: none !important;
+          scroll-behavior: auto !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <aside aria-label="Localização proposta no menu administrativo">
+        <div class="brand"><span>☀</span> ecosol</div>
+        <div>
+          <div class="scope">Área comercial</div>
+          <div class="nav-item active" aria-current="page">
+            <span aria-hidden="true">▤</span> Contratos
+          </div>
+          <div class="nav-item dim">
+            <span aria-hidden="true">▦</span> Cadastros
+          </div>
+          <div class="nav-item dim">
+            <span aria-hidden="true">☀</span> Usinas
+          </div>
+          <p class="nav-note">
+            Menu ilustrativo do gestor. O vendedor terá somente as opções
+            autorizadas.
+          </p>
+        </div>
+      </aside>
+      <main>
+        <div class="demo">
+          <strong>PROTÓTIPO</strong
+          ><span>Não salva nem envia. Use somente dados fictícios.</span>
+        </div>
+        <header class="heading">
+          <div class="eyebrow">Da visita à assinatura</div>
+          <h1>Contratos</h1>
+          <p>Uma venda, um cadastro, tudo no mesmo lugar.</p>
+        </header>
+        <section id="listing" class="panel" aria-labelledby="list-title">
+          <div class="toolbar">
+            <div>
+              <h2 id="list-title">Meus contratos</h2>
+              <small>3 exemplos ilustrativos</small>
+            </div>
+            <button class="primary" id="new-contract">+ Novo contrato</button>
+          </div>
+          <div class="list-tools">
+            <label
+              ><span class="sr-only">Buscar cliente de demonstração</span
+              ><input
+                id="search"
+                type="search"
+                placeholder="Buscar cliente ou UC" /></label
+            ><select id="filter" aria-label="Situação">
+              <option value="">Todas as situações</option>
+              <option value="draft">Rascunhos</option>
+              <option value="sent">Aguardando assinatura</option>
+              <option value="done">Assinados</option>
+            </select>
+          </div>
+          <ul class="contract-list">
+            <li class="contract-row" data-status="draft">
+              <div>
+                <strong>Cliente exemplo A</strong
+                ><small>UC a informar · atualizado hoje</small>
+              </div>
+              <span class="status">Rascunho</span>
+            </li>
+            <li class="contract-row" data-status="sent">
+              <div>
+                <strong>Cliente exemplo B</strong
+                ><small>UC ilustrativa · enviado ontem</small>
+              </div>
+              <span class="status pending">Aguardando assinatura</span>
+            </li>
+            <li class="contract-row" data-status="done">
+              <div>
+                <strong>Cliente exemplo C</strong
+                ><small>UC ilustrativa · concluído ontem</small>
+              </div>
+              <span class="status success">Assinado</span>
+            </li>
+          </ul>
+          <p id="empty" class="design-note" style="padding: 0 24px 24px" hidden>
+            Nenhum exemplo corresponde à busca.
+          </p>
+        </section>
+        <section id="editor" hidden aria-label="Novo contrato — demonstração">
+          <button class="back-list" id="back-list">← Meus contratos</button>
+          <ol class="stepbar" aria-label="Etapas do cadastro">
+            <li>
+              <button data-step="0" aria-current="step">
+                <span class="number">1</span>Tipo e cliente
+              </button>
+            </li>
+            <li>
+              <button data-step="1">
+                <span class="number">2</span>UCs e desconto
+              </button>
+            </li>
+            <li>
+              <button data-step="2">
+                <span class="number">3</span>Documentos
+              </button>
+            </li>
+            <li>
+              <button data-step="3">
+                <span class="number">4</span>Revisar e enviar
+              </button>
+            </li>
+          </ol>
+          <div class="panel">
+            <section
+              class="editor-body"
+              data-page="0"
+              aria-labelledby="client-title"
+            >
+              <div class="eyebrow">Novo contrato · etapa 1</div>
+              <h2 id="client-title" tabindex="-1">Onde e com quem?</h2>
+              <p>
+                A região define os três documentos. Dados existentes serão
+                sugeridos com segurança.
+              </p>
+              <div
+                class="region-options"
+                role="group"
+                aria-label="Região contratual"
+              >
+                <button
+                  class="region-option"
+                  data-region="GO"
+                  aria-pressed="true"
+                >
+                  <strong>Goiás</strong
+                  ><small>Equatorial · Grupo Ecosol Condomínio Solar</small>
+                </button>
+                <button
+                  class="region-option"
+                  data-region="DF"
+                  aria-pressed="false"
+                >
+                  <strong>Distrito Federal</strong
+                  ><small>Neoenergia · Ecosol Energy Hub</small>
+                </button>
+              </div>
+              <div class="segmented" role="group" aria-label="Tipo de cliente">
+                <button id="pf" aria-pressed="true">Pessoa física</button
+                ><button id="pj" aria-pressed="false">Pessoa jurídica</button>
+              </div>
+              <div class="fields">
+                <label
+                  ><span id="document-label">CPF *</span
+                  ><input
+                    id="document"
+                    inputmode="numeric"
+                    placeholder="Informe apenas dados fictícios"
+                    autocomplete="off"
+                  /><small
+                    >A identificação será conferida antes do envio.</small
+                  ></label
+                >
+                <label
+                  ><span id="name-label">Nome completo *</span
+                  ><input
+                    id="name"
+                    placeholder="Nome do cliente de demonstração"
+                    autocomplete="off"
+                /></label>
+                <label
+                  >E-mail *<input
+                    id="email"
+                    type="email"
+                    placeholder="cliente@example.com"
+                    autocomplete="off"
+                  /><small>Destino do convite de assinatura.</small></label
+                >
+                <label
+                  >Telefone *<input
+                    id="phone"
+                    type="tel"
+                    placeholder="DDD + número"
+                    autocomplete="off"
+                /></label>
+                <label class="wide" id="representative-field" hidden
+                  >Representante legal *<input
+                    id="representative"
+                    placeholder="Nome de quem assinará pela empresa"
+                    autocomplete="off"
+                  /><small
+                    >Identificação e poderes serão definidos com o
+                    modelo.</small
+                  ></label
+                >
+              </div>
+            </section>
+            <section
+              class="editor-body"
+              data-page="1"
+              hidden
+              aria-labelledby="uc-title"
+            >
+              <div class="eyebrow">Novo contrato · etapa 2</div>
+              <h2 id="uc-title" tabindex="-1">
+                Quais unidades fazem parte da venda?
+              </h2>
+              <p id="uc-help">
+                Informe uma ou mais UCs de Goiás e o desconto contratado.
+              </p>
+              <div id="uc-list" class="uc-list"></div>
+              <button id="add-uc">+ Adicionar outra UC</button>
+              <div class="fields" style="margin-top: 20px">
+                <label
+                  >Desconto contratado (%) *
+                  <input
+                    id="discount"
+                    inputmode="decimal"
+                    placeholder="Ex.: 23"
+                    autocomplete="off"
+                  />
+                  <small>Um percentual para todas as UCs desta versão.</small>
+                </label>
+              </div>
+              <div class="notice">
+                A usina não faz parte deste contrato. Ela será vinculada depois
+                pelos analistas de energia, no processo de rateio.
+              </div>
+            </section>
+            <section
+              class="editor-body"
+              data-page="2"
+              hidden
+              aria-labelledby="docs-title"
+            >
+              <div class="eyebrow">Novo contrato · etapa 3</div>
+              <h2 id="docs-title" tabindex="-1">Documentos do pacote</h2>
+              <p>
+                Somente os documentos da região escolhida serão preenchidos e
+                assinados.
+              </p>
+              <div id="document-grid" class="document-grid"></div>
+              <div class="upload">
+                <strong>Documento com foto *</strong>
+                <p>Legível e completo. Acesso restrito à equipe autorizada.</p>
+                <button id="simulate-file">Simular documento anexado</button>
+                <p id="file-status" role="status" hidden>
+                  Exemplo anexado · aguardando conferência. Nenhum arquivo foi
+                  recebido.
+                </p>
+              </div>
+              <div class="notice">
+                Anexar um documento não confirma a identidade. O envio depende
+                da conferência e das regras aprovadas.
+              </div>
+            </section>
+            <section
+              class="editor-body"
+              data-page="3"
+              hidden
+              aria-labelledby="review-title"
+            >
+              <div class="eyebrow">Novo contrato · etapa 4</div>
+              <h2 id="review-title" tabindex="-1">Confira antes de enviar</h2>
+              <p>O documento final e os destinatários aparecerão aqui.</p>
+              <div class="review">
+                <div>
+                  <small>Cliente</small
+                  ><strong id="review-name">Não informado</strong>
+                </div>
+                <div>
+                  <small>Região e UCs</small
+                  ><strong id="review-uc">Goiás · nenhuma UC</strong>
+                </div>
+                <div>
+                  <small>E-mail do signatário</small
+                  ><strong id="review-email">Não informado</strong>
+                </div>
+                <div>
+                  <small>Desconto e pacote</small
+                  ><strong id="review-package">Não informado</strong>
+                </div>
+              </div>
+              <div class="notice">
+                A prévia final não poderá conter `XXXX` ou `****`. O envio real
+                dependerá da aprovação dos modelos e da configuração DocuSign.
+                Este protótipo não valida nem cria cadastros.
+              </div>
+            </section>
+            <footer class="editor-footer">
+              <small id="step-note"
+                >Etapa 1 de 4 · demonstração sem salvamento</small
+              >
+              <div>
+                <button id="prev" disabled>Voltar</button
+                ><button id="next" class="primary">Continuar →</button>
+              </div>
+            </footer>
+          </div>
+          <p id="feedback" class="feedback" role="status" hidden></p>
+        </section>
+        <p class="design-note">
+          Proposta Ecosol · minimalista, responsiva e alinhada à identidade
+          solar. Nenhuma integração está ativa nesta demonstração.
+        </p>
+      </main>
+    </div>
+    <script>
+      const byId = (id) => document.getElementById(id);
+      let currentStep = 0;
+      let selectedRegion = "GO";
+      let ucSequence = 0;
+      const packageContent = {
+        GO: {
+          label: "Goiás",
+          help: "Informe uma ou mais UCs de Goiás e o desconto contratado.",
+          company: "Grupo Ecosol Condomínio Solar",
+          distributor: "Equatorial",
+        },
+        DF: {
+          label: "Distrito Federal",
+          help: "Informe código da instalação e código do cliente para cada UC do DF.",
+          company: "Ecosol Energy Hub",
+          distributor: "Neoenergia",
+        },
+      };
+      function updateRemoveButtons() {
+        const rows = document.querySelectorAll("[data-uc-row]");
+        document.querySelectorAll(".remove-uc").forEach((button) => {
+          button.disabled = rows.length === 1;
+          button.title = rows.length === 1 ? "Mantenha ao menos uma UC" : "";
+        });
+      }
+      function createUcRow() {
+        ucSequence += 1;
+        const row = document.createElement("div");
+        row.className = "uc-row";
+        row.dataset.ucRow = String(ucSequence);
+        row.innerHTML =
+          selectedRegion === "GO"
+            ? `<label class="go-field">Número da UC *<input data-uc-value inputmode="numeric" placeholder="UC atual do quadro verde" autocomplete="off"></label>`
+            : `<label>Código da instalação *<input data-uc-value inputmode="numeric" autocomplete="off"></label><label>Código do cliente *<input data-client-code inputmode="numeric" autocomplete="off"></label>`;
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "remove-uc";
+        remove.textContent = "Remover";
+        remove.setAttribute("aria-label", `Remover unidade ${ucSequence}`);
+        remove.addEventListener("click", () => {
+          if (document.querySelectorAll("[data-uc-row]").length > 1) {
+            row.remove();
+            updateRemoveButtons();
+          }
+        });
+        row.append(remove);
+        byId("uc-list").append(row);
+        updateRemoveButtons();
+      }
+      function renderPackage() {
+        document.querySelectorAll("[data-region]").forEach((button) => {
+          button.setAttribute(
+            "aria-pressed",
+            String(button.dataset.region === selectedRegion),
+          );
+        });
+        byId("uc-help").textContent = packageContent[selectedRegion].help;
+        byId("uc-list").replaceChildren();
+        createUcRow();
+        const region = packageContent[selectedRegion];
+        byId("document-grid").innerHTML = [
+          ["Contrato", `${region.company} · ${region.distributor}`],
+          ["Procuração", `Modelo exclusivo de ${region.label}`],
+          ["Convênio de utilização", `Modelo exclusivo de ${region.label}`],
+        ]
+          .map(
+            ([title, detail]) =>
+              `<div class="document-card"><strong>${title}</strong><small>${detail}</small></div>`,
+          )
+          .join("");
+      }
+      function updateReview() {
+        const units = [...document.querySelectorAll("[data-uc-value]")]
+          .map((input) => input.value.trim())
+          .filter(Boolean);
+        byId("review-name").textContent =
+          byId("name").value.trim() || "Não informado";
+        byId("review-uc").textContent =
+          `${packageContent[selectedRegion].label} · ${
+            units.length ? units.join(", ") : "nenhuma UC"
+          }`;
+        byId("review-email").textContent =
+          byId("email").value.trim() || "Não informado";
+        const discount = byId("discount").value.trim();
+        byId("review-package").textContent = `${
+          discount ? `${discount}%` : "desconto não informado"
+        } · 3 famílias documentais`;
+      }
+      function showStep(step, focus = true) {
+        currentStep = step;
+        document.querySelectorAll("[data-page]").forEach((page) => {
+          page.hidden = Number(page.dataset.page) !== step;
+        });
+        document.querySelectorAll("[data-step]").forEach((button) => {
+          if (Number(button.dataset.step) === step)
+            button.setAttribute("aria-current", "step");
+          else button.removeAttribute("aria-current");
+        });
+        byId("prev").disabled = step === 0;
+        byId("next").textContent =
+          step === 3 ? "Simular conclusão" : "Continuar →";
+        byId("step-note").textContent =
+          `Etapa ${step + 1} de 4 · demonstração sem salvamento`;
+        byId("feedback").hidden = true;
+        updateReview();
+        if (focus) document.querySelector(`[data-page="${step}"] h2`).focus();
+      }
+      byId("new-contract").addEventListener("click", () => {
+        byId("listing").hidden = true;
+        byId("editor").hidden = false;
+        showStep(0);
+      });
+      byId("back-list").addEventListener("click", () => {
+        byId("editor").hidden = true;
+        byId("listing").hidden = false;
+        byId("new-contract").focus();
+      });
+      document
+        .querySelectorAll("[data-step]")
+        .forEach((button) =>
+          button.addEventListener("click", () =>
+            showStep(Number(button.dataset.step)),
+          ),
+        );
+      byId("prev").addEventListener("click", () =>
+        showStep(Math.max(0, currentStep - 1)),
+      );
+      byId("next").addEventListener("click", () => {
+        if (currentStep < 3) showStep(currentStep + 1);
+        else {
+          byId("feedback").textContent =
+            "Simulação concluída. Nenhum cliente foi cadastrado e nenhum contrato foi enviado.";
+          byId("feedback").hidden = false;
+        }
+      });
+      function changeType(isCompany) {
+        byId("pf").setAttribute("aria-pressed", String(!isCompany));
+        byId("pj").setAttribute("aria-pressed", String(isCompany));
+        byId("document-label").textContent = isCompany ? "CNPJ *" : "CPF *";
+        byId("name-label").textContent = isCompany
+          ? "Razão social *"
+          : "Nome completo *";
+        byId("representative-field").hidden = !isCompany;
+      }
+      byId("pf").addEventListener("click", () => changeType(false));
+      byId("pj").addEventListener("click", () => changeType(true));
+      document.querySelectorAll("[data-region]").forEach((button) => {
+        button.addEventListener("click", () => {
+          selectedRegion = button.dataset.region;
+          renderPackage();
+        });
+      });
+      byId("add-uc").addEventListener("click", createUcRow);
+      byId("simulate-file").addEventListener("click", () => {
+        byId("file-status").hidden = false;
+      });
+      function filterExamples() {
+        const term = byId("search").value.toLocaleLowerCase("pt-BR").trim();
+        const status = byId("filter").value;
+        let visible = 0;
+        document.querySelectorAll(".contract-row").forEach((row) => {
+          row.hidden =
+            !row.textContent.toLocaleLowerCase("pt-BR").includes(term) ||
+            Boolean(status && row.dataset.status !== status);
+          if (!row.hidden) visible += 1;
+        });
+        byId("empty").hidden = visible !== 0;
+      }
+      byId("search").addEventListener("input", filterExamples);
+      byId("filter").addEventListener("change", filterExamples);
+      renderPackage();
+      const previewParams = new URLSearchParams(window.location.search);
+      if (previewParams.get("preview") === "editor") {
+        byId("listing").hidden = true;
+        byId("editor").hidden = false;
+        const previewStep = Math.min(
+          3,
+          Math.max(0, Number(previewParams.get("step")) || 0),
+        );
+        showStep(previewStep, false);
+      }
+    </script>
+  </body>
+</html>
