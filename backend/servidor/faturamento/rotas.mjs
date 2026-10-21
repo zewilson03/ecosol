@@ -17,6 +17,7 @@ import {
   chaveUsina,
   conferirVinculoComAprovadas,
   modalidadeVigenteDaUsina,
+  saidaDaCarteiraNaCompetencia,
   usinaDaUnidadeNaCompetencia,
 } from "./vinculosUsinas.mjs";
 import {
@@ -134,7 +135,7 @@ function listarUnidades() {
   const banco = obterBanco();
   return banco
     .prepare(
-      "SELECT u.*, s.nome AS usina_nome, COALESCE(c.name,o.nome,p.nome) AS cliente_nome, o.referencia_interna AS cliente_referencia_interna FROM faturamento_unidades u LEFT JOIN usinas s ON s.id=u.usina_id LEFT JOIN customers c ON c.id=u.cliente_id LEFT JOIN faturamento_clientes_operacionais o ON o.id=u.cliente_operacional_id LEFT JOIN faturamento_clientes_provisorios p ON p.id=u.cliente_provisorio_id ORDER BY u.nome, u.uc",
+      "SELECT u.*, s.nome AS usina_nome, COALESCE(c.name,o.nome,p.nome) AS cliente_nome, o.referencia_interna AS cliente_referencia_interna, (SELECT json_object('inicio',sc.inicio,'destino_externo',sc.destino_externo) FROM faturamento_saidas_carteira sc WHERE sc.unidade_id=u.id ORDER BY sc.inicio DESC LIMIT 1) AS saida_carteira FROM faturamento_unidades u LEFT JOIN usinas s ON s.id=u.usina_id LEFT JOIN customers c ON c.id=u.cliente_id LEFT JOIN faturamento_clientes_operacionais o ON o.id=u.cliente_operacional_id LEFT JOIN faturamento_clientes_provisorios p ON p.id=u.cliente_provisorio_id ORDER BY u.nome, u.uc",
     )
     .all()
     .map((u) => {
@@ -153,6 +154,7 @@ function listarUnidades() {
         });
       return {
         ...u,
+        saida_carteira: u.saida_carteira ? JSON.parse(u.saida_carteira) : null,
         ucs_antigas: banco
           .prepare(
             "SELECT uc FROM faturamento_unidades_aliases WHERE unidade_id=? ORDER BY id DESC",
@@ -1420,6 +1422,12 @@ function montarCalculo(d, dados = d.dados) {
     .get(uc, uc);
   if (!unidade)
     falhar("Cadastre esta unidade em Clientes → Unidades e contratos.");
+  const saidaCarteira = saidaDaCarteiraNaCompetencia(banco, unidade.id, mes);
+  if (saidaCarteira)
+    falhar(
+      `UC fora da carteira operacional da Ecosol desde ${saidaCarteira.inicio} (destino: ${saidaCarteira.destino_externo}).`,
+      409,
+    );
   if (unidade.cliente_provisorio_id !== null)
     falhar(
       "Cadastro provisório: confirme CPF/CNPJ, e-mail e cliente do portal antes de calcular uma cobrança.",

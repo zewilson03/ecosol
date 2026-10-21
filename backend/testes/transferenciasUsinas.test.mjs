@@ -303,6 +303,50 @@ try {
     201,
     JSON.stringify(modalidadeDestinoSemFaturaAprovada.dados),
   );
+  const previaSaida = await chamar(
+    "/usinas/transferencias/saidas-externas/previa",
+    {
+      unidade: { id: uc4, versao: 2 },
+      inicio: mes,
+      data_efetiva: `${mes}-02`,
+      destino_externo: "Consórcio externo",
+    },
+  );
+  assert.equal(previaSaida.status, 200, JSON.stringify(previaSaida.dados));
+  const chaveSaida = randomUUID();
+  const saida = await chamar(
+    "/usinas/transferencias/saidas-externas/confirmar",
+    {
+      unidade: { id: uc4, versao: 2 },
+      inicio: mes,
+      data_efetiva: `${mes}-02`,
+      destino_externo: "Consórcio externo",
+      chave: chaveSaida,
+      confirmado: true,
+    },
+  );
+  assert.equal(saida.status, 201, JSON.stringify(saida.dados));
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT destino_externo FROM faturamento_saidas_carteira WHERE unidade_id=?",
+      )
+      .get(uc4).destino_externo,
+    "Consórcio externo",
+  );
+  assert.equal(
+    (
+      await chamar("/usinas/transferencias/saidas-externas/confirmar", {
+        unidade: { id: uc4, versao: 2 },
+        inicio: mes,
+        data_efetiva: `${mes}-02`,
+        destino_externo: "Consórcio externo",
+        chave: chaveSaida,
+        confirmado: true,
+      })
+    ).dados.ja_concluida,
+    true,
+  );
   assert.equal(
     banco.prepare("PRAGMA integrity_check").get().integrity_check,
     "ok",

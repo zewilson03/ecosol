@@ -3,6 +3,7 @@ import { identificarUsinaPorGeracao } from "./identificadoresUsinas.mjs";
 import {
   chaveCanonicaUsina,
   modalidadeVigenteDaUsina,
+  saidaDaCarteiraNaCompetencia,
   usinaDaUnidadeNaCompetencia,
 } from "./vinculosUsinas.mjs";
 
@@ -97,6 +98,8 @@ export function sincronizarVinculoDaGeradora(
     .prepare("SELECT * FROM faturamento_unidades WHERE id=?")
     .get(unidade.id);
   if (!unidadeAtual) return { alterado: false, motivo: "unidade_ausente" };
+  if (saidaDaCarteiraNaCompetencia(banco, unidadeAtual.id, competencia))
+    return { alterado: false, motivo: "fora_da_carteira" };
   const destinoId = identificacao.usina.id;
   const vigenteAntes = usinaDaUnidadeNaCompetencia(
     banco,

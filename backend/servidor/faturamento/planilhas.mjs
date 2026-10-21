@@ -481,6 +481,18 @@ export function prepararImportacao(abas, config, banco) {
         .prepare("SELECT * FROM faturamento_unidades WHERE uc=?")
         .get(item.unidade.uc);
       if (existente) {
+        const saida = banco
+          .prepare(
+            `SELECT inicio,destino_externo FROM faturamento_saidas_carteira
+             WHERE unidade_id=? AND inicio<=? ORDER BY inicio DESC LIMIT 1`,
+          )
+          .get(existente.id, item.contrato.inicio);
+        if (saida) {
+          item.status = "Conflito";
+          item.mensagem = `UC fora da carteira operacional da Ecosol desde ${saida.inicio} (destino: ${saida.destino_externo}).`;
+          linhas.push(item);
+          continue;
+        }
         const contrato = banco
           .prepare(
             "SELECT * FROM faturamento_contratos WHERE unidade_id=? AND inicio=?",
