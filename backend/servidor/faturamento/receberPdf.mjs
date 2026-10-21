@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { obterBanco } from "../bancoDeDados.mjs";
 import { lerPdf } from "./extracao.mjs";
+import { normalizarDadosFinanceiros } from "./normalizacaoFinanceira.mjs";
 import {
   preencherDadosPorGeradora,
   sincronizarVinculoDaGeradora,
@@ -75,6 +76,15 @@ export async function receberPdf({ arquivo, nome, lote, ator, origem }) {
   let extracao;
   try {
     extracao = await lerPdf(arquivo);
+    const normalizacao = normalizarDadosFinanceiros(extracao.dados, {
+      origem: `pdf:${origem}`,
+      tipo: "texto",
+    });
+    extracao = {
+      ...extracao,
+      dados: normalizacao.dados,
+      normalizacao_financeira: normalizacao.registros,
+    };
   } catch {
     registrar({
       hash,

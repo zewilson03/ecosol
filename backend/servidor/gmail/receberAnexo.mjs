@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { obterBanco } from "../bancoDeDados.mjs";
 import { lerPdf } from "../faturamento/extracao.mjs";
+import { normalizarDadosFinanceiros } from "../faturamento/normalizacaoFinanceira.mjs";
 
 const LIMITE_PDF = 10 * 1024 * 1024;
 
@@ -31,6 +32,15 @@ export async function receberAnexoGmail({
   let extracao;
   try {
     extracao = await ler(arquivo);
+    const normalizacao = normalizarDadosFinanceiros(extracao.dados, {
+      origem: "pdf:gmail",
+      tipo: "texto",
+    });
+    extracao = {
+      ...extracao,
+      dados: normalizacao.dados,
+      normalizacao_financeira: normalizacao.registros,
+    };
   } catch {
     throw new PdfGmailInvalido("pdf_ilegivel");
   }

@@ -1,6 +1,7 @@
 import { Worker } from "node:worker_threads";
 import ExcelJS from "exceljs";
 import Decimal from "decimal.js";
+import { normalizarDecimalImportado } from "./normalizacaoFinanceira.mjs";
 import { validarContrato, validarUnidade, falhar } from "./regras.mjs";
 import { apenasDigitos, cpfValidoParaCadastro } from "../validacaoDeCpf.mjs";
 import { validarContatoCliente } from "../validacaoDeContato.mjs";
@@ -236,7 +237,9 @@ export function analisarEstruturaMensal(abas) {
     );
     const energia = (linha[4]?.valor ?? "").replace(",", ".");
     return (
-      valores.every((valor) => !valor) || !energia || Number(energia) === 0
+      valores.every((valor) => !valor) ||
+      !energia ||
+      /^0+(?:\.0+)?$/.test(energia)
     );
   }).length;
   const ucs = dados
@@ -328,7 +331,7 @@ export function sugerirMapeamento(cabecalho) {
   }
   return mapa;
 }
-function lerCampo(celula, chave) {
+function lerCampo(celula, chave, registros, origem) {
   if (!celula) return "";
   if (["formula", "erro"].includes(celula.tipo))
     throw new Error(
@@ -339,6 +342,19 @@ function lerCampo(celula, chave) {
     if (celula.tipo === "percentual")
       valor = new Decimal(valor).times(100).toFixed();
     else valor = valor.replace(/\s*%$/, "");
+    const resultado = normalizarDecimalImportado(valor, {
+      origem: origem ?? "planilha:desconto",
+      tipo: celula.tipo,
+      casas: 6,
+    });
+    if (registros)
+      registros.desconto = {
+        ...resultado.registro,
+        bruto: celula.valor,
+        valor_convertido: valor,
+        unidade_origem: celula.tipo === "percentual" ? "fracao" : "percentual",
+      };
+    valor = resultado.valor;
   }
   if (chave === "inicio") {
     if (/^20\d{2}-\d{2}-\d{2}$/.test(valor)) valor = valor.slice(0, 7);
@@ -389,6 +405,7 @@ export function prepararImportacao(abas, config, banco) {
     const errosLeitura = [];
     const correcoes = config.correcoes?.[r + 1] ?? {};
     item.complementos = {};
+    item.normalizacao_financeira = {};
     for (const campo of camposImportacao) {
       const chave = campo.chave;
       try {
@@ -401,10 +418,17 @@ export function prepararImportacao(abas, config, banco) {
           raw[chave] = lerCampo(
             { valor: correcoes[chave], tipo: "texto" },
             chave,
+            item.normalizacao_financeira,
+            "correcao_manual",
           );
           item.complementos[chave] = raw[chave];
         } else if (Number.isInteger(mapa[chave])) {
-          raw[chave] = lerCampo(cells[mapa[chave]], chave);
+          raw[chave] = lerCampo(
+            cells[mapa[chave]],
+            chave,
+            item.normalizacao_financeira,
+            `planilha:${aba.nome}:linha:${r + 1}:coluna:${mapa[chave] + 1}`,
+          );
         } else {
           const padrao = ["modalidade", "inicio"].includes(chave)
             ? config.padroes?.[chave]
@@ -591,6 +615,8 @@ export async function exportarCalculos(registros) {
     "Fatura de referência ID",
     "Versão do cálculo",
     "Usina no cálculo",
+    "Juros Equatorial abatidos (R$)",
+    "Multa Equatorial abatida (R$)",
   ]);
   for (const r of registros) {
     const m = JSON.parse(r.memoria),
@@ -609,27 +635,31 @@ export async function exportarCalculos(registros) {
       Number(e.bandeira),
       Number(m.tarifa_completa),
       Number(e.desconto),
-      m.consumo_centavos / 100,
-      m.equatorial_centavos / 100,
-      m.ajuste_centavos / 100,
-      m.total_centavos / 100,
+      new Decimal(m.consumo_centavos).div(100).toNumber(),
+      new Decimal(m.equatorial_centavos).div(100).toNumber(),
+      new Decimal(m.ajuste_centavos).div(100).toNumber(),
+      new Decimal(m.total_centavos).div(100).toNumber(),
       m.vencimento_equatorial,
       m.vencimento_ecosol,
       m.fonte.documento_id,
       m.regra,
       m.unidade.usina_nome ?? "Não registrada nesta memória",
+      new Decimal(m.juros_centavos ?? 0).div(100).toNumber(),
+      new Decimal(m.multa_centavos ?? 0).div(100).toNumber(),
     ]);
   }
   formatar(
     s,
     [
       15, 32, 23, 22, 16, 28, 34, 14, 23, 26, 23, 26, 18, 26, 23, 23, 23, 24,
-      24, 24, 20, 32,
+      24, 24, 20, 32, 25, 25,
     ],
   );
   [3, 4, 5, 18, 19].forEach((c) => (s.getColumn(c).numFmt = "@"));
-  [10, 11, 12].forEach((c) => (s.getColumn(c).numFmt = "0.000000000"));
-  [13, 14, 15, 16, 17].forEach((c) => (s.getColumn(c).numFmt = "#,##0.00"));
+  [10, 11, 12].forEach((c) => (s.getColumn(c).numFmt = "0.000000"));
+  s.getColumn(13).numFmt = "0.000000";
+  [14, 15, 16, 17].forEach((c) => (s.getColumn(c).numFmt = "#,##0.00"));
+  [23, 24].forEach((c) => (s.getColumn(c).numFmt = "#,##0.00"));
   const info = wb.addWorksheet("Sobre o relatório");
   [
     "Demonstrativo interno — sem validade para pagamento",

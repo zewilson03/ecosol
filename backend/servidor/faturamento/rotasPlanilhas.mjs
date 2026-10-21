@@ -355,6 +355,7 @@ rotasPlanilhas.post("/:id/confirmar", exigirNivel(2), (req, res) => {
             aba: previa.aba,
             cabecalho: previa.cabecalho,
             complementos_no_sistema: l.complementos ?? {},
+            normalizacao_financeira: l.normalizacao_financeira ?? {},
             unidade: u,
             contrato: c,
             cliente: l.cliente ?? { acao: "sem_cadastro" },

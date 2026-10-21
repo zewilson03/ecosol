@@ -11,11 +11,23 @@ export type Memoria = {
     total_equatorial: string;
     ajuste_gdii: string;
     modalidade: string;
+    juros?: string;
+    multa?: string;
   };
   tarifa_completa: string;
+  consumo_bruto?: string;
+  total_bruto?: string;
+  precisao?: {
+    tarifa: number;
+    moeda: number;
+    arredondamento: string;
+    etapa: string;
+  };
   consumo_centavos: number;
   equatorial_centavos: number;
   ajuste_centavos: number;
+  juros_centavos?: number;
+  multa_centavos?: number;
   total_centavos: number;
   unidade: Unidade;
   contrato: Pick<Contrato, "modalidade" | "desconto" | "inicio"> & {

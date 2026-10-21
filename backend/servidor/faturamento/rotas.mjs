@@ -7,8 +7,9 @@ import { validarContatoCliente } from "../validacaoDeContato.mjs";
 import { lerPdf } from "./extracao.mjs";
 import { identificarUsinaPorGeracao } from "./identificadoresUsinas.mjs";
 import { receberPdf } from "./receberPdf.mjs";
+import { listarLotes } from "./lotes.mjs";
 import { reanalisarFatura } from "./reanalisar.mjs";
-import { registrarHistorico } from "./registros.mjs";
+import { registrarHistorico, registrarRecebimentoPdf } from "./registros.mjs";
 import { rotasPlanilhas } from "./rotasPlanilhas.mjs";
 import { rotasVinculosUsinas } from "./rotasVinculosUsinas.mjs";
 import { rotasTransferenciasUsinas } from "./rotasTransferenciasUsinas.mjs";
@@ -349,7 +350,7 @@ router.post("/cadastro-integrado", exigirNivel(2), (req, res) => {
             valor: decimal(
               entrada.desconto,
               "o desconto percentual da UC",
-              2,
+              6,
               "100",
             ),
             inicio: competencia(entrada.desconto_inicio),
@@ -453,7 +454,7 @@ router.post("/cadastro-integrado", exigirNivel(2), (req, res) => {
     const desconto = decimal(
       entrada.desconto,
       "o desconto percentual da UC",
-      2,
+      6,
       "100",
     );
     const inicio = competencia(entrada.desconto_inicio);
@@ -721,7 +722,7 @@ router.post("/unidades", exigirNivel(2), (req, res) => {
   const desconto = decimal(
     req.body.desconto,
     "o desconto percentual da UC",
-    2,
+    6,
     "100",
   );
   const descontoInicio = competencia(
@@ -883,7 +884,7 @@ router.post("/unidades/:id/descontos", exigirNivel(3), (req, res) => {
   const desconto = decimal(
     req.body.desconto,
     "o desconto percentual da UC",
-    2,
+    6,
     "100",
   );
   transacao(() => {
@@ -961,6 +962,134 @@ router.post("/unidades/:id/contratos", exigirNivel(3), (req, res) => {
     historico(req, "Nova vigência contratual", c, null, numero);
   });
   res.status(201).json({ sucesso: true });
+});
+
+router.get("/lotes", (req, res) => {
+  res.set("Cache-Control", "no-store").json(
+    listarLotes(obterBanco(), {
+      avancado: req.administrador?.nivel >= 3,
+      avaliar: (numero) => {
+        const d = documento(numero);
+        const memoria = d.memoria ?? montarCalculo(d);
+        if (
+          obterBanco()
+            .prepare(
+              "SELECT 1 FROM faturamento_documentos WHERE unidade_id=? AND competencia=? AND id<>? AND excluido_em IS NULL",
+            )
+            .get(memoria.unidade.id, memoria.competencia, d.id)
+        )
+          falhar("Já existe cobrança desta UC e competência.", 409);
+        const unidade = obterBanco()
+          .prepare("SELECT * FROM faturamento_unidades WHERE id=?")
+          .get(memoria.unidade.id);
+        const apta = Boolean(
+          unidade?.cliente_id &&
+          !unidade.cliente_provisorio_id &&
+          !unidade.cliente_operacional_id &&
+          !unidade.pendencia_cadastro,
+        );
+        return {
+          apta,
+          versao: d.versao,
+          status: d.status,
+          valor_centavos: apta && d.memoria ? d.memoria.total_centavos : 0,
+          motivo: !apta
+            ? "Cadastro definitivo incompleto; emissão bloqueada."
+            : d.status === APROVADA
+              ? "Aprovada internamente; emissão depende de aprovação bancária."
+              : d.memoria
+                ? "Calculada; aguarda aprovação humana."
+                : "Pronta para conferência e cálculo; ainda sem valor confirmado.",
+        };
+      },
+    }),
+  );
+});
+
+router.post("/lotes/processar", exigirNivel(2), async (req, res) => {
+  const { lote, itens, conferido } = req.body ?? {};
+  texto(lote, "o lote", 80);
+  if (
+    conferido !== true ||
+    !Array.isArray(itens) ||
+    !itens.length ||
+    itens.length > 100 ||
+    itens.some(
+      (i) =>
+        !i ||
+        !Number.isSafeInteger(i.id) ||
+        i.id < 1 ||
+        !Number.isSafeInteger(i.versao) ||
+        i.versao < 1,
+    ) ||
+    new Set(itens.map((i) => i.id)).size !== itens.length
+  )
+    falhar("Confirme a conferência e selecione de 1 a 100 faturas distintas.");
+  const resultados = [];
+  for (const item of itens) {
+    try {
+      const pertence = obterBanco()
+        .prepare(
+          `SELECT 1 FROM faturamento_recebimentos_pdf
+        WHERE lote=? AND documento_id=? AND codigo<>'duplicada'`,
+        )
+        .get(lote, id(item.id));
+      if (!pertence)
+        falhar("Fatura não pertence ao recebimento original deste lote.", 409);
+      const d = documento(item.id);
+      if (d.versao !== item.versao)
+        falhar("Fatura alterada; atualize o lote.", 409);
+      if (d.status === APROVADA || d.status === "Calculada") {
+        resultados.push({
+          id: item.id,
+          sucesso: true,
+          motivo: "Cálculo existente preservado.",
+        });
+        continue;
+      }
+      const memoria = montarCalculo(d);
+      const unidade = obterBanco()
+        .prepare("SELECT * FROM faturamento_unidades WHERE id=?")
+        .get(memoria.unidade.id);
+      if (
+        !unidade?.cliente_id ||
+        unidade.cliente_provisorio_id ||
+        unidade.cliente_operacional_id ||
+        unidade.pendencia_cadastro
+      )
+        falhar(
+          "Cadastro definitivo incompleto; revise a fatura individualmente.",
+          409,
+        );
+      await calcularDocumento(
+        {
+          ...req,
+          params: { id: item.id },
+          body: {
+            versao: item.versao,
+            conferido: true,
+          },
+        },
+        { json() {} },
+      );
+      resultados.push({
+        id: item.id,
+        sucesso: true,
+        motivo: "Calculada; aguarda aprovação humana.",
+      });
+    } catch (erro) {
+      resultados.push({
+        id: item.id,
+        sucesso: false,
+        motivo: /UNIQUE constraint/.test(erro.message)
+          ? "Já existe cobrança desta UC e competência."
+          : erro.status
+            ? erro.message
+            : "Falha ao processar; atualize o lote antes de tentar novamente.",
+      });
+    }
+  }
+  res.json({ resultados });
 });
 
 router.get("/documentos", (_req, res) => {
@@ -1161,6 +1290,25 @@ router.post(
     res.status(201).json(documento(resultado.documentoId));
   },
 );
+router.use("/documentos", (erro, req, res, next) => {
+  if (erro.type !== "entity.too.large") return next(erro);
+  try {
+    registrarRecebimentoPdf({
+      nome: texto(req.query.nome, "o nome", 200),
+      lote: texto(req.query.lote, "o lote", 80),
+      responsavel: req.administrador.nome,
+      origem: "manual",
+      resultado: "Erro",
+      codigo: "limite_pdf",
+      motivo: "PDF excede o limite de 10 MB.",
+    });
+  } catch {
+    /* Entrada sem identificação válida não constitui recebimento de lote. */
+  }
+  res
+    .status(413)
+    .json({ erro: "PDF excede o limite de 10 MB; recebimento rejeitado." });
+});
 
 const campos = [
   "uc",
@@ -1174,6 +1322,8 @@ const campos = [
   "tarifa_total",
   "tarifa_manual",
   "total_equatorial",
+  "juros",
+  "multa",
   "ajuste_gdii",
   "vencimento_equatorial",
   "vencimento_ecosol",
@@ -1184,6 +1334,14 @@ const campos = [
 function normalizarDadosConferencia(entrada) {
   if (!entrada || typeof entrada !== "object" || Array.isArray(entrada))
     falhar("Informe os dados da fatura.");
+  // Não interpretar um pedido de outro modelo como fórmula fixa silenciosamente.
+  // Clássico validado no motor, mas ativação depende do vínculo operacional das células.
+  if (entrada.modelo_calculo && entrada.modelo_calculo !== "fixa")
+    falhar("Modelo ainda não habilitado na conferência operacional.");
+  if (entrada.ajustes_pix !== undefined)
+    falhar(
+      "PIX depende de referência de origem e consumo homologada; não habilitado.",
+    );
   const dados = {};
   for (const campo of campos) {
     dados[campo] = String(entrada[campo] ?? "").trim();
@@ -1441,7 +1599,7 @@ router.post("/documentos/:id/previa", async (req, res) => {
   });
 });
 
-router.post("/documentos/:id/calcular", exigirNivel(2), async (req, res) => {
+async function calcularDocumento(req, res) {
   const numero = id(req.params.id);
   const anterior = documento(numero);
   conferirVersao(anterior, req.body);
@@ -1464,6 +1622,11 @@ router.post("/documentos/:id/calcular", exigirNivel(2), async (req, res) => {
     const memoria = montarCalculo(d, dados);
     const dadosPersistidos = {
       ...dados,
+      unitario: memoria.entradas.unitario,
+      bandeira: memoria.entradas.bandeira,
+      ...(dados.tarifa_manual === "sim"
+        ? { tarifa_total: memoria.tarifa_completa }
+        : {}),
       modalidade: memoria.contrato.modalidade,
       ajuste_gdii: memoria.entradas.ajuste_gdii,
       vencimento_ecosol:
@@ -1500,7 +1663,8 @@ router.post("/documentos/:id/calcular", exigirNivel(2), async (req, res) => {
     historico(req, "Cálculo conferido", memoria, numero, memoria.unidade.id);
   });
   res.json(documentoCompleto(numero));
-});
+}
+router.post("/documentos/:id/calcular", exigirNivel(2), calcularDocumento);
 
 router.post("/documentos/:id/aprovar", exigirNivel(3), async (req, res) => {
   const numero = id(req.params.id);

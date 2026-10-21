@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
+import Decimal from "decimal.js";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { sugerirVencimentoEcosolSeDefinido } from "./vencimentoEcosol";
 import { unidadeDaFatura } from "./vinculoAutomaticoFatura";
@@ -67,12 +68,12 @@ const campoDaPendencia: Record<string, string> = {
 function somarTarifa(unitario: string, bandeira: string) {
   const converter = (valor: string) => {
     const texto = valor.trim().replace(",", ".");
-    return /^\d+(?:\.\d{1,9})?$/.test(texto) ? Number(texto) : null;
+    return /^\d+(?:\.\d{1,6})?$/.test(texto) ? new Decimal(texto) : null;
   };
   const primeiro = converter(unitario);
   const segundo = converter(bandeira);
   if (primeiro === null || segundo === null) return "";
-  return (primeiro + segundo).toFixed(9).replace(/0+$/, "").replace(/\.$/, "");
+  return primeiro.plus(segundo).toFixed(6);
 }
 
 export default function PreparacaoFaturas() {
@@ -384,25 +385,31 @@ export default function PreparacaoFaturas() {
     setMensagem("");
     const form = e.currentTarget,
       campos = new FormData(form),
-      arquivo = campos.get("pdf") as File;
+      arquivos = campos.getAll("pdf") as File[];
     try {
-      if (!arquivo?.size || arquivo.size > 10 * 1024 * 1024)
-        throw new Error("Selecione um PDF com até 10 MB.");
-      const params = new URLSearchParams({
-        lote: String(campos.get("lote")).trim(),
-        nome: arquivo.name,
-      });
-      const d = await consultarServidor<Documento>(`${base}?${params}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/pdf" },
-        body: arquivo,
-      });
-      mostrar(d);
+      const falhas: string[] = [];
+      for (const arquivo of arquivos) {
+        const params = new URLSearchParams({
+          lote: String(campos.get("lote")).trim(),
+          nome: arquivo.name,
+        });
+        try {
+          const d = await consultarServidor<Documento>(`${base}?${params}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/pdf" },
+            body: arquivo,
+          });
+          mostrar(d);
+        } catch (erro) {
+          falhas.push(`${arquivo.name}: ${(erro as Error).message}`);
+        }
+      }
       consulta.atualizar();
       recebimentos.atualizar();
       setMensagem(
-        "PDF importado. Confira os dados sugeridos antes de calcular.",
+        `${arquivos.length} arquivo(s) enviados. Consulte o lote para conferir os resultados.`,
       );
+      setErro(falhas.join("\n"));
       form.reset();
     } catch (e) {
       setErro((e as Error).message);
@@ -695,13 +702,13 @@ export default function PreparacaoFaturas() {
     )
       return;
     const ajusteAtual = String(dados.ajuste_gdii ?? "").trim();
-    if (ajusteAtual && Number(ajusteAtual.replace(",", ".")) === 0) return;
+    if (ajusteAtual && /^0+(?:[.,]0+)?$/.test(ajusteAtual)) return;
     setDados((anterior) => ({ ...anterior, ajuste_gdii: "0" }));
     setAlterado(true);
   }, [selecionado, alterado, modalidadeInformada, dados.ajuste_gdii]);
   const injecaoInformada = String(dados.injecao ?? "").trim();
   const semInjecao =
-    injecaoInformada !== "" && Number(injecaoInformada.replace(",", ".")) === 0;
+    injecaoInformada !== "" && /^0+(?:[.,]0+)?$/.test(injecaoInformada);
   const descontoVigente = unidade?.descontos
     ?.filter((d) => d.inicio <= (dados.competencia ?? ""))
     .sort((a, b) => b.inicio.localeCompare(a.inicio))[0];
@@ -849,6 +856,7 @@ export default function PreparacaoFaturas() {
               <input
                 name="pdf"
                 type="file"
+                multiple
                 accept="application/pdf,.pdf"
                 required
               />
@@ -1414,6 +1422,18 @@ export default function PreparacaoFaturas() {
                       "Total a pagar Equatorial (R$)",
                       "text",
                       "Ex.: 302,40",
+                    )}
+                    {campo(
+                      "juros",
+                      "Juros da Equatorial a abater (R$)",
+                      "text",
+                      "Zero se não houver",
+                    )}
+                    {campo(
+                      "multa",
+                      "Multa da Equatorial a abater (R$)",
+                      "text",
+                      "Zero se não houver",
                     )}
                   </fieldset>
                   {selecionado.usina_geradora?.numero && (

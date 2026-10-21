@@ -34,7 +34,7 @@ const repo = criarRepositorioGmail(db);
 const pdf = Buffer.from("%PDF-1.4\nPDF de teste sem dados reais\n");
 const ler = async () => ({
   texto: "Fatura de teste",
-  dados: {},
+  dados: { total_equatorial: "36.66", juros: "0.07", multa: "1.49" },
   qualidade: { modo: "automatico" },
 });
 
@@ -126,6 +126,13 @@ try {
   );
 
   const segunda = conta("captura2@gmail.com");
+  const extracaoSalva = JSON.parse(
+    db.prepare("SELECT extracao FROM faturamento_documentos LIMIT 1").get()
+      .extracao,
+  );
+  assert.equal(extracaoSalva.normalizacao_financeira.juros.origem, "pdf:gmail");
+  assert.equal(extracaoSalva.normalizacao_financeira.juros.bruto, "0.07");
+  assert.equal(extracaoSalva.normalizacao_financeira.juros.normalizado, "0.07");
   const anexo2 = enfileirar(segunda, "m2");
   const duplicata = await receberAnexoGmail({
     anexo: anexo2,
