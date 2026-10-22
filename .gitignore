@@ -16,3 +16,4 @@ __pycache__/
 *.p12
 *.key
 *.pem
+/outputs/
