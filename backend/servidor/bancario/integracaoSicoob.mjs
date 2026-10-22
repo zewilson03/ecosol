@@ -11,6 +11,8 @@ import {
   criarCarregadorTokenOAuth,
   criarGerenciadorOAuth,
 } from "./gerenciadorOAuth.mjs";
+import { contratoOAuthSicoob } from "./contratoOAuthSicoob.mjs";
+import { FalhaHttpSicoob } from "./clienteHttpSeguro.mjs";
 
 /**
  * Compõe a integração sem definir nenhum campo ou endpoint do provedor. Os
@@ -18,7 +20,7 @@ import {
  */
 export function criarIntegracaoSicoob({
   variaveis = process.env,
-  contratoOAuth,
+  contratoOAuth = contratoOAuthSicoob,
   contratoCobranca,
   relogio,
   permitirHttpLocal = false,
@@ -79,9 +81,34 @@ export function criarIntegracaoSicoob({
     gerenciadorOAuth: oauth,
     contrato: contratoCobranca,
   });
+  const diagnostico = Object.freeze({
+    async consultarSaude() {
+      const token = await oauth.obter();
+      const resposta = await clienteApi.solicitar({
+        metodo: "GET",
+        caminho: "/health",
+        cabecalhos: { accept: "application/json" },
+        accessToken: token.accessToken,
+        tokenType: token.tokenType,
+      });
+      if (resposta.status < 200 || resposta.status >= 300)
+        throw new FalhaHttpSicoob("SICOOB_HEALTH_RECUSADO", {
+          status: resposta.status,
+          retryAfterMs: resposta.retryAfterMs,
+        });
+      if (
+        !resposta.conteudo ||
+        typeof resposta.conteudo !== "object" ||
+        resposta.conteudo.status !== "UP"
+      )
+        throw new FalhaHttpSicoob("SICOOB_HEALTH_INVALIDO");
+      return Object.freeze({ disponivel: true, status: "UP" });
+    },
+  });
   return Object.freeze({
     adaptador,
     oauth,
+    diagnostico,
     configuracao: resumirConfiguracaoSicoob(configuracao),
   });
 }
