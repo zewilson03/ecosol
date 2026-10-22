@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { obterBanco } from "../bancoDeDados.mjs";
 import { criarAdaptadorSicoobSimulado } from "./adaptadorSimulado.mjs";
 import { FalhaDeIntegracaoBancaria } from "./contrato.mjs";
@@ -40,6 +40,22 @@ function auditarServico(banco, operacaoId, acao, anterior, novo, detalhes) {
        VALUES(?,0,'Serviço bancário',?,?,?,?)`,
     )
     .run(operacaoId, acao, anterior, novo, JSON.stringify(detalhes ?? {}));
+}
+
+function prepararArtefatos(resultado) {
+  if (!resultado?.artefatos) return null;
+  const pdf = resultado.artefatos.pdf_base64
+    ? Buffer.from(resultado.artefatos.pdf_base64, "base64")
+    : null;
+  if (pdf && !pdf.subarray(0, 5).equals(Buffer.from("%PDF-")))
+    return { invalido: true };
+  return {
+    linhaDigitavel: resultado.artefatos.linha_digitavel ?? null,
+    codigoBarras: resultado.artefatos.codigo_barras ?? null,
+    qrCode: resultado.artefatos.qr_code ?? null,
+    pdf,
+    pdfHash: pdf ? createHash("sha256").update(pdf).digest("hex") : null,
+  };
 }
 
 function assumirProxima(banco, executorId, agora) {
@@ -165,11 +181,18 @@ function finalizar(banco, trabalho, resultado, agora) {
 
     let resultadoEfetivo = resultado;
     let provedorId = trabalho.provedor_id ?? null;
-    if (resultado.categoria === "sucesso") {
+    const artefatos = prepararArtefatos(resultado);
+    if (artefatos?.invalido)
+      resultadoEfetivo = {
+        categoria: "resultado_desconhecido",
+        codigo: "SICOOB_PDF_INVALIDO",
+      };
+    if (resultadoEfetivo.categoria === "sucesso") {
       const identificadorBruto =
-        resultado.provedor_id === undefined || resultado.provedor_id === null
+        resultadoEfetivo.provedor_id === undefined ||
+        resultadoEfetivo.provedor_id === null
           ? provedorId
-          : resultado.provedor_id;
+          : resultadoEfetivo.provedor_id;
       const identificadorRecebido = String(identificadorBruto ?? "").trim();
       if (!identificadorRecebido) {
         resultadoEfetivo = {
@@ -203,6 +226,56 @@ function finalizar(banco, trabalho, resultado, agora) {
         } else {
           provedorId = identificadorRecebido;
         }
+      }
+    }
+
+    if (resultadoEfetivo.categoria === "sucesso" && artefatos) {
+      const anterior = banco
+        .prepare(
+          "SELECT * FROM bancario_artefatos_cobranca WHERE operacao_id=?",
+        )
+        .get(trabalho.operacao_id);
+      const divergente =
+        anterior &&
+        [
+          ["linha_digitavel", artefatos.linhaDigitavel],
+          ["codigo_barras", artefatos.codigoBarras],
+          ["qr_code", artefatos.qrCode],
+          ["pdf_sha256", artefatos.pdfHash],
+        ].some(([campo, novo]) =>
+          anterior[campo] != null && novo != null
+            ? String(anterior[campo]) !== String(novo)
+            : false,
+        );
+      if (divergente) {
+        resultadoEfetivo = {
+          categoria: "resultado_desconhecido",
+          codigo: "ARTEFATO_BANCARIO_DIVERGENTE",
+        };
+      } else {
+        banco
+          .prepare(
+            `INSERT INTO bancario_artefatos_cobranca
+             (operacao_id,nosso_numero,linha_digitavel,codigo_barras,qr_code,pdf,pdf_sha256)
+             VALUES(?,?,?,?,?,?,?)
+             ON CONFLICT(operacao_id) DO UPDATE SET
+               nosso_numero=excluded.nosso_numero,
+               linha_digitavel=COALESCE(excluded.linha_digitavel,linha_digitavel),
+               codigo_barras=COALESCE(excluded.codigo_barras,codigo_barras),
+               qr_code=COALESCE(excluded.qr_code,qr_code),
+               pdf=COALESCE(excluded.pdf,pdf),
+               pdf_sha256=COALESCE(excluded.pdf_sha256,pdf_sha256),
+               atualizado_em=CURRENT_TIMESTAMP`,
+          )
+          .run(
+            trabalho.operacao_id,
+            provedorId,
+            artefatos.linhaDigitavel,
+            artefatos.codigoBarras,
+            artefatos.qrCode,
+            artefatos.pdf,
+            artefatos.pdfHash,
+          );
       }
     }
 

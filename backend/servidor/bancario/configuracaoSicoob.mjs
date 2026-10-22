@@ -35,6 +35,16 @@ function validarPar(configuracao, primeiro, segundo, descricao) {
     falhar(`${descricao} deve informar os dois arquivos em conjunto.`);
 }
 
+function inteiroOpcional(ambiente, nome) {
+  const valor = lerTexto(ambiente, nome);
+  if (!valor) return null;
+  if (!/^\d+$/.test(valor) || !Number.isSafeInteger(Number(valor)))
+    falhar(`${nome} deve ser um número inteiro positivo.`);
+  const numero = Number(valor);
+  if (numero <= 0) falhar(`${nome} deve ser um número inteiro positivo.`);
+  return numero;
+}
+
 /**
  * Lê somente o conjunto de variáveis do ambiente selecionado. Nenhum segredo é
  * devolvido pelo resumo público e nenhuma URL oficial é presumida aqui.
@@ -63,6 +73,41 @@ export function obterConfiguracaoSicoob({
     chavePrivadaPath: lerTexto(variaveis, `${prefixo}MTLS_KEY_PATH`),
     chavePrivadaSenha: lerTexto(variaveis, `${prefixo}MTLS_KEY_PASSPHRASE`),
     contratoVersao: lerTexto(variaveis, `${prefixo}CONTRATO_VERSAO`),
+    cobranca: Object.freeze({
+      numeroCliente: inteiroOpcional(
+        variaveis,
+        `${prefixo}COBRANCA_NUMERO_CLIENTE`,
+      ),
+      codigoModalidade: inteiroOpcional(
+        variaveis,
+        `${prefixo}COBRANCA_CODIGO_MODALIDADE`,
+      ),
+      numeroContaCorrente: inteiroOpcional(
+        variaveis,
+        `${prefixo}COBRANCA_NUMERO_CONTA_CORRENTE`,
+      ),
+      codigoEspecieDocumento: lerTexto(
+        variaveis,
+        `${prefixo}COBRANCA_ESPECIE_DOCUMENTO`,
+      ),
+      identificacaoEmissaoBoleto: inteiroOpcional(
+        variaveis,
+        `${prefixo}COBRANCA_IDENTIFICACAO_EMISSAO`,
+      ),
+      identificacaoDistribuicaoBoleto: inteiroOpcional(
+        variaveis,
+        `${prefixo}COBRANCA_IDENTIFICACAO_DISTRIBUICAO`,
+      ),
+      numeroContratoCobranca: inteiroOpcional(
+        variaveis,
+        `${prefixo}COBRANCA_NUMERO_CONTRATO`,
+      ),
+      tipoFormularioImpressaoPDF: inteiroOpcional(
+        variaveis,
+        `${prefixo}COBRANCA_TIPO_FORMULARIO_PDF`,
+      ),
+      gerarPdf: lerTexto(variaveis, `${prefixo}COBRANCA_GERAR_PDF`) === "SIM",
+    }),
   };
 
   validarPar(

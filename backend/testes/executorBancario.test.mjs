@@ -625,6 +625,53 @@ try {
     1,
   );
 
+  const comArtefatos = criarTrabalho("com-artefatos");
+  banco
+    .prepare(
+      `UPDATE bancario_intencoes SET proxima_tentativa_em=?
+       WHERE id<>? AND estado IN ('pendente','resultado_desconhecido')`,
+    )
+    .run(agora + 24 * 60 * 60_000, comArtefatos.intencaoId);
+  const pdfTeste = Buffer.from("%PDF-1.4\nboleto fictício de homologação\n");
+  const executorArtefatos = criarExecutorBancario({
+    banco,
+    executorId: "executor-artefatos",
+    relogio: () => agora,
+    adaptador: {
+      async registrarCobranca() {
+        return {
+          categoria: "sucesso",
+          provedor_id: "987654321",
+          estado: "registrada",
+          codigo: "SICOOB_BOLETO_INCLUIDO",
+          artefatos: {
+            linha_digitavel: "1".repeat(47),
+            codigo_barras: "2".repeat(44),
+            qr_code: "00020101021226890014br.gov.bcb.pix",
+            pdf_base64: pdfTeste.toString("base64"),
+          },
+        };
+      },
+    },
+  });
+  await executorArtefatos.processarUma();
+  assert.equal(operacao(comArtefatos.operacaoId).estado, "registrada");
+  const artefatosPersistidos = banco
+    .prepare(
+      `SELECT nosso_numero,linha_digitavel,codigo_barras,qr_code,pdf,pdf_sha256
+       FROM bancario_artefatos_cobranca WHERE operacao_id=?`,
+    )
+    .get(comArtefatos.operacaoId);
+  assert.equal(artefatosPersistidos.nosso_numero, "987654321");
+  assert.equal(artefatosPersistidos.linha_digitavel, "1".repeat(47));
+  assert.equal(artefatosPersistidos.codigo_barras, "2".repeat(44));
+  assert.equal(
+    artefatosPersistidos.qr_code,
+    "00020101021226890014br.gov.bcb.pix",
+  );
+  assert.deepEqual(Buffer.from(artefatosPersistidos.pdf), pdfTeste);
+  assert.equal(artefatosPersistidos.pdf_sha256.length, 64);
+
   assert.ok(
     banco.prepare("SELECT COUNT(*) AS n FROM bancario_tentativas").get().n >= 8,
   );

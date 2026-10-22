@@ -39,7 +39,7 @@ O banco local consultado em 19/10/2026 ainda não possui contas nominais para Vi
 
 ## Autoaprovação excepcional do Proprietário
 
-Por decisão expressa do responsável pelo projeto, o Proprietário pode preparar e aprovar a própria operação bancária. Isso reduz a segregação de funções e aumenta o risco de erro ou fraude caso essa conta seja comprometida. A exceção é restrita ao perfil Proprietário, exige MFA e confirmação bancária como qualquer ação sensível, fica registrada em tabela e auditoria próprias, e perde validade antes do envio se o perfil Proprietário for revogado. A regra de preparador diferente do aprovador permanece intacta para todos os demais usuários. O executor Sicoob continua pausado até a homologação e configuração bancária.
+Por decisão expressa do responsável pelo projeto, **somente o Proprietário** pode preparar e aprovar a própria operação bancária. Isso reduz a segregação de funções e aumenta o risco de erro ou fraude caso essa conta seja comprometida. A exceção exige MFA, confirmação bancária recente e aceite explícito, fica registrada em tabela e auditoria próprias, e perde validade antes do envio se o perfil Proprietário for revogado. Administrador da integração, Operador financeiro, Aprovador financeiro, Guardião e demais níveis continuam obrigados a usar aprovador distinto. O executor Sicoob continua pausado até a homologação e configuração bancária.
 
 ## Proteção resistente a phishing
 

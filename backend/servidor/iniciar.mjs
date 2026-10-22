@@ -11,6 +11,7 @@ import { rotasGmail, sincronizadorGmail } from "./gmail/rotas.mjs";
 import { criarRepositorioGmail } from "./gmail/repositorio.mjs";
 import { protecaoHttp, tratarErroHttp } from "./segurancaHttp.mjs";
 import { iniciarExecutorBancarioSeConfigurado } from "./bancario/executor.mjs";
+import { obterConfiguracaoRede } from "./configuracaoRede.mjs";
 
 const pastaDoBackend = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const pastaDoProjeto = resolve(pastaDoBackend, "..");
@@ -18,10 +19,10 @@ const pastaDoFrontend = join(pastaDoProjeto, "frontend");
 const pastaCompilada = join(pastaDoFrontend, "dist");
 
 const aplicacao = express();
-const porta = Number(process.env.PORT ?? 3000);
+const { porta, host, appUrl } = obterConfiguracaoRede();
 
 aplicacao.disable("x-powered-by");
-aplicacao.use(protecaoHttp(process.env.APP_URL ?? `http://localhost:${porta}`));
+aplicacao.use(protecaoHttp(appUrl));
 aplicacao.use(express.urlencoded({ extended: false, limit: "20kb" }));
 aplicacao.use(
   "/api/admin/faturamento/planilhas",
@@ -53,8 +54,8 @@ aplicacao.get("/{*caminho}", (_requisicao, resposta) => {
 
 aplicacao.use(tratarErroHttp);
 
-aplicacao.listen(porta, "127.0.0.1", () => {
-  console.log(`Ecosol disponível em http://localhost:${porta}`);
+aplicacao.listen(porta, host, () => {
+  console.log(`Ecosol disponível em ${appUrl}`);
 });
 
 function consultarGmail() {

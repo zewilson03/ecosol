@@ -175,6 +175,21 @@ function linhaCompleta(banco, operacaoId) {
          ORDER BY iniciado_em DESC,id DESC`,
       )
       .all(operacao.id),
+    conciliacoes: banco
+      .prepare(
+        `SELECT estado,estado_anterior,estado_observado,codigo,tentativa,
+                COALESCE(solicitado_por_nome,'Serviço bancário') AS solicitado_por,
+                iniciado_em,concluido_em
+         FROM bancario_reconciliacoes_cobranca WHERE operacao_id=?
+         ORDER BY tentativa DESC,iniciado_em DESC`,
+      )
+      .all(operacao.id)
+      .map((item) => ({
+        ...item,
+        codigo: /^[A-Z0-9_]{1,80}$/.test(String(item.codigo ?? ""))
+          ? item.codigo
+          : null,
+      })),
     auditoria: banco
       .prepare(
         `SELECT ator_nome,acao,estado_anterior,estado_novo,criado_em

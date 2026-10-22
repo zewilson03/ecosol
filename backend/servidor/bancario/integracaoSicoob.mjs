@@ -13,6 +13,7 @@ import {
 } from "./gerenciadorOAuth.mjs";
 import { contratoOAuthSicoob } from "./contratoOAuthSicoob.mjs";
 import { FalhaHttpSicoob } from "./clienteHttpSeguro.mjs";
+import { criarContratoCobrancaSicoob } from "./contratoCobrancaSicoob.mjs";
 
 /**
  * Compõe a integração sem definir nenhum campo ou endpoint do provedor. Os
@@ -76,10 +77,16 @@ export function criarIntegracaoSicoob({
     obterNovoToken: carregador,
     relogio,
   });
+  const contratoCobrancaEfetivo =
+    contratoCobranca ??
+    criarContratoCobrancaSicoob({
+      convenio: configuracao.cobranca,
+      relogio,
+    });
   const adaptador = criarAdaptadorSicoob({
     clienteHttp: clienteApi,
     gerenciadorOAuth: oauth,
-    contrato: contratoCobranca,
+    contrato: contratoCobrancaEfetivo,
   });
   const diagnostico = Object.freeze({
     async consultarSaude() {

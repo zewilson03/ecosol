@@ -8,6 +8,358 @@
   background: #fff;
   box-shadow: 0 14px 40px rgba(12, 61, 76, 0.06);
 }
+.bancario-observabilidade {
+  padding: clamp(18px, 2.4vw, 28px);
+  border: 1px solid #d7e6e8;
+  border-radius: 24px;
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.98),
+    rgba(242, 249, 249, 0.96)
+  );
+  box-shadow: 0 18px 42px rgba(19, 73, 82, 0.08);
+}
+.bancario-prontidao {
+  padding: clamp(18px, 2.4vw, 28px);
+  margin-bottom: 18px;
+  border: 1px solid #d7e6e8;
+  border-radius: 24px;
+  background: #fff;
+  box-shadow: 0 18px 42px rgba(19, 73, 82, 0.07);
+}
+.bancario-prontidao-cabecalho {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+.bancario-prontidao-cabecalho h2 {
+  margin: 4px 0;
+  color: #173f50;
+}
+.bancario-prontidao-cabecalho p {
+  margin: 0;
+  color: #6b8290;
+}
+.bancario-prontidao-estado {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 20px;
+}
+.bancario-prontidao-estado > div {
+  display: grid;
+  gap: 4px;
+  padding: 14px;
+  border-radius: 16px;
+  background: #f3f8f8;
+}
+.bancario-prontidao-estado span {
+  color: #728993;
+  font-size: 12px;
+}
+.bancario-prontidao-estado small {
+  color: #718892;
+}
+.bancario-prontidao-estado strong {
+  color: #274f60;
+}
+.bancario-prontidao-estado strong.pronto {
+  color: #176c50;
+}
+.bancario-prontidao-estado strong.atencao {
+  color: #80600b;
+}
+.bancario-prontidao-estado strong.bloqueado {
+  color: #a23d32;
+}
+.bancario-prontidao-portoes {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+.bancario-prontidao-portoes > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #dce9eb;
+  border-radius: 14px;
+}
+.bancario-prontidao-portoes > div > span {
+  display: grid;
+  flex: 0 0 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  font-weight: 900;
+}
+.bancario-prontidao-portoes .completo > span {
+  background: #dcf2e8;
+  color: #176c50;
+}
+.bancario-prontidao-portoes .pendente > span {
+  background: #fff0ca;
+  color: #7b5d09;
+}
+.bancario-prontidao-portoes strong,
+.bancario-prontidao-portoes small {
+  display: block;
+}
+.bancario-prontidao-portoes strong {
+  color: #274f60;
+  font-size: 13px;
+}
+.bancario-prontidao-portoes small {
+  margin-top: 2px;
+  color: #718892;
+}
+.bancario-prontidao-avisos {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 16px;
+}
+.bancario-prontidao-avisos > div {
+  padding: 15px 16px;
+  border-radius: 16px;
+  background: #f4f8f9;
+}
+.bancario-prontidao-avisos h3,
+.bancario-prontidao-avisos p,
+.bancario-prontidao-avisos ul {
+  margin: 0;
+}
+.bancario-prontidao-avisos ul {
+  padding: 8px 0 0 18px;
+  color: #4e6d79;
+}
+.bancario-prontidao-bloqueio {
+  border: 1px solid #f0d28b;
+  background: #fff9e7 !important;
+  color: #755b15;
+}
+.bancario-prontidao-bloqueio p {
+  margin-top: 5px;
+  color: #756c50;
+}
+.bancario-observabilidade-cabecalho,
+.bancario-pendencia-principal {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.bancario-observabilidade-cabecalho h2,
+.bancario-observabilidade-lista h3 {
+  margin: 4px 0;
+  color: #173f50;
+}
+.bancario-observabilidade-cabecalho p,
+.bancario-observabilidade-lista small {
+  margin: 0;
+  color: #6b8290;
+}
+.bancario-observabilidade-resumo {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 20px;
+}
+.bancario-observabilidade-resumo article {
+  display: grid;
+  gap: 4px;
+  padding: 16px;
+  border: 1px solid #deeaec;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.78);
+}
+.bancario-observabilidade-resumo span,
+.bancario-observabilidade-resumo small {
+  color: #718792;
+}
+.bancario-observabilidade-resumo strong {
+  font-size: 1.45rem;
+  color: #173f50;
+}
+.bancario-observabilidade-resumo strong.estavel {
+  color: #167052;
+}
+.bancario-observabilidade-resumo strong.alerta {
+  color: #846311;
+}
+.bancario-observabilidade-resumo strong.critico {
+  color: #a33d31;
+}
+.bancario-observabilidade-lista {
+  margin-top: 22px;
+  padding-top: 20px;
+  border-top: 1px solid #dbe8ea;
+}
+.bancario-observabilidade-limite {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #fff5d8;
+  color: #705617;
+  font-size: 13px;
+}
+.bancario-pendencia {
+  padding: 15px 16px;
+  margin-top: 10px;
+  border: 1px solid #dfeaec;
+  border-left: 4px solid #8fa5ad;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.9);
+}
+.bancario-pendencia.prioridade-alta {
+  border-left-color: #c95645;
+}
+.bancario-pendencia.prioridade-media {
+  border-left-color: #d69e22;
+}
+.bancario-pendencia-principal {
+  justify-content: flex-start;
+}
+.bancario-pendencia-principal > div {
+  display: grid;
+  gap: 3px;
+}
+.bancario-pendencia-principal small {
+  color: #718792;
+}
+.bancario-prioridade {
+  min-width: 76px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 800;
+  background: #e9f0f2;
+  color: #536c77;
+}
+.bancario-prioridade.alta {
+  background: #ffe5df;
+  color: #9c382d;
+}
+.bancario-prioridade.media {
+  background: #fff1c9;
+  color: #765801;
+}
+.bancario-pendencia dl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 13px 0 0;
+}
+.bancario-pendencia dl > div {
+  display: grid;
+  gap: 2px;
+}
+.bancario-pendencia dt {
+  font-size: 11px;
+  color: #7b909a;
+}
+.bancario-pendencia dd {
+  margin: 0;
+  color: #274f60;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bancario-pendencia-contexto {
+  margin: 11px 0 0;
+  color: #536f7d;
+  font-size: 13px;
+}
+.bancario-pendencia-acoes {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+.bancario-pendencia-acoes small {
+  color: #6b8290;
+}
+.bancario-conciliacao-historico {
+  margin-top: 12px;
+  color: #355d6c;
+}
+.bancario-conciliacao-historico summary {
+  cursor: pointer;
+  font-weight: 750;
+}
+.bancario-conciliacao-historico ol {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  list-style: none;
+}
+.bancario-conciliacao-historico li {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #f2f7f8;
+  font-size: 13px;
+}
+.bancario-conciliacao-historico span {
+  color: #647e89;
+}
+.bancario-confirmacao-fundo {
+  position: fixed;
+  z-index: 1200;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(8, 35, 45, 0.52);
+  backdrop-filter: blur(5px);
+}
+.bancario-confirmacao {
+  width: min(560px, 100%);
+  padding: clamp(20px, 4vw, 30px);
+  border: 1px solid #cfe1e4;
+  border-radius: 24px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(6, 41, 53, 0.24);
+}
+.bancario-confirmacao h3 {
+  margin: 5px 0 8px;
+  color: #173f50;
+}
+.bancario-confirmacao p {
+  margin: 0;
+  color: #647d89;
+}
+.bancario-confirmacao dl {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 20px 0;
+}
+.bancario-confirmacao dl > div {
+  display: grid;
+  gap: 3px;
+  padding: 11px 12px;
+  border-radius: 13px;
+  background: #f2f7f8;
+}
+.bancario-confirmacao dt {
+  color: #718892;
+  font-size: 11px;
+}
+.bancario-confirmacao dd {
+  margin: 0;
+  color: #244f60;
+  font-weight: 750;
+}
+.bancario-confirmacao-acoes {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
 .bancario-faixa-seguranca {
   display: flex;
   gap: 12px;
@@ -183,7 +535,7 @@
 }
 .bancario-historicos {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 .bancario-historicos > div {
@@ -213,6 +565,16 @@
     align-items: flex-start;
     flex-direction: column;
   }
+  .bancario-observabilidade-resumo {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .bancario-prontidao-estado,
+  .bancario-prontidao-portoes {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .bancario-historicos {
+    grid-template-columns: 1fr;
+  }
 }
 @media (max-width: 650px) {
   .bancario-resumo,
@@ -222,5 +584,35 @@
   .bancario-faixa-seguranca {
     align-items: flex-start;
     flex-direction: column;
+  }
+  .bancario-observabilidade-cabecalho {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .bancario-prontidao-cabecalho {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .bancario-prontidao-estado,
+  .bancario-prontidao-portoes,
+  .bancario-prontidao-avisos {
+    grid-template-columns: 1fr;
+  }
+  .bancario-observabilidade-resumo,
+  .bancario-pendencia dl {
+    grid-template-columns: 1fr 1fr;
+  }
+  .bancario-pendencia-principal {
+    align-items: flex-start;
+  }
+  .bancario-pendencia-acoes {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .bancario-confirmacao dl {
+    grid-template-columns: 1fr;
+  }
+  .bancario-confirmacao-acoes {
+    flex-direction: column-reverse;
   }
 }

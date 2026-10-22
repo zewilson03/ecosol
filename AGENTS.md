@@ -59,6 +59,7 @@ This repository defines project-scoped Codex agents in `.codex/agents/`:
 - `database_agent`: handles SQLite, schema, migration, integrity, concurrency, and persistence work using temporary test databases.
 - `design_agent`: designs and implements the Ecosol UI/UX using the established minimal, accessible, responsive, solar-futuristic visual system.
 - `reviewer_agent`: performs the final read-only review of diffs and local change sets.
+- `sicoob_agent`: provides read-only guidance and review for the Sicoob integration, including official API contracts, financial state machines, idempotency, reconciliation, credentials, fraud controls, homologation, and incident response.
 
 For non-trivial work, delegate independent, well-bounded analysis when the user asks for subagents or parallel work, or when separate read-heavy investigations will materially improve quality. Prefer the specialized agent whose description matches the task. Do not run multiple write-capable agents against the same files. The primary agent owns the final decision, integration, and validation.
 

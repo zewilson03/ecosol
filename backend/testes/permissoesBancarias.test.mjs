@@ -215,6 +215,7 @@ try {
     ).status,
     200,
   );
+
   assert.equal(
     (
       await chamar(
@@ -234,6 +235,16 @@ try {
     await chamar("/api/admin/bancario/executor", cookies.gestorB)
   ).json();
   assert.equal(executorInicial.pausado, true);
+  assert.equal(
+    (await chamar("/api/admin/bancario/prontidao", cookies.operador)).status,
+    403,
+  );
+  const prontidaoGestor = await chamar(
+    "/api/admin/bancario/prontidao",
+    cookies.gestorB,
+  );
+  assert.equal(prontidaoGestor.status, 200);
+  assert.equal(prontidaoGestor.headers.get("cache-control"), "no-store");
   const executorRetomado = await (
     await chamar("/api/admin/bancario/executor", cookies.gestorB, "PATCH", {
       pausado: false,
@@ -285,6 +296,83 @@ try {
       )
     ).status,
     200,
+  );
+
+  assert.equal(
+    (await chamar("/api/admin/bancario/observabilidade", cookies.operador))
+      .status,
+    403,
+  );
+  const observabilidadeAuditor = await chamar(
+    "/api/admin/bancario/observabilidade",
+    cookies.auditor,
+  );
+  assert.equal(observabilidadeAuditor.status, 200);
+  assert.equal(observabilidadeAuditor.headers.get("cache-control"), "no-store");
+  assert.equal(
+    (await chamar("/api/admin/bancario/observabilidade", cookies.gestorB))
+      .status,
+    200,
+  );
+
+  const operacaoConciliavel = randomBytes(16).toString("hex");
+  const idempotenciaConciliavel = randomBytes(32).toString("hex");
+  const provedorConciliavel = `SIM-${randomBytes(10).toString("hex").toUpperCase()}`;
+  banco
+    .prepare(
+      `INSERT INTO bancario_operacoes
+       (id,tipo,ambiente,conta_referencia,origem_tipo,origem_id,origem_versao,
+        idempotencia,valor_centavos,vencimento,snapshot,snapshot_hash,
+        provedor_id,estado,preparado_por)
+       VALUES(?,'cobranca','homologacao','conta-teste','manual',?,1,?,12500,
+              '2027-01-20','{}',?,?, 'resultado_desconhecido',?)`,
+    )
+    .run(
+      operacaoConciliavel,
+      `manual-${operacaoConciliavel}`,
+      idempotenciaConciliavel,
+      resumoCriptografico("{}"),
+      provedorConciliavel,
+      pessoas.operador,
+    );
+  banco
+    .prepare(
+      `INSERT INTO bancario_simulador_cobrancas
+       (idempotencia,provedor_id,estado,valor_centavos)
+       VALUES(?,?,'registrada',12500)`,
+    )
+    .run(idempotenciaConciliavel, provedorConciliavel);
+  const rotaConciliacao = `/api/admin/bancario/operacoes/${operacaoConciliavel}/conciliar`;
+  const conciliacaoSemConfirmacao = await fetch(base + rotaConciliacao, {
+    method: "POST",
+    headers: { Cookie: cookies.gestorB, Origin: base },
+  });
+  assert.equal(conciliacaoSemConfirmacao.status, 403);
+  assert.equal(
+    (await chamar(rotaConciliacao, cookies.operador, "POST")).status,
+    403,
+  );
+  const conciliacaoManual = await chamar(
+    rotaConciliacao,
+    cookies.gestorB,
+    "POST",
+  );
+  assert.equal(conciliacaoManual.status, 200);
+  assert.deepEqual(await conciliacaoManual.json(), {
+    resultado: "concluida",
+    estado_anterior: "resultado_desconhecido",
+    estado_atual: "registrada",
+    codigo: "SIM_CONSULTA_CONFIRMADA",
+  });
+  assert.equal(
+    banco
+      .prepare(
+        `SELECT COUNT(*) AS n FROM bancario_auditoria_operacoes
+         WHERE operacao_id=? AND ator_id=?
+           AND acao='Conciliação manual solicitada'`,
+      )
+      .get(operacaoConciliavel, pessoas.gestorB).n,
+    1,
   );
   assert.equal(
     (

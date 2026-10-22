@@ -171,6 +171,50 @@ export function prepararBancario(banco) {
     CREATE INDEX IF NOT EXISTS bancario_operacoes_origem
       ON bancario_operacoes(origem_tipo, origem_id, origem_versao);
 
+    CREATE TABLE IF NOT EXISTS bancario_artefatos_cobranca (
+      operacao_id TEXT PRIMARY KEY REFERENCES bancario_operacoes(id) ON DELETE RESTRICT,
+      nosso_numero TEXT NOT NULL CHECK(length(trim(nosso_numero))>0),
+      linha_digitavel TEXT,
+      codigo_barras TEXT,
+      qr_code TEXT,
+      pdf BLOB,
+      pdf_sha256 TEXT CHECK(pdf_sha256 IS NULL OR length(pdf_sha256)=64),
+      atualizado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CHECK(linha_digitavel IS NULL OR (
+        length(linha_digitavel) BETWEEN 40 AND 60 AND
+        linha_digitavel NOT GLOB '*[^0-9]*'
+      )),
+      CHECK(codigo_barras IS NULL OR (
+        length(codigo_barras) BETWEEN 40 AND 60 AND
+        codigo_barras NOT GLOB '*[^0-9]*'
+      ))
+    );
+
+    CREATE TABLE IF NOT EXISTS bancario_reconciliacoes_cobranca (
+      id TEXT PRIMARY KEY,
+      operacao_id TEXT NOT NULL REFERENCES bancario_operacoes(id) ON DELETE RESTRICT,
+      correlacao TEXT NOT NULL UNIQUE,
+      estado TEXT NOT NULL CHECK(estado IN
+        ('processando','concluida','inconclusiva','falhou')),
+      estado_anterior TEXT NOT NULL,
+      estado_observado TEXT,
+      codigo TEXT,
+      tentativa INTEGER NOT NULL DEFAULT 1 CHECK(tentativa>=1),
+      solicitado_por INTEGER,
+      solicitado_por_nome TEXT,
+      posse_por TEXT,
+      posse_ate INTEGER,
+      iniciado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      concluido_em TEXT,
+      CHECK((estado='processando' AND posse_por IS NOT NULL AND posse_ate IS NOT NULL) OR
+            (estado<>'processando' AND posse_por IS NULL AND posse_ate IS NULL))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS bancario_reconciliacao_em_andamento
+      ON bancario_reconciliacoes_cobranca(operacao_id)
+      WHERE estado='processando';
+    CREATE INDEX IF NOT EXISTS bancario_reconciliacoes_operacao
+      ON bancario_reconciliacoes_cobranca(operacao_id,iniciado_em DESC);
+
     CREATE TABLE IF NOT EXISTS bancario_aprovacoes (
       id INTEGER PRIMARY KEY,
       operacao_id TEXT NOT NULL REFERENCES bancario_operacoes(id) ON DELETE RESTRICT,
@@ -370,6 +414,39 @@ export function prepararBancario(banco) {
     banco.exec("ALTER TABLE bancario_operacoes ADD COLUMN provedor_id TEXT");
   if (!colunasOperacoes.some((coluna) => coluna.name === "ultimo_codigo"))
     banco.exec("ALTER TABLE bancario_operacoes ADD COLUMN ultimo_codigo TEXT");
+  const colunasReconciliacoes = banco
+    .prepare("PRAGMA table_info(bancario_reconciliacoes_cobranca)")
+    .all();
+  if (!colunasReconciliacoes.some((coluna) => coluna.name === "tentativa"))
+    banco.exec(
+      "ALTER TABLE bancario_reconciliacoes_cobranca ADD COLUMN tentativa INTEGER NOT NULL DEFAULT 1 CHECK(tentativa>=1)",
+    );
+  if (!colunasReconciliacoes.some((coluna) => coluna.name === "posse_por"))
+    banco.exec(
+      "ALTER TABLE bancario_reconciliacoes_cobranca ADD COLUMN posse_por TEXT",
+    );
+  if (!colunasReconciliacoes.some((coluna) => coluna.name === "posse_ate"))
+    banco.exec(
+      "ALTER TABLE bancario_reconciliacoes_cobranca ADD COLUMN posse_ate INTEGER",
+    );
+  if (!colunasReconciliacoes.some((coluna) => coluna.name === "solicitado_por"))
+    banco.exec(
+      "ALTER TABLE bancario_reconciliacoes_cobranca ADD COLUMN solicitado_por INTEGER",
+    );
+  if (
+    !colunasReconciliacoes.some(
+      (coluna) => coluna.name === "solicitado_por_nome",
+    )
+  )
+    banco.exec(
+      "ALTER TABLE bancario_reconciliacoes_cobranca ADD COLUMN solicitado_por_nome TEXT",
+    );
+  banco.exec(`
+    CREATE INDEX IF NOT EXISTS bancario_reconciliacoes_limite_manual
+    ON bancario_reconciliacoes_cobranca(
+      operacao_id,solicitado_por,iniciado_em DESC
+    )
+  `);
   const colunasMfa = banco
     .prepare("PRAGMA table_info(bancario_mfa_equipe)")
     .all();

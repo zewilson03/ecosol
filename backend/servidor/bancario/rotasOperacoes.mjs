@@ -32,6 +32,9 @@ import {
   alterarEstadoDoExecutor,
   estadoDoExecutor,
 } from "./controleExecutor.mjs";
+import { avaliarProntidaoSicoob } from "./prontidaoSicoob.mjs";
+import { obterObservabilidadeBancaria } from "./observabilidadeBancaria.mjs";
+import { executarConciliacaoManual } from "./conciliacaoManual.mjs";
 
 export const rotasOperacoesBancarias = Router();
 
@@ -55,6 +58,7 @@ rotasOperacoesBancarias.get(
   "/api/admin/bancario/mfa/recuperacao/minha",
   minhaRecuperacaoMfa,
 );
+
 rotasOperacoesBancarias.post(
   "/api/admin/bancario/mfa/recuperacao/solicitar",
   (req, res, next) => (origemConfiavel(req) ? next() : res.sendStatus(403)),
@@ -97,6 +101,24 @@ rotasOperacoesBancarias.get(
   (_req, res) => res.json(estadoDoExecutor()),
 );
 
+rotasOperacoesBancarias.get(
+  "/api/admin/bancario/prontidao",
+  exigirPapelBancario("administrador_integracao"),
+  (_req, res) =>
+    res.set("Cache-Control", "no-store").json(avaliarProntidaoSicoob()),
+);
+
+rotasOperacoesBancarias.get(
+  "/api/admin/bancario/observabilidade",
+  exigirUmDosPapeisBancarios("consulta_auditoria", "administrador_integracao"),
+  (req, res) =>
+    res.set("Cache-Control", "no-store").json(
+      obterObservabilidadeBancaria({
+        limite: req.query?.limite === undefined ? 50 : Number(req.query.limite),
+      }),
+    ),
+);
+
 rotasOperacoesBancarias.patch(
   "/api/admin/bancario/executor",
   exigirPapelBancario("administrador_integracao"),
@@ -114,6 +136,18 @@ rotasOperacoesBancarias.get(
   "/api/admin/bancario/operacoes/:id",
   podeConsultar,
   (req, res) => res.json(obterOperacao(String(req.params.id))),
+);
+
+rotasOperacoesBancarias.post(
+  "/api/admin/bancario/operacoes/:id/conciliar",
+  exigirPapelBancario("administrador_integracao"),
+  async (req, res) =>
+    res.json(
+      await executarConciliacaoManual({
+        operacaoId: String(req.params.id),
+        administrador: req.administrador,
+      }),
+    ),
 );
 
 rotasOperacoesBancarias.post(
@@ -150,5 +184,9 @@ rotasOperacoesBancarias.post(
 
 rotasOperacoesBancarias.use((erro, _req, res, next) => {
   if (!erro?.status) return next(erro);
-  res.status(erro.status).json({ erro: erro.message });
+  const codigo = String(erro.codigo ?? "");
+  res.status(erro.status).json({
+    erro: erro.message,
+    ...(/^[A-Z0-9_]{1,80}$/.test(codigo) ? { codigo } : {}),
+  });
 });

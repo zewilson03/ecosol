@@ -4,9 +4,9 @@
 >
 > Este arquivo mantém o detalhamento técnico. Os arquivos `.bpmn` são modelos editáveis/importáveis; o PDF apresenta um resumo visual, não uma exportação automática desses arquivos.
 
-Status: **preparação técnica concluída; aguardando dados e contrato oficial do Sicoob**.
+Status: **contratos oficiais de OAuth e Cobrança v3 implementados localmente; aguardando configuração e homologação conectada**.
 
-Atualizado em: 19/10/2026.
+Atualizado em: 22/10/2026.
 
 Este documento transforma o levantamento anterior em uma entrega operacional para a homologação. Ele não autoriza emissão nem pagamento real. O executor bancário continua desligado e a fila bancária permanece pausada até todos os portões de liberação serem aprovados.
 
@@ -43,12 +43,14 @@ Para entender os símbolos e os caminhos antes de abrir o XML, consulte o [guia 
 - Ambientes de homologação e produção separados; produção exige habilitação explícita.
 - Token OAuth mantido somente em memória, com expiração, margem de renovação e proteção contra renovações concorrentes.
 - Cliente HTTP com HTTPS obrigatório, mTLS disponível, origem fixa, sem redirecionamentos, timeout total, limites de tamanho e erros sanitizados.
-- Adaptador sem endpoint, payload, scope ou header presumido: o contrato oficial será conectado quando for recebido.
+- Contrato oficial Client Credentials e Cobrança Bancária v3 implementado para `POST /boletos`, `GET /boletos` e `GET /health`, conforme Portal Developers Sicoob consultado em 22/10/2026.
+- Dados do convênio são lidos somente do ambiente; nenhum número de cliente, modalidade, conta ou contrato é presumido no código.
+- Linha digitável, código de barras, QR Code e PDF retornados são validados e persistidos com vínculo à operação; o PDF recebe hash SHA-256.
 - Unicidade de `provedor_id` por ambiente e conta; duplicidade existente interrompe a inicialização para conciliação humana.
 - Registro de cobrança que recebe erro ou resposta inconclusiva não é reenviado às cegas. O próximo passo é consulta/reconciliação.
 - `Retry-After` e resultado desconhecido são preservados pela fila.
 
-## Dados a receber do Sicoob na quarta-feira
+## Dados ainda necessários para homologação conectada
 
 Registrar em cofre/arquivo de ambiente local, nunca em chat, commit, PDF de evidência ou planilha compartilhada:
 
@@ -93,7 +95,7 @@ Certificado e chave privada devem ficar fora do repositório, com permissões re
 
 ## Regras obrigatórias de operação
 
-- Uma pessoa prepara e outra aprova saída de dinheiro; ninguém aprova a própria preparação.
+- Regra geral: uma pessoa prepara e outra aprova. Exceção exclusiva: o perfil crítico **Proprietário** pode autoaprovar a própria operação com MFA ativo, confirmação recente, aceite explícito e auditoria específica. Nenhum outro perfil pode autoaprovar.
 - Qualquer alteração de valor, favorecido, vencimento, conta, linha digitável ou versão da fatura invalida a aprovação.
 - Timeout, queda de conexão, 401/403 durante registro e reinício após envio são **resultado desconhecido**, não falha financeira confirmada.
 - Repetir consulta pode ser seguro conforme contrato. Repetir registro/pagamento somente é permitido quando a idempotência remota tiver sido comprovada e testada.
