@@ -198,6 +198,21 @@ try {
   const lista = await (await chamar(triagem, admin)).json();
   assert.equal(lista.itens.length, 1);
   assert.equal(lista.contagens[0].quantidade, 1);
+  db.prepare(
+    "INSERT INTO faturamento_unidades(uc,nome,documento,email,dia_vencimento) VALUES (?,?,?,?,?)",
+  ).run("123", "Unidade teste", "123", "teste@local", 1);
+  db.prepare("UPDATE faturamento_documentos SET dados=? WHERE id=?").run(
+    JSON.stringify({
+      uc: "123",
+      competencia: "2026-10",
+      vencimento_equatorial: "2026-11-03",
+    }),
+    documentoId,
+  );
+  const conferencia = await (
+    await chamar(`${triagem}/conferencia?documentos=${documentoId}`, admin)
+  ).json();
+  assert.match(conferencia.itens[0].nomeProposto, /^Fatura EQT - NOV - /);
   const respostaPdf = await chamar(`${triagem}/${documentoId}/pdf`, admin);
   assert.equal(respostaPdf.status, 200);
   assert.equal(respostaPdf.headers.get("cache-control"), "no-store");

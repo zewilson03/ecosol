@@ -1,4 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Router } from "express";
 import { obterBanco } from "../bancoDeDados.mjs";
 import { sessaoAtual } from "../autenticacao.mjs";
@@ -7,7 +10,11 @@ import { chaveDeCriptografia, cifrarRefreshToken } from "./credenciais.mjs";
 import { criarClienteGoogle, ESCOPO_GMAIL } from "./google.mjs";
 import { criarRepositorioGmail } from "./repositorio.mjs";
 import { criarRepositorioOAuthGmail } from "./oauthRepositorio.mjs";
-import { criarSincronizadorGmail } from "./sincronizar.mjs";
+import {
+  atalhoDiarioOitoHoras,
+  criarSincronizadorGmail,
+  validarPeriodoRecebimento,
+} from "./sincronizar.mjs";
 import {
   classificarDocumentoGmail,
   classificarDocumentosGmail,
@@ -42,6 +49,44 @@ function idValido(valor) {
   const id = Number(valor);
   return Number.isSafeInteger(id) && id > 0 ? id : null;
 }
+
+function mesDoVencimento(vencimento, competencia) {
+  const meses = [
+    "JAN",
+    "FEV",
+    "MAR",
+    "ABR",
+    "MAI",
+    "JUN",
+    "JUL",
+    "AGO",
+    "SET",
+    "OUT",
+    "NOV",
+    "DEZ",
+  ];
+  const data = String(vencimento ?? "");
+  const encontrado = /^(20\d{2})-(0[1-9]|1[0-2])-\d{2}$/.exec(data);
+  if (encontrado) return meses[Number(encontrado[2]) - 1];
+  const competenciaValida = /^(20\d{2})-(0[1-9]|1[0-2])$/.exec(
+    String(competencia ?? ""),
+  );
+  return competenciaValida ? meses[Number(competenciaValida[2]) - 1] : "FAT";
+}
+
+const pastaDoProjeto = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../..",
+);
+const previaCentralDeDemonstracao = {
+  documentoId: 685,
+  arquivo: join(
+    pastaDoProjeto,
+    "output",
+    "pdf",
+    "Fatura EQT - NOV - CARLOS UNIÃO - Supermercado Reis e Lopes - 11813738 - 16577201233.pdf",
+  ),
+};
 
 function irParaPainel(resposta, resultado) {
   resposta.set("Cache-Control", "no-store");
@@ -139,6 +184,100 @@ export function criarRotasGmail({
       return resposta.status(404).json({ erro: "Conta inexistente." });
     }
   });
+
+  rotas.get("/api/admin/gmail/periodo-diario", (_requisicao, resposta) => {
+    resposta.set("Cache-Control", "no-store");
+    resposta.json(atalhoDiarioOitoHoras(agora()));
+  });
+
+  function contaAptaParaCaptura(contaId, resposta) {
+    if (!contaId) {
+      resposta.status(400).json({ erro: "Conta inválida." });
+      return null;
+    }
+    try {
+      const conta = criarRepositorioGmail(banco()).obterConta(contaId);
+      if (conta.status_autorizacao !== "conectada" || conta.pausada) {
+        resposta
+          .status(409)
+          .json({ erro: "Reative a conta antes de sincronizar." });
+        return null;
+      }
+      if (sincronizador.emAndamento(contaId)) {
+        resposta.status(409).json({ erro: "Sincronização já em andamento." });
+        return null;
+      }
+      return conta;
+    } catch {
+      resposta.status(404).json({ erro: "Conta inexistente." });
+      return null;
+    }
+  }
+
+  rotas.post(
+    "/api/admin/gmail/contas/:id/periodo/previa",
+    async (requisicao, resposta) => {
+      const contaId = idValido(requisicao.params.id);
+      if (!contaAptaParaCaptura(contaId, resposta)) return;
+      try {
+        const previa = await sincronizador.preverPeriodo(
+          contaId,
+          requisicao.body?.periodo,
+        );
+        resposta.set("Cache-Control", "no-store");
+        return resposta.json(previa);
+      } catch (erro) {
+        const invalido =
+          /Data e hora inválidas|início deve ser anterior|Período de recebimento inválido/.test(
+            String(erro?.message),
+          );
+        return resposta.status(invalido ? 400 : 503).json({
+          erro: invalido
+            ? String(erro.message)
+            : "Não foi possível consultar o Gmail para este período. Verifique a conexão e tente novamente.",
+        });
+      }
+    },
+  );
+
+  rotas.post(
+    "/api/admin/gmail/contas/:id/periodo/capturar",
+    (requisicao, resposta) => {
+      const contaId = idValido(requisicao.params.id);
+      if (!contaAptaParaCaptura(contaId, resposta)) return;
+      try {
+        validarPeriodoRecebimento(requisicao.body?.periodo);
+      } catch (erro) {
+        return resposta.status(400).json({ erro: String(erro.message) });
+      }
+      void sincronizador
+        .capturarPeriodo(contaId, requisicao.body?.periodo)
+        .catch(() => {
+          // A captura explícita não reenvia nem exclui e-mails; a falha fica no progresso.
+        });
+      return resposta.status(202).json({ iniciada: true });
+    },
+  );
+
+  rotas.post(
+    "/api/admin/gmail/contas/:id/periodo/status",
+    (requisicao, resposta) => {
+      const contaId = idValido(requisicao.params.id);
+      if (!contaId)
+        return resposta.status(400).json({ erro: "Conta inválida." });
+      try {
+        const periodo = validarPeriodoRecebimento(requisicao.body?.periodo);
+        const captura = criarRepositorioGmail(banco()).obterCapturaPorPeriodo({
+          contaId,
+          inicio: periodo.inicioLocal,
+          fim: periodo.fimLocal,
+        });
+        return resposta.json({ captura });
+      } catch (erro) {
+        return resposta.status(400).json({ erro: String(erro.message) });
+      }
+    },
+  );
 
   rotas.post(
     "/api/admin/gmail/contas/:id/sincronizar",
@@ -275,6 +414,111 @@ export function criarRotasGmail({
       return resposta.status(404).json({ erro: "Conta inexistente." });
     }
   });
+
+  rotas.get(
+    "/api/admin/gmail/contas/:id/triagem/conferencia",
+    (requisicao, resposta) => {
+      const contaId = idValido(requisicao.params.id);
+      const ids = String(requisicao.query.documentos ?? "")
+        .split(",")
+        .map((valor) => idValido(valor.trim()))
+        .filter(Boolean);
+      if (
+        !contaId ||
+        !ids.length ||
+        ids.length > 50 ||
+        new Set(ids).size !== ids.length
+      )
+        return resposta
+          .status(400)
+          .json({ erro: "Seleção de documentos inválida." });
+      try {
+        criarRepositorioGmail(banco()).obterConta(contaId);
+        const marcadores = ids.map(() => "?").join(",");
+        const itens = banco()
+          .prepare(
+            `SELECT a.id AS anexo_id,a.message_id,a.criado_em AS recebido_em,
+          d.id,d.nome,d.dados,d.extracao,d.versao
+          FROM gmail_anexos a JOIN faturamento_documentos d ON d.id=a.documento_id
+          WHERE a.conta_id=? AND d.id IN (${marcadores}) AND a.estado='capturado'
+          ORDER BY d.id`,
+          )
+          .all(contaId, ...ids)
+          .map((item) => {
+            const dados = JSON.parse(item.dados);
+            const unidade = banco()
+              .prepare(
+                `SELECT u.id,u.uc,COALESCE(c.name,o.nome,p.nome) cliente,s.nome usina
+            FROM faturamento_unidades u LEFT JOIN customers c ON c.id=u.cliente_id
+            LEFT JOIN faturamento_clientes_operacionais o ON o.id=u.cliente_operacional_id
+            LEFT JOIN faturamento_clientes_provisorios p ON p.id=u.cliente_provisorio_id
+            LEFT JOIN usinas s ON s.id=u.usina_id
+            WHERE u.uc=? OR u.id=(SELECT unidade_id FROM faturamento_unidades_aliases WHERE uc=?)`,
+              )
+              .get(dados.uc, dados.uc);
+            const competencia = dados.competencia ?? null;
+            const vencimento = dados.vencimento_equatorial ?? null;
+            const mes = mesDoVencimento(vencimento, competencia);
+            const proposto =
+              unidade && competencia
+                ? `Fatura EQT - ${mes} - ${unidade.usina ?? "SEM_USINA"} - ${unidade.cliente ?? "SEM_CLIENTE"} - ${dados.uc} - ${unidade.uc}.pdf`
+                : null;
+            return {
+              id: item.id,
+              anexoId: item.anexo_id,
+              messageId: item.message_id,
+              recebidoEm: item.recebido_em,
+              nome: item.nome,
+              uc: dados.uc ?? null,
+              competencia,
+              vencimento,
+              cliente: unidade?.cliente ?? null,
+              usina: unidade?.usina ?? null,
+              unidadeId: unidade?.id ?? null,
+              nomeProposto: proposto,
+              situacao: unidade && competencia ? "vinculo_seguro" : "revisar",
+              metodo: "UC extraída do quadro principal",
+            };
+          });
+        resposta.set("Cache-Control", "no-store");
+        return resposta.json({
+          itens,
+          ausentes: ids.filter(
+            (valor) => !itens.some((item) => item.id === valor),
+          ),
+        });
+      } catch {
+        return resposta.status(404).json({ erro: "Conta inexistente." });
+      }
+    },
+  );
+
+  // Prévia de homologação deliberadamente limitada ao único PDF conferido.
+  // Não aciona o motor, não altera o documento e não habilita processamento em lote.
+  rotas.get(
+    "/api/admin/gmail/contas/:id/triagem/:documentoId/previa-central",
+    (requisicao, resposta) => {
+      const contaId = idValido(requisicao.params.id);
+      const documentoId = idValido(requisicao.params.documentoId);
+      if (
+        !contaId ||
+        documentoId !== previaCentralDeDemonstracao.documentoId ||
+        !existsSync(previaCentralDeDemonstracao.arquivo)
+      )
+        return resposta.status(404).json({ erro: "Prévia indisponível." });
+      const existe = banco()
+        .prepare(
+          `SELECT 1 FROM gmail_anexos
+            WHERE conta_id=? AND documento_id=? AND estado='capturado'`,
+        )
+        .get(contaId, documentoId);
+      if (!existe)
+        return resposta.status(404).json({ erro: "Prévia indisponível." });
+      resposta.set("Cache-Control", "no-store");
+      resposta.set("Content-Disposition", "inline");
+      return resposta.sendFile(previaCentralDeDemonstracao.arquivo);
+    },
+  );
 
   rotas.get(
     "/api/admin/gmail/contas/:id/triagem/:documentoId/pdf",

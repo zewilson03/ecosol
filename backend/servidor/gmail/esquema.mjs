@@ -125,6 +125,27 @@ export function prepararGmail(banco) {
         )
       );
 
+      CREATE TABLE IF NOT EXISTS gmail_capturas_periodo (
+        id INTEGER PRIMARY KEY,
+        conta_id INTEGER NOT NULL REFERENCES gmail_contas(id) ON DELETE RESTRICT,
+        inicio_local TEXT NOT NULL,
+        fim_local TEXT NOT NULL,
+        fuso TEXT NOT NULL CHECK(fuso='America/Sao_Paulo'),
+        estado TEXT NOT NULL CHECK(estado IN ('em_andamento','concluida','falha')),
+        emails INTEGER NOT NULL DEFAULT 0,
+        anexos INTEGER NOT NULL DEFAULT 0,
+        capturados INTEGER NOT NULL DEFAULT 0,
+        duplicados INTEGER NOT NULL DEFAULT 0,
+        triagem INTEGER NOT NULL DEFAULT 0,
+        falhas INTEGER NOT NULL DEFAULT 0,
+        iniciado_em INTEGER NOT NULL,
+        concluido_em INTEGER,
+        erro_codigo TEXT,
+        UNIQUE(conta_id,inicio_local,fim_local)
+      );
+      CREATE INDEX IF NOT EXISTS gmail_capturas_periodo_conta
+        ON gmail_capturas_periodo(conta_id,id DESC);
+
       CREATE INDEX IF NOT EXISTS gmail_mensagens_reservas
         ON gmail_mensagens(conta_id, tentativas, id)
         WHERE estado IN ('pendente','falha_temporaria','em_processamento');

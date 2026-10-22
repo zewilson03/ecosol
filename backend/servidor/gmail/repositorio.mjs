@@ -215,6 +215,114 @@ export function criarRepositorioGmail(banco) {
       return progresso(banco, inteiroPositivo(contaId, "Conta"));
     },
 
+    iniciarCapturaPeriodo({ contaId, inicio, fim, agora = Date.now() }) {
+      inteiroPositivo(contaId, "Conta");
+      instante(agora);
+      return transacao(banco, () => {
+        contaOperante(banco, contaId);
+        const existente = banco
+          .prepare(
+            `SELECT * FROM gmail_capturas_periodo
+          WHERE conta_id=? AND inicio_local=? AND fim_local=?`,
+          )
+          .get(contaId, inicio, fim);
+        if (existente) return { ...existente, existente: true };
+        const id = Number(
+          banco
+            .prepare(
+              `INSERT INTO gmail_capturas_periodo
+          (conta_id,inicio_local,fim_local,fuso,estado,iniciado_em)
+          VALUES (?,?,?,'America/Sao_Paulo','em_andamento',?)`,
+            )
+            .run(contaId, inicio, fim, agora).lastInsertRowid,
+        );
+        return {
+          ...banco
+            .prepare("SELECT * FROM gmail_capturas_periodo WHERE id=?")
+            .get(id),
+          existente: false,
+        };
+      });
+    },
+
+    atualizarCapturaPeriodo({ id, emails, anexos }) {
+      inteiroPositivo(id, "Captura");
+      if (
+        !Number.isSafeInteger(emails) ||
+        emails < 0 ||
+        !Number.isSafeInteger(anexos) ||
+        anexos < 0
+      )
+        throw new Error("Contagem inválida.");
+      banco
+        .prepare(
+          `UPDATE gmail_capturas_periodo SET emails=?,anexos=?
+        WHERE id=? AND estado='em_andamento'`,
+        )
+        .run(emails, anexos, id);
+    },
+
+    concluirCapturaPeriodo({
+      id,
+      estado,
+      capturados,
+      duplicados,
+      triagem,
+      falhas,
+      erroCodigo = null,
+      agora = Date.now(),
+    }) {
+      inteiroPositivo(id, "Captura");
+      instante(agora);
+      if (
+        !["concluida", "falha"].includes(estado) ||
+        ![capturados, duplicados, triagem, falhas].every(
+          (n) => Number.isSafeInteger(n) && n >= 0,
+        )
+      )
+        throw new Error("Resultado de captura inválido.");
+      banco
+        .prepare(
+          `UPDATE gmail_capturas_periodo SET estado=?,capturados=?,duplicados=?,triagem=?,falhas=?,erro_codigo=?,concluido_em=?
+        WHERE id=? AND estado='em_andamento'`,
+        )
+        .run(
+          estado,
+          capturados,
+          duplicados,
+          triagem,
+          falhas,
+          erroCodigo,
+          agora,
+          id,
+        );
+      return {
+        ...banco
+          .prepare("SELECT * FROM gmail_capturas_periodo WHERE id=?")
+          .get(id),
+      };
+    },
+
+    obterCapturaPeriodo(id) {
+      inteiroPositivo(id, "Captura");
+      const item = banco
+        .prepare("SELECT * FROM gmail_capturas_periodo WHERE id=?")
+        .get(id);
+      if (!item) throw new Error("Captura inexistente.");
+      return { ...item };
+    },
+
+    obterCapturaPorPeriodo({ contaId, inicio, fim }) {
+      inteiroPositivo(contaId, "Conta");
+      const item = banco
+        .prepare(
+          `SELECT * FROM gmail_capturas_periodo
+        WHERE conta_id=? AND inicio_local=? AND fim_local=?`,
+        )
+        .get(contaId, inicio, fim);
+      return item ? { ...item } : null;
+    },
+
     iniciarVarreduraCompleta({
       contaId,
       historyId: marco,
@@ -422,6 +530,26 @@ export function criarRepositorioGmail(banco) {
       });
     },
 
+    // Busca manual por período não altera o checkpoint histórico. A chave
+    // (conta_id,message_id) mantém a descoberta idempotente.
+    registrarMensagensAvulsas({ contaId, mensagens }) {
+      inteiroPositivo(contaId, "Conta");
+      if (!Array.isArray(mensagens) || mensagens.length > 10000)
+        throw new Error("Lista de mensagens inválida.");
+      const ids = [
+        ...new Set(mensagens.map((id) => texto(id, "Message ID", 512))),
+      ];
+      return transacao(banco, () => {
+        contaOperante(banco, contaId);
+        const inserir = banco.prepare(
+          "INSERT OR IGNORE INTO gmail_mensagens(conta_id,message_id) VALUES (?,?)",
+        );
+        let inseridas = 0;
+        for (const id of ids) inseridas += inserir.run(contaId, id).changes;
+        return { inseridas, existentes: ids.length - inseridas };
+      });
+    },
+
     reservarMensagem({ contaId, agora = Date.now(), leaseMs = 300000 }) {
       inteiroPositivo(contaId, "Conta");
       instante(agora);
@@ -447,6 +575,44 @@ export function criarRepositorioGmail(banco) {
               tentativas=tentativas+1, lease_token=?, lease_ate=?,
               proxima_tentativa_em=NULL, erro_codigo=NULL,
               atualizado_em=CURRENT_TIMESTAMP WHERE id=?`,
+          )
+          .run(token, agora + leaseMs, candidata.id);
+        return {
+          ...banco
+            .prepare("SELECT * FROM gmail_mensagens WHERE id=?")
+            .get(candidata.id),
+        };
+      });
+    },
+
+    reservarMensagemPorId({
+      contaId,
+      messageId,
+      agora = Date.now(),
+      leaseMs = 300000,
+    }) {
+      inteiroPositivo(contaId, "Conta");
+      const id = texto(messageId, "Message ID", 512);
+      instante(agora);
+      if (!Number.isSafeInteger(leaseMs) || leaseMs < 1000 || leaseMs > 3600000)
+        throw new Error("Duração do lease inválida.");
+      return transacao(banco, () => {
+        contaOperante(banco, contaId);
+        const candidata = banco
+          .prepare(
+            `SELECT * FROM gmail_mensagens WHERE conta_id=? AND message_id=? AND
+            estado IN ('pendente','falha_temporaria','em_processamento') AND
+            (estado='pendente' OR (estado='falha_temporaria' AND proxima_tentativa_em<=?) OR
+             (estado='em_processamento' AND lease_ate<=?))`,
+          )
+          .get(contaId, id, agora, agora);
+        if (!candidata) return null;
+        const token = randomUUID();
+        banco
+          .prepare(
+            `UPDATE gmail_mensagens SET estado='em_processamento',
+          tentativas=tentativas+1, lease_token=?, lease_ate=?,
+          proxima_tentativa_em=NULL, erro_codigo=NULL, atualizado_em=CURRENT_TIMESTAMP WHERE id=?`,
           )
           .run(token, agora + leaseMs, candidata.id);
         return {
@@ -666,6 +832,44 @@ export function criarRepositorioGmail(banco) {
           ...banco
             .prepare("SELECT * FROM gmail_anexos WHERE id=?")
             .get(candidato.id),
+        };
+      });
+    },
+
+    reservarAnexoDaMensagem({
+      contaId,
+      messageId,
+      agora = Date.now(),
+      leaseMs = 300000,
+    }) {
+      inteiroPositivo(contaId, "Conta");
+      const id = texto(messageId, "Message ID", 512);
+      instante(agora);
+      if (!Number.isSafeInteger(leaseMs) || leaseMs < 1000 || leaseMs > 3600000)
+        throw new Error("Duração do lease inválida.");
+      return transacao(banco, () => {
+        contaOperante(banco, contaId);
+        const candidata = banco
+          .prepare(
+            `SELECT * FROM gmail_anexos WHERE conta_id=? AND message_id=? AND
+            estado IN ('pendente','falha_temporaria','em_processamento') AND
+            (estado='pendente' OR (estado='falha_temporaria' AND proxima_tentativa_em<=?) OR
+             (estado='em_processamento' AND lease_ate<=?)) ORDER BY tentativas,id LIMIT 1`,
+          )
+          .get(contaId, id, agora, agora);
+        if (!candidata) return null;
+        const token = randomUUID();
+        banco
+          .prepare(
+            `UPDATE gmail_anexos SET estado='em_processamento',
+          tentativas=tentativas+1, lease_token=?, lease_ate=?,
+          proxima_tentativa_em=NULL, erro_codigo=NULL, atualizado_em=CURRENT_TIMESTAMP WHERE id=?`,
+          )
+          .run(token, agora + leaseMs, candidata.id);
+        return {
+          ...banco
+            .prepare("SELECT * FROM gmail_anexos WHERE id=?")
+            .get(candidata.id),
         };
       });
     },

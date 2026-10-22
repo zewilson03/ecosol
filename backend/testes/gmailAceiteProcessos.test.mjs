@@ -459,6 +459,7 @@ async function aceite() {
         [
           "gmail_anexos",
           "gmail_auditoria",
+          "gmail_capturas_periodo",
           "gmail_contas",
           "gmail_credenciais",
           "gmail_mensagens",
