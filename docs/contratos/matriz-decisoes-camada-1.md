@@ -13,6 +13,7 @@ Data do levantamento: 21/10/2026. Escopo: conteúdo necessário para transformar
 | D-05 | Goiás e DF são pacotes independentes.                              | Cada seleção usa somente seus três documentos, empresa e concessionária.                        | Comercial + jurídico          |
 | D-06 | Todo `XXXX...` ou `****...` é substituído por dado correspondente. | Marcadores viram campos nomeados; marcador residual bloqueia publicação/envio.                  | Produto + jurídico            |
 | D-07 | Prévia e download são permitidos antes da assinatura.              | Cópia permanece identificada como não assinada e não libera cadastro ou venda.                  | Produto + operação            |
+| D-11 | O documento exibido preserva exatamente o PDF original.            | A composição usa o modelo aprovado como base e modifica somente as áreas variáveis mapeadas.    | Produto + jurídico            |
 | D-08 | DocuSign é obrigatório para concluir contratos gerados no Ecosol.  | Somente confirmação do backend libera a venda e o arquivamento como assinado.                   | Produto + jurídico            |
 | D-09 | Contratos já realizados manualmente podem ser importados.          | Entram com origem manual e conferência; não recebem envelope DocuSign retroativo fictício.      | Produto + operação            |
 | D-10 | Contrato atualizado é uma nova versão.                             | Histórico não é sobrescrito; versão anterior só é substituída após nova validação e vigência.   | Produto + jurídico            |

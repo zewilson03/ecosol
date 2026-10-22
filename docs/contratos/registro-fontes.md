@@ -34,7 +34,7 @@ Inventário iniciado em 21/10/2026 para a Camada 1 da [SEJM-29](https://sistema-
 
 - Os seis arquivos são PDFs A4, não criptografados e sem campos AcroForm.
 - O hash identifica exatamente o arquivo analisado. Arquivo com conteúdo diferente é uma nova fonte e precisa de novo registro.
-- O PDF é referência de conteúdo e visual; não será editado nem usado como formulário de produção.
+- O PDF aprovado é a base visual imutável da composição de produção. Ele não será alterado diretamente: o sistema gera uma nova instância aplicando somente os dados variáveis nas posições versionadas.
 - Arquivos editáveis DOCX ainda não foram recebidos.
 - Dados pessoais reais não devem ser adicionados ao repositório, ao Jira ou aos exemplos de homologação.
 

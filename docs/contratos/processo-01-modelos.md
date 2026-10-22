@@ -67,7 +67,7 @@ Entregar dois pacotes contratuais aprovados e versionados, Goiás e Distrito Fed
 3. Definir destinatários, papéis, ordem e locais de assinatura.
 4. Fixar regras regionais de empresa, concessionária, textos, datas e identificação.
 
-**Tecnologias úteis:** DocuSign Document Generation com DOCX e tabelas dinâmicas, se disponível no plano produtivo; caso contrário, templates HTML/CSS versionados renderizados para PDF. O domínio deve depender de uma interface de geração, não da ferramenta escolhida.
+**Tecnologias úteis:** PDF original versionado como base imutável, biblioteca de composição capaz de desenhar texto com coordenadas e fontes controladas, manifesto declarativo por versão e renderização Poppler para comparação visual. DocuSign Document Generation com DOCX só será alternativa se a saída for comprovadamente fiel ao original. O domínio deve depender de uma interface de geração, não da ferramenta escolhida.
 
 **Aceite da camada**
 
@@ -95,6 +95,8 @@ Entregar dois pacotes contratuais aprovados e versionados, Goiás e Distrito Fed
 **Aceite da camada**
 
 - [ ] Nenhum PDF contém `XXXX`, `****`, corte, sobreposição ou página vazia indevida.
+- [ ] O PDF preparado conserva o visual do modelo original; fora das áreas variáveis mapeadas, não há alteração visual nem textual.
+- [ ] Prévia, download e arquivo destinado ao DocuSign são o mesmo artefato preparado, confirmado pelo mesmo hash.
 - [ ] Duas gerações da mesma versão e dos mesmos dados resultam no mesmo conteúdo lógico e metadados controlados.
 - [ ] Dados de uma região não aparecem na outra.
 - [ ] Casos com várias UCs preservam todas as linhas.

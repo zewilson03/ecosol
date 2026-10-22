@@ -19,7 +19,7 @@ As dependências acima indicam ordem de implementação; as relações com SEJM-
 
 ## Próximo passo
 
-Executar a [SEJM-29](https://sistema-ecosol.atlassian.net/browse/SEJM-29) em cinco camadas: fontes e governança; contrato de dados e marcadores; composição documental; prova de geração; aprovação e publicação. Começar pela identificação e hash das seis fontes, obtenção dos DOCX e definição dos responsáveis pelo aceite. Em paralelo, confirmar se a conta de produção oferece Document Generation; se não oferecer, aplicar o plano HTML/CSS → PDF.
+Executar a [SEJM-29](https://sistema-ecosol.atlassian.net/browse/SEJM-29) em cinco camadas: fontes e governança; contrato de dados e marcadores; composição documental sobre os PDFs originais; prova de geração; aprovação e publicação. Começar pela identificação e hash das seis fontes, pelo manifesto de posições variáveis e pela definição dos responsáveis pelo aceite. A saída deve manter exatamente o modelo recebido; HTML/CSS pode compor a interface, mas não substituir o documento contratual.
 
 ## Artefatos
 
