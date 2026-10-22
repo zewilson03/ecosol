@@ -15,6 +15,110 @@ const LIMITE_PROFUNDIDADE = 12;
 const PAGINAS_POR_EXECUCAO = 20;
 const MENSAGENS_POR_EXECUCAO = 100;
 const ANEXOS_POR_EXECUCAO = 25;
+const FUSO_RECEBIMENTO = "America/Sao_Paulo";
+
+function partesNoFuso(instante) {
+  return Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: FUSO_RECEBIMENTO,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    })
+      .formatToParts(instante)
+      .filter((parte) => parte.type !== "literal")
+      .map((parte) => [parte.type, parte.value]),
+  );
+}
+
+function offsetNoFuso(instante) {
+  const nome = new Intl.DateTimeFormat("en-US", {
+    timeZone: FUSO_RECEBIMENTO,
+    timeZoneName: "longOffset",
+  })
+    .formatToParts(instante)
+    .find((parte) => parte.type === "timeZoneName")?.value;
+  const encontrado = /^GMT([+-])(\d{2}):(\d{2})$/.exec(nome ?? "");
+  if (!encontrado) throw new Error("Fuso horário indisponível.");
+  const minutos = Number(encontrado[2]) * 60 + Number(encontrado[3]);
+  return (encontrado[1] === "+" ? 1 : -1) * minutos * 60_000;
+}
+
+// Entradas do painel são horas civis de São Paulo; não use o fuso do servidor.
+export function instanteNoFusoDeSaoPaulo(valor) {
+  if (
+    typeof valor !== "string" ||
+    !/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.test(valor)
+  )
+    throw new TypeError("Data e hora inválidas.");
+  const [, ano, mes, dia, hora, minuto, segundo = "00"] = valor.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/,
+  );
+  const civil = Date.UTC(
+    Number(ano),
+    Number(mes) - 1,
+    Number(dia),
+    Number(hora),
+    Number(minuto),
+    Number(segundo),
+  );
+  const valida = new Date(civil);
+  if (
+    valida.getUTCFullYear() !== Number(ano) ||
+    valida.getUTCMonth() !== Number(mes) - 1 ||
+    valida.getUTCDate() !== Number(dia) ||
+    valida.getUTCHours() !== Number(hora) ||
+    valida.getUTCMinutes() !== Number(minuto) ||
+    valida.getUTCSeconds() !== Number(segundo)
+  )
+    throw new TypeError("Data e hora inválidas.");
+  let instante = civil - offsetNoFuso(civil);
+  instante = civil - offsetNoFuso(instante);
+  const partes = partesNoFuso(instante);
+  if (
+    partes.year !== ano ||
+    partes.month !== mes ||
+    partes.day !== dia ||
+    partes.hour !== hora ||
+    partes.minute !== minuto ||
+    partes.second !== segundo
+  )
+    throw new TypeError("Data e hora inválidas.");
+  return instante;
+}
+
+export function validarPeriodoRecebimento(periodo) {
+  if (!periodo || typeof periodo !== "object")
+    throw new TypeError("Período de recebimento inválido.");
+  const inicio = instanteNoFusoDeSaoPaulo(periodo.inicio);
+  const fim = instanteNoFusoDeSaoPaulo(periodo.fim);
+  if (inicio >= fim) throw new TypeError("O início deve ser anterior ao fim.");
+  return { inicio, fim, inicioLocal: periodo.inicio, fimLocal: periodo.fim };
+}
+
+export function atalhoDiarioOitoHoras(agora = Date.now()) {
+  const hoje = partesNoFuso(agora);
+  const meiaNoite = Date.UTC(
+    Number(hoje.year),
+    Number(hoje.month) - 1,
+    Number(hoje.day),
+  );
+  const ontem = partesNoFuso(meiaNoite - 12 * 60 * 60_000);
+  return {
+    inicio: `${ontem.year}-${ontem.month}-${ontem.day}T08:00`,
+    fim: `${hoje.year}-${hoje.month}-${hoje.day}T08:00`,
+    fuso: FUSO_RECEBIMENTO,
+  };
+}
+
+export function recebidaNoPeriodo(internalDate, periodo) {
+  const instante = BigInt(internalDate);
+  return instante >= BigInt(periodo.inicio) && instante < BigInt(periodo.fim);
+}
 
 function configuracao() {
   return {
@@ -151,14 +255,23 @@ export function criarSincronizadorGmail({
     cliente,
     accessToken,
     repo,
+    somenteMensagens = null,
+    periodo = null,
   }) {
     for (
       let processadas = 0;
-      processadas < MENSAGENS_POR_EXECUCAO;
+      processadas <
+      (somenteMensagens ? somenteMensagens.length : MENSAGENS_POR_EXECUCAO);
       processadas++
     ) {
-      const mensagem = repo.reservarMensagem({ contaId, agora: agora() });
-      if (!mensagem) break;
+      const messageId = somenteMensagens?.[processadas] ?? null;
+      const mensagem = messageId
+        ? repo.reservarMensagemPorId({ contaId, messageId, agora: agora() })
+        : repo.reservarMensagem({ contaId, agora: agora() });
+      if (!mensagem) {
+        if (somenteMensagens) continue;
+        break;
+      }
       try {
         const dados = await cliente.obterMensagem({
           accessToken,
@@ -171,8 +284,12 @@ export function criarSincronizadorGmail({
         const excluida = (dados.labelIds ?? []).some((id) =>
           ["SPAM", "TRASH", "SENT", "DRAFT"].includes(id),
         );
+        const foraDoPeriodo =
+          periodo && !recebidaNoPeriodo(dados.internalDate, periodo);
         const anexos =
-          anteriorAoInicio || excluida ? [] : partesPdf(dados.payload);
+          anteriorAoInicio || foraDoPeriodo || excluida
+            ? []
+            : partesPdf(dados.payload);
         const registrou = repo.registrarAnexosDaMensagem({
           mensagemId: mensagem.id,
           leaseToken: mensagem.lease_token,
@@ -204,14 +321,28 @@ export function criarSincronizadorGmail({
     }
   }
 
-  async function processarAnexos({ contaId, cliente, accessToken, repo, db }) {
+  async function processarAnexos({
+    contaId,
+    cliente,
+    accessToken,
+    repo,
+    db,
+    somenteMensagens = null,
+  }) {
     for (
       let processados = 0;
-      processados < ANEXOS_POR_EXECUCAO;
+      processados <
+      (somenteMensagens ? somenteMensagens.length : ANEXOS_POR_EXECUCAO);
       processados++
     ) {
-      const anexo = repo.reservarAnexo({ contaId, agora: agora() });
-      if (!anexo) break;
+      const messageId = somenteMensagens?.[processados] ?? null;
+      const anexo = messageId
+        ? repo.reservarAnexoDaMensagem({ contaId, messageId, agora: agora() })
+        : repo.reservarAnexo({ contaId, agora: agora() });
+      if (!anexo) {
+        if (somenteMensagens) continue;
+        break;
+      }
       try {
         const mensagem = await cliente.obterMensagem({
           accessToken,
@@ -348,6 +479,186 @@ export function criarSincronizadorGmail({
     } while (progresso.cursor_pagina);
   }
 
+  async function abrirConta(contaId) {
+    const db = banco();
+    const repo = criarRepositorioGmail(db);
+    const conta = repo.obterConta(contaId);
+    if (conta.status_autorizacao !== "conectada" || conta.pausada)
+      throw new Error("Conta Gmail pausada ou sem autorização.");
+    const cfg = configuracao();
+    const credencial = db
+      .prepare(
+        "SELECT refresh_token_cifrado,email_verificado FROM gmail_credenciais WHERE conta_id=?",
+      )
+      .get(contaId);
+    if (!credencial || credencial.email_verificado !== conta.email)
+      throw new Error("Credencial Gmail indisponível.");
+    const refreshToken = decifrarRefreshToken(
+      credencial.refresh_token_cifrado,
+      contaId,
+      chaveDeCriptografia(cfg.encryptionKey),
+    );
+    const cliente = clienteComRenovacao(criarCliente(cfg), refreshToken, agora);
+    const perfil = await cliente.obterPerfilCompleto();
+    if (perfil.email !== conta.email) {
+      repo.definirAutorizacao({ contaId, estado: "reconectar" });
+      throw new Error("Identidade Gmail divergente; reconexão necessária.");
+    }
+    return { db, repo, conta, cliente, perfil };
+  }
+
+  async function listarPeriodo({ cliente, periodo }) {
+    const mensagens = [];
+    let pagina = null;
+    do {
+      const resultado = await cliente.listarMensagens({
+        recebidaApos: Math.floor(periodo.inicio / 1000),
+        recebidaAntes: Math.ceil(periodo.fim / 1000),
+        pagina,
+        tamanhoPagina: 100,
+      });
+      for (const candidata of resultado.mensagens) {
+        const dados = await cliente.obterMensagem({
+          id: candidata.id,
+          somenteMetadados: true,
+        });
+        const excluida = (dados.labelIds ?? []).some((id) =>
+          ["SPAM", "TRASH", "SENT", "DRAFT"].includes(id),
+        );
+        if (excluida || !recebidaNoPeriodo(dados.internalDate, periodo))
+          continue;
+        mensagens.push({
+          id: candidata.id,
+          anexos: partesPdf(dados.payload).length,
+        });
+      }
+      pagina = resultado.proximaPagina;
+    } while (pagina);
+    return mensagens;
+  }
+
+  async function preverPeriodo(contaId, periodoBruto) {
+    const periodo = validarPeriodoRecebimento(periodoBruto);
+    const { cliente } = await abrirConta(contaId);
+    const mensagens = await listarPeriodo({ cliente, periodo });
+    return {
+      inicio: periodo.inicioLocal,
+      fim: periodo.fimLocal,
+      fuso: FUSO_RECEBIMENTO,
+      emails: mensagens.length,
+      anexos: mensagens.reduce((total, mensagem) => total + mensagem.anexos, 0),
+    };
+  }
+
+  async function capturarPeriodo(contaId, periodoBruto) {
+    if (emAndamento.has(contaId)) return { iniciada: false };
+    emAndamento.add(contaId);
+    try {
+      const periodo = validarPeriodoRecebimento(periodoBruto);
+      const { db, repo, conta, cliente } = await abrirConta(contaId);
+      const execucao = repo.iniciarCapturaPeriodo({
+        contaId,
+        inicio: periodo.inicioLocal,
+        fim: periodo.fimLocal,
+        agora: agora(),
+      });
+      if (execucao.existente) return { iniciada: false, execucao };
+      const mensagens = await listarPeriodo({ cliente, periodo });
+      const totalAnexos = mensagens.reduce(
+        (total, mensagem) => total + mensagem.anexos,
+        0,
+      );
+      repo.atualizarCapturaPeriodo({
+        id: execucao.id,
+        emails: mensagens.length,
+        anexos: totalAnexos,
+      });
+      repo.registrarMensagensAvulsas({
+        contaId,
+        mensagens: mensagens.map((mensagem) => mensagem.id),
+      });
+      const ids = mensagens.map((mensagem) => mensagem.id);
+      await processarMensagens({
+        contaId,
+        conta,
+        cliente,
+        repo,
+        somenteMensagens: ids,
+        periodo,
+      });
+      const anexos = mensagens.flatMap((mensagem) =>
+        Array.from({ length: mensagem.anexos }, () => mensagem.id),
+      );
+      await processarAnexos({
+        contaId,
+        cliente,
+        repo,
+        db,
+        somenteMensagens: anexos,
+      });
+      const marcadores = ids.map(() => "?").join(",");
+      const estados = ids.length
+        ? db
+            .prepare(
+              `SELECT estado,COUNT(*) quantidade FROM gmail_anexos
+               WHERE conta_id=? AND message_id IN (${marcadores}) GROUP BY estado`,
+            )
+            .all(contaId, ...ids)
+        : [];
+      const quantidade = (estado) =>
+        estados.find((item) => item.estado === estado)?.quantidade ?? 0;
+      const resultado = repo.concluirCapturaPeriodo({
+        id: execucao.id,
+        estado: "concluida",
+        capturados: quantidade("capturado"),
+        duplicados: quantidade("duplicado"),
+        triagem: quantidade("pendente_manual"),
+        falhas: quantidade("falha_temporaria"),
+        agora: agora(),
+      });
+      return {
+        iniciada: true,
+        execucao: resultado,
+      };
+    } catch (erro) {
+      try {
+        const periodo = validarPeriodoRecebimento(periodoBruto);
+        const repo = criarRepositorioGmail(banco());
+        const existente = repo.iniciarCapturaPeriodo({
+          contaId,
+          inicio: periodo.inicioLocal,
+          fim: periodo.fimLocal,
+          agora: agora(),
+        });
+        if (!existente.existente)
+          repo.concluirCapturaPeriodo({
+            id: existente.id,
+            estado: "falha",
+            capturados: 0,
+            duplicados: 0,
+            triagem: 0,
+            falhas: 1,
+            erroCodigo: codigoSeguro(erro),
+            agora: agora(),
+          });
+      } catch {
+        // A falha original ainda será observável na próxima prévia manual.
+      }
+      try {
+        banco()
+          .prepare(
+            "UPDATE gmail_sincronizacoes SET ultimo_erro_codigo=? WHERE conta_id=?",
+          )
+          .run(codigoSeguro(erro), contaId);
+      } catch {
+        // A falha original ainda será observável na próxima prévia manual.
+      }
+      throw erro;
+    } finally {
+      emAndamento.delete(contaId);
+    }
+  }
+
   async function sincronizar(contaId) {
     if (emAndamento.has(contaId)) return { iniciada: false };
     emAndamento.add(contaId);
@@ -431,5 +742,10 @@ export function criarSincronizadorGmail({
     }
   }
 
-  return { sincronizar, emAndamento: (contaId) => emAndamento.has(contaId) };
+  return {
+    sincronizar,
+    preverPeriodo,
+    capturarPeriodo,
+    emAndamento: (contaId) => emAndamento.has(contaId),
+  };
 }

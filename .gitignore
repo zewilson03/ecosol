@@ -16,7 +16,3 @@ __pycache__/
 *.p12
 *.key
 *.pem
-# Planilhas Excel
-*.xlsx
-*.xls
-*.xlsm

@@ -57,6 +57,38 @@ type PaginaTriagemGmail = {
   proximoAntes: number | null;
   contagens: { classificacao: string; quantidade: number }[];
 };
+type ItemConferenciaGmail = {
+  id: number;
+  anexoId: number;
+  messageId: string;
+  recebidoEm: string;
+  nome: string;
+  uc: string | null;
+  competencia: string | null;
+  vencimento: string | null;
+  cliente: string | null;
+  usina: string | null;
+  unidadeId: number | null;
+  nomeProposto: string | null;
+  situacao: "vinculo_seguro" | "revisar";
+  metodo: string;
+};
+type PreviaPeriodoGmail = {
+  inicio: string;
+  fim: string;
+  fuso: string;
+  emails: number;
+  anexos: number;
+};
+type CapturaPeriodo = {
+  estado: "em_andamento" | "concluida" | "falha";
+  emails: number;
+  anexos: number;
+  capturados: number;
+  duplicados: number;
+  triagem: number;
+  falhas: number;
+};
 
 function quantidade(estados: Contagem[], estado: string) {
   return estados.find((item) => item.estado === estado)?.quantidade ?? 0;
@@ -367,6 +399,12 @@ function AcompanhamentoGmail({
     `${base}/${contaId}/pendencias`,
   );
   const [iniciando, definirIniciando] = useState(false);
+  const [periodo, definirPeriodo] = useState({ inicio: "", fim: "" });
+  const [previaPeriodo, definirPreviaPeriodo] =
+    useState<PreviaPeriodoGmail | null>(null);
+  const [consultandoPeriodo, definirConsultandoPeriodo] = useState(false);
+  const [capturaPeriodo, definirCapturaPeriodo] =
+    useState<CapturaPeriodo | null>(null);
   const [erro, definirErro] = useState("");
   const [maisPendencias, definirMaisPendencias] = useState<PendenciasGmail>({
     mensagens: [],
@@ -412,6 +450,95 @@ function AcompanhamentoGmail({
       definirIniciando(false);
     }
   }
+
+  function alterarPeriodo(campo: "inicio" | "fim", valor: string) {
+    definirPeriodo((atual) => ({ ...atual, [campo]: valor }));
+    definirPreviaPeriodo(null);
+  }
+
+  async function aplicarAtalhoDiario() {
+    definirErro("");
+    try {
+      const atalho = await consultarServidor<{ inicio: string; fim: string }>(
+        "/api/admin/gmail/periodo-diario",
+      );
+      definirPeriodo({ inicio: atalho.inicio, fim: atalho.fim });
+      definirPreviaPeriodo(null);
+    } catch (falha) {
+      definirErro((falha as Error).message);
+    }
+  }
+
+  async function consultarPreviaPeriodo() {
+    definirErro("");
+    definirConsultandoPeriodo(true);
+    try {
+      const previa = await consultarServidor<PreviaPeriodoGmail>(
+        `${base}/${contaId}/periodo/previa`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ periodo }),
+        },
+      );
+      definirPreviaPeriodo(previa);
+    } catch (falha) {
+      definirPreviaPeriodo(null);
+      definirErro((falha as Error).message);
+    } finally {
+      definirConsultandoPeriodo(false);
+    }
+  }
+
+  async function capturarPeriodo() {
+    if (!previaPeriodo) return;
+    definirErro("");
+    definirIniciando(true);
+    try {
+      await consultarServidor(`${base}/${contaId}/periodo/capturar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ periodo }),
+      });
+      definirPreviaPeriodo(null);
+      definirCapturaPeriodo({
+        estado: "em_andamento",
+        emails: 0,
+        anexos: 0,
+        capturados: 0,
+        duplicados: 0,
+        triagem: 0,
+        falhas: 0,
+      });
+      consulta.atualizar();
+    } catch (falha) {
+      definirErro((falha as Error).message);
+    } finally {
+      definirIniciando(false);
+    }
+  }
+
+  useEffect(() => {
+    if (capturaPeriodo?.estado !== "em_andamento") return;
+    const consultarStatus = async () => {
+      try {
+        const resultado = await consultarServidor<{
+          captura: CapturaPeriodo | null;
+        }>(`${base}/${contaId}/periodo/status`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ periodo }),
+        });
+        if (resultado.captura) definirCapturaPeriodo(resultado.captura);
+        else window.setTimeout(consultarStatus, 1000);
+      } catch (falha) {
+        definirErro((falha as Error).message);
+      }
+    };
+    void consultarStatus();
+    const intervalo = window.setInterval(consultarStatus, 2000);
+    return () => window.clearInterval(intervalo);
+  }, [capturaPeriodo?.estado, contaId, periodo]);
 
   async function reagendar(tipo: "mensagens" | "anexos", itemId: number) {
     definirErro("");
@@ -566,6 +693,94 @@ function AcompanhamentoGmail({
           >
             {iniciando ? "Iniciando…" : "Sincronizar agora"}
           </button>
+          <section className="gmail-periodo" aria-label="Captura por período">
+            <h5>Captura por período</h5>
+            <p>
+              Consulte a prévia antes de capturar. O início é inclusivo e o fim
+              é exclusivo, sempre no fuso de São Paulo.
+            </p>
+            <div className="admin-campos">
+              <label>
+                Recebido a partir de
+                <input
+                  type="datetime-local"
+                  value={periodo.inicio}
+                  onChange={(evento) =>
+                    alterarPeriodo("inicio", evento.target.value)
+                  }
+                />
+              </label>
+              <label>
+                Recebido antes de
+                <input
+                  type="datetime-local"
+                  value={periodo.fim}
+                  onChange={(evento) =>
+                    alterarPeriodo("fim", evento.target.value)
+                  }
+                />
+              </label>
+            </div>
+            <div className="gmail-conta-acoes">
+              <button
+                className="admin-botao secundario"
+                type="button"
+                onClick={aplicarAtalhoDiario}
+                disabled={iniciando || consultandoPeriodo}
+              >
+                Ontem 08:00 → hoje 08:00
+              </button>
+              <button
+                className="admin-botao secundario"
+                type="button"
+                onClick={consultarPreviaPeriodo}
+                disabled={!ativo || iniciando || consultandoPeriodo}
+              >
+                {consultandoPeriodo ? "Consultando…" : "Ver prévia"}
+              </button>
+              <button
+                className="admin-botao"
+                type="button"
+                onClick={capturarPeriodo}
+                disabled={!ativo || iniciando || !previaPeriodo}
+              >
+                Capturar e-mails da prévia
+              </button>
+            </div>
+            {previaPeriodo && (
+              <p className="admin-aviso" role="status">
+                Prévia: {previaPeriodo.emails} e-mail(s) e{" "}
+                {previaPeriodo.anexos} PDF(s) elegível(is). Nenhum documento foi
+                importado nesta consulta.
+              </p>
+            )}
+            {capturaPeriodo && (
+              <p
+                className={`admin-aviso ${capturaPeriodo.estado === "falha" ? "erro" : ""}`}
+                role="status"
+              >
+                Período: {periodo.inicio} até {periodo.fim}.{" "}
+                {capturaPeriodo.estado === "em_andamento"
+                  ? "Captura em andamento…"
+                  : capturaPeriodo.estado === "concluida"
+                    ? "Captura concluída."
+                    : "Captura encerrada com falha."}{" "}
+                E-mails: {capturaPeriodo.emails}; PDFs: {capturaPeriodo.anexos};
+                capturados: {capturaPeriodo.capturados}; duplicados:{" "}
+                {capturaPeriodo.duplicados}; triagem: {capturaPeriodo.triagem};
+                falhas: {capturaPeriodo.falhas}; restantes:{" "}
+                {Math.max(
+                  0,
+                  capturaPeriodo.anexos -
+                    capturaPeriodo.capturados -
+                    capturaPeriodo.duplicados -
+                    capturaPeriodo.triagem -
+                    capturaPeriodo.falhas,
+                )}
+                .
+              </p>
+            )}
+          </section>
           {pendencias.dados?.mensagens.length ||
           pendencias.dados?.anexos.length ? (
             <div className="gmail-pendencias">
@@ -669,6 +884,12 @@ function TriagemGmail({ contaId }: { contaId: number }) {
   >({});
   const [erro, definirErro] = useState("");
   const [mensagem, definirMensagem] = useState("");
+  const idsConferencia =
+    "685,686,687,688,689,690,691,692,693,694,695,696,697,698,699,700,701,702,703";
+  const conferencia = usarConsulta<{
+    itens: ItemConferenciaGmail[];
+    ausentes: number[];
+  }>(`${base}/${contaId}/triagem/conferencia?documentos=${idsConferencia}`);
   useEffect(() => {
     definirExtras([]);
     definirProximo(consulta.dados?.proximoAntes ?? null);
@@ -800,6 +1021,84 @@ function TriagemGmail({ contaId }: { contaId: number }) {
       ?.quantidade ?? 0;
   return (
     <section className="gmail-triagem">
+      <section
+        className="gmail-periodo"
+        aria-label="Conferência do lote de 22 de outubro"
+      >
+        <div className="admin-barra">
+          <h4>Lote Gmail — 22/10/2026</h4>
+          <button
+            className="admin-botao secundario"
+            type="button"
+            onClick={conferencia.atualizar}
+          >
+            Atualizar prévia
+          </button>
+        </div>
+        <p>
+          Prévia somente leitura dos 19 documentos confirmados. A confirmação e
+          a renomeação continuam bloqueadas nesta etapa.
+        </p>
+        {conferencia.erro && (
+          <p className="admin-aviso erro" role="alert">
+            {conferencia.erro}
+          </p>
+        )}
+        {conferencia.dados && (
+          <>
+            <p>
+              {
+                conferencia.dados.itens.filter(
+                  (item) => item.situacao === "vinculo_seguro",
+                ).length
+              }{" "}
+              com vínculo seguro ·{" "}
+              {
+                conferencia.dados.itens.filter(
+                  (item) => item.situacao === "revisar",
+                ).length
+              }{" "}
+              exigem revisão.
+            </p>
+            {conferencia.dados.itens.map((item) => (
+              <div className="gmail-triagem-item" key={item.id}>
+                <span>
+                  <strong>{item.nome}</strong> · UC {item.uc ?? "não extraída"}{" "}
+                  · {item.competencia ?? "sem competência"} ·{" "}
+                  {item.cliente ?? "SEM CLIENTE"} · {item.usina ?? "SEM USINA"}
+                  <br />
+                  Gmail: {item.messageId} · registrado em {item.recebidoEm} UTC
+                  <br />
+                  Nome cadastral proposto:{" "}
+                  {item.nomeProposto ??
+                    "não proposto — revise o vínculo"} ·{" "}
+                  {item.situacao === "vinculo_seguro"
+                    ? "Vínculo seguro"
+                    : "REVISAR"}
+                </span>
+                <a
+                  className="admin-botao secundario"
+                  href={`${base}/${contaId}/triagem/${item.id}/pdf`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Abrir PDF
+                </a>
+                {item.id === 685 ? (
+                  <a
+                    className="admin-botao secundario"
+                    href={`${base}/${contaId}/triagem/685/previa-central`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Abrir prévia Central
+                  </a>
+                ) : null}
+              </div>
+            ))}
+          </>
+        )}
+      </section>
       <div className="admin-barra">
         <h4>Triagem de PDFs</h4>
         <button

@@ -337,11 +337,29 @@ export function criarClienteGoogle(configuracao, fetchImpl = fetch) {
     async listarMensagens({
       accessToken,
       dataInicial,
+      recebidaApos = null,
+      recebidaAntes = null,
       pagina,
       tamanhoPagina = 100,
     }) {
+      const apos =
+        recebidaApos === null
+          ? instanteInicial(dataInicial) - 1
+          : Number.isSafeInteger(recebidaApos) && recebidaApos >= 0
+            ? recebidaApos - 1
+            : (() => {
+                throw new TypeError("Início do período inválido.");
+              })();
+      const antes =
+        recebidaAntes === null
+          ? null
+          : Number.isSafeInteger(recebidaAntes) && recebidaAntes > 0
+            ? recebidaAntes
+            : (() => {
+                throw new TypeError("Fim do período inválido.");
+              })();
       const url = urlApi("messages", {
-        q: `after:${instanteInicial(dataInicial) - 1}`,
+        q: `after:${apos}${antes === null ? "" : ` before:${antes}`}`,
         pageToken: paginaValida(pagina),
         maxResults: tamanhoValido(tamanhoPagina),
         includeSpamTrash: false,
