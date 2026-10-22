@@ -3,15 +3,26 @@ import { randomUUID } from "node:crypto";
 export function protecaoHttp(origemConfigurada) {
   const enderecoPermitido = new URL(origemConfigurada);
   const origemPermitida = enderecoPermitido.origin;
+  const possuiOrigemPermitida = (valor) => {
+    if (!valor || valor === "null") return false;
+    try {
+      return new URL(valor).origin === origemPermitida;
+    } catch {
+      return false;
+    }
+  };
   return (req, res, next) => {
     res.set("X-Content-Type-Options", "nosniff");
-    res.set("Referrer-Policy", "no-referrer");
+    // Não vaza caminhos para sites externos, mas permite que WebViews móveis
+    // comprovem a origem de formulários internos quando omitem `Origin`.
+    res.set("Referrer-Policy", "same-origin");
     res.set("X-Frame-Options", "SAMEORIGIN");
     if (req.path.startsWith("/api/")) res.set("Cache-Control", "no-store");
     if (["POST", "PATCH", "PUT", "DELETE"].includes(req.method)) {
-      if (req.headers["sec-fetch-site"] === "cross-site")
-        return res.sendStatus(403);
       if (req.headers.origin !== undefined) {
+        const origemExplicitaPermitida = possuiOrigemPermitida(
+          req.headers.origin,
+        );
         // Navegadores em contexto opaco podem enviar Origin: null mesmo para
         // um formulário local. Aceitar somente quando o navegador confirma
         // mesma origem e o Host corresponde ao endereço configurado.
@@ -20,14 +31,13 @@ export function protecaoHttp(origemConfigurada) {
           req.headers["sec-fetch-site"] === "same-origin" &&
           req.headers.host?.toLowerCase() ===
             enderecoPermitido.host.toLowerCase();
-        if (!origemOpacaLocal) {
-          try {
-            if (new URL(req.headers.origin).origin !== origemPermitida)
-              return res.sendStatus(403);
-          } catch {
-            return res.sendStatus(403);
-          }
-        }
+        if (!origemExplicitaPermitida && !origemOpacaLocal)
+          return res.sendStatus(403);
+      } else if (
+        req.headers["sec-fetch-site"] === "cross-site" &&
+        !possuiOrigemPermitida(req.headers.referer)
+      ) {
+        return res.sendStatus(403);
       }
     }
     next();

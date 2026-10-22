@@ -6,6 +6,7 @@ const camposResultado = new Set([
   "provedor_id",
   "estado",
   "codigo",
+  "artefatos",
 ]);
 const identificadorSeguro = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
 const codigoSeguro = /^[A-Z0-9][A-Z0-9_.:-]{0,79}$/;
@@ -38,6 +39,40 @@ function validarResultado(etapa, resultado) {
     foraDoContrato();
   if (resultado.codigo != null && !codigoSeguro.test(resultado.codigo))
     foraDoContrato();
+  if (resultado.artefatos != null) {
+    const artefatos = resultado.artefatos;
+    const permitidos = new Set([
+      "linha_digitavel",
+      "codigo_barras",
+      "qr_code",
+      "pdf_base64",
+    ]);
+    if (
+      !artefatos ||
+      typeof artefatos !== "object" ||
+      Array.isArray(artefatos) ||
+      Object.keys(artefatos).some((campo) => !permitidos.has(campo))
+    )
+      foraDoContrato();
+    for (const campo of ["linha_digitavel", "codigo_barras"])
+      if (artefatos[campo] != null && !/^\d{40,60}$/.test(artefatos[campo]))
+        foraDoContrato();
+    if (
+      artefatos.qr_code != null &&
+      (typeof artefatos.qr_code !== "string" ||
+        !artefatos.qr_code ||
+        artefatos.qr_code.length > 8_192 ||
+        /[\r\n]/.test(artefatos.qr_code))
+    )
+      foraDoContrato();
+    if (
+      artefatos.pdf_base64 != null &&
+      (typeof artefatos.pdf_base64 !== "string" ||
+        !/^[A-Za-z0-9+/]+={0,2}$/.test(artefatos.pdf_base64) ||
+        artefatos.pdf_base64.length > 7_000_000)
+    )
+      foraDoContrato();
+  }
   const temProvedor = resultado.provedor_id != null;
   if (temProvedor && !identificadorSeguro.test(resultado.provedor_id))
     foraDoContrato();
@@ -144,8 +179,8 @@ export function criarAdaptadorSicoob({
       return validarResultado(
         etapa,
         etapa === "registro"
-          ? contrato.interpretarRegistro(resposta)
-          : contrato.interpretarConsulta(resposta),
+          ? contrato.interpretarRegistro(resposta, entrada)
+          : contrato.interpretarConsulta(resposta, entrada),
       );
     } catch (erro) {
       if (erro instanceof FalhaDeIntegracaoBancaria) throw erro;

@@ -51,6 +51,13 @@ export function hashPrecisaAtualizar(senhaProtegida) {
   return formatoAntigo.test(String(senhaProtegida ?? ""));
 }
 
+export function cookieDeSessaoSeguro(variaveis = process.env) {
+  const appUrl = new URL(
+    variaveis.APP_URL ?? `http://localhost:${variaveis.PORT ?? 3000}`,
+  );
+  return appUrl.protocol === "https:";
+}
+
 export function sessaoAtual(requisicao) {
   const cookie = requisicao.headers.cookie
     ?.split(";")
@@ -83,7 +90,7 @@ export function iniciarSessao(resposta, perfil, identificador = null) {
       validade,
     );
 
-  const seguro = process.env.NODE_ENV === "production" ? "; Secure" : "";
+  const seguro = cookieDeSessaoSeguro() ? "; Secure" : "";
   resposta.setHeader(
     "Set-Cookie",
     `${nomeDoCookie}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${seguro}`,

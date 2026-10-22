@@ -18,7 +18,7 @@ Deixar a integração Sicoob pronta para receber os dados oficiais de homologaç
 - O e-mail nominal do Guardião ainda não foi informado.
 - Não existe canal previamente confirmado para notificar o titular após recuperação excepcional; o código registra o evento, mas não envia aviso.
 - Passkeys resistentes a phishing dependem de domínio HTTPS definitivo; em `localhost` só cabe ensaio local.
-- O adaptador Sicoob está preparado para receber contratos oficiais, mas não contém mapeamento bancário inventado nem credenciais; a integração real não está homologada.
+- Em 22/10/2026, OAuth Client Credentials e Cobrança Bancária v3 já possuem contrato local baseado na documentação oficial, com inclusão, consulta, `health` e artefatos de boleto testados contra servidor sintético. Credenciais, certificado, convênio e homologação conectada continuam pendentes; o executor permanece desligado.
 
 ## Critérios de aceite para encerrar o dia
 

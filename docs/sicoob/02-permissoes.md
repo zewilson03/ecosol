@@ -17,7 +17,7 @@ Negar por padrão. Adicionar permissões específicas ao usuário sem converter 
 | Conciliar divergência manual                  | Consultar              | Propor correção           | Confirmar correção justificada     | Não                           | Apenas evidências verificadas   |
 | Exportar auditoria                            | Sim, permissão própria | Não por padrão            | Não por padrão                     | Não por padrão                | Exportação protegida            |
 
-O mesmo usuário pode acumular papéis quando necessário, mas nunca aprovar o pagamento que preparou, nem sua própria alteração. A criação ou elevação de um aprovador precisa de controle independente; o administrador técnico não pode conceder a si mesmo poder financeiro. Prever cadastramento inicial supervisionado dos responsáveis. A autorização bancária exigida pelo Sicoob continua obrigatória e não é substituída pela aprovação local.
+O mesmo usuário pode acumular papéis quando necessário, mas a autoaprovação é proibida para todos os perfis comuns. A única exceção é o perfil crítico **Proprietário**, limitado a duas contas nominais: ele pode preparar e aprovar a própria operação, desde que use MFA ativo, confirmação bancária recente e aceite explícito, ficando a exceção registrada em tabela e auditoria próprias. O Administrador da integração, o Operador financeiro, o Aprovador financeiro e o Guardião de recuperação não recebem essa exceção. A criação ou elevação de um aprovador continua exigindo controle independente; ninguém pode conceder a si mesmo poder financeiro. A autorização exigida pelo Sicoob não é substituída pela aprovação local.
 
 ## Regras da autorização
 

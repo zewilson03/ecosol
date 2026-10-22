@@ -14,6 +14,8 @@ import {
   usarConsulta,
 } from "./comunicacaoComServidor";
 import type { Documento } from "./tiposFaturamento";
+import ObservabilidadeBancaria from "./ObservabilidadeBancaria";
+import ProntidaoSicoob from "./ProntidaoSicoob";
 import "./estilosBancarios.css";
 
 type Operacao = {
@@ -52,6 +54,16 @@ type Detalhe = Operacao & {
     resultado: string | null;
     codigo: string | null;
     iniciado_em: string;
+  }>;
+  conciliacoes: Array<{
+    estado: string;
+    estado_anterior: string;
+    estado_observado: string | null;
+    codigo: string | null;
+    tentativa: number;
+    solicitado_por: string;
+    iniciado_em: string;
+    concluido_em: string | null;
   }>;
   auditoria: Array<{
     ator_nome: string;
@@ -218,6 +230,12 @@ export default function Bancario() {
         </p>
       )}
       <EstadoDaConsulta {...sessao} repetir={sessao.atualizar} />
+
+      {gestor && <ProntidaoSicoob />}
+
+      {(papeis.includes("consulta_auditoria") || gestor) && (
+        <ObservabilidadeBancaria podeConciliar={gestor} />
+      )}
 
       {sessao.dados?.perfil === "equipe" && (
         <section className="bancario-executor">
@@ -622,6 +640,28 @@ export default function Bancario() {
                             <p key={item.id}>
                               <strong>{item.etapa}</strong> ·{" "}
                               {item.resultado ?? "em andamento"}
+                              <small>
+                                {item.codigo ?? "Sem código"} ·{" "}
+                                {dataHora(item.iniciado_em)}
+                              </small>
+                            </p>
+                          ))
+                        )}
+                      </div>
+                      <div>
+                        <h3>Conciliações</h3>
+                        {operacao.conciliacoes.length === 0 ? (
+                          <p>Nenhuma conciliação realizada.</p>
+                        ) : (
+                          operacao.conciliacoes.map((item) => (
+                            <p key={`${item.tentativa}-${item.iniciado_em}`}>
+                              <strong>
+                                Tentativa {item.tentativa} · {item.estado}
+                              </strong>
+                              <small>
+                                {item.solicitado_por} · {item.estado_anterior} →{" "}
+                                {item.estado_observado ?? "sem confirmação"}
+                              </small>
                               <small>
                                 {item.codigo ?? "Sem código"} ·{" "}
                                 {dataHora(item.iniciado_em)}

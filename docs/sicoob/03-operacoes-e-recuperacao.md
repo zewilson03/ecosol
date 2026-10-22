@@ -1,13 +1,15 @@
 # Operações, persistência e recuperação
 
-Status: núcleo local de operações e executor simulado implementados em 16/10/2026, ainda sem comunicação com o Sicoob. Cobranças aprovadas podem gerar snapshot imutável, aprovação segregada e intenção única na fila. O simulador exercita envio, consulta e recuperação de resultado desconhecido. Adaptador real, contrato Sicoob, cancelamento, pagamentos e conciliação bancária real permanecem pendentes.
+Status em 22/10/2026: núcleo local, executor simulado, OAuth Client Credentials, mTLS, contrato de Cobrança Bancária v3, inclusão, consulta e persistência de artefatos implementados e testados localmente com dados sintéticos. O executor real continua desligado e nenhuma comunicação financeira foi efetuada com o Sicoob. Cancelamento, pagamentos, webhook/conciliação real e homologação conectada permanecem pendentes.
 
 ## Entrega local implementada
 
 - `bancario_operacoes`: identidade lógica, BRL em centavos, origem/versionamento, snapshot canônico, hash, idempotência, estado e preparador.
-- `bancario_aprovacoes`: aprovação vinculada à versão e ao hash, obrigatoriamente por pessoa diferente do preparador.
+- `bancario_aprovacoes`: aprovação comum vinculada à versão e ao hash, obrigatoriamente por pessoa diferente do preparador.
+- `bancario_autoaprovacoes_proprietario`: exceção exclusiva do Proprietário, com perfil crítico vigente, MFA/confirmação recente e auditoria; nenhum outro perfil pode autoaprovar.
 - `bancario_intencoes`: uma intenção de emissão por operação/versão, pronta para o futuro executor.
 - `bancario_auditoria_operacoes`: preparação, aprovação e entrada na fila com ator e transição.
+- `bancario_artefatos_cobranca`: `nossoNumero`, linha digitável, código de barras, QR Code, PDF e hash do PDF, sem expor esses dados em logs.
 - Triggers rejeitam transições inválidas, aprovação divergente e intenção sem aprovação válida.
 - A origem é revalidada imediatamente antes da fila; mudança na fatura exige nova preparação e nova aprovação.
 - `SICOOB_AMBIENTE` aceita `homologacao` ou `producao`; `SICOOB_CONTA_REFERENCIA` é apenas uma referência interna, nunca credencial ou número secreto. Homologação é o padrão local enquanto não houver conexão externa.

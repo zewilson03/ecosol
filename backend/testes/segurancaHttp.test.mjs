@@ -6,6 +6,36 @@ import { spawnSync } from "node:child_process";
 import { request as requisicaoHttp } from "node:http";
 import express from "express";
 import { protecaoHttp, tratarErroHttp } from "../servidor/segurancaHttp.mjs";
+import { obterConfiguracaoRede } from "../servidor/configuracaoRede.mjs";
+
+assert.deepEqual(obterConfiguracaoRede({}), {
+  porta: 3000,
+  host: "127.0.0.1",
+  appUrl: "http://localhost:3000",
+});
+assert.deepEqual(
+  obterConfiguracaoRede({
+    HOST: "0.0.0.0",
+    APP_URL: "http://192.168.24.11:3000",
+  }),
+  {
+    porta: 3000,
+    host: "0.0.0.0",
+    appUrl: "http://192.168.24.11:3000",
+  },
+);
+assert.throws(
+  () => obterConfiguracaoRede({ HOST: "0.0.0.0" }),
+  /APP_URL é obrigatória/,
+);
+assert.throws(
+  () =>
+    obterConfiguracaoRede({
+      HOST: "0.0.0.0",
+      APP_URL: "http://localhost:3000",
+    }),
+  /endereço acessível pelo celular/,
+);
 
 // Configuração fictícia isolada; nunca lê/altera .env.local ou banco reais.
 const pasta = mkdtempSync(join(tmpdir(), "ecosol-seguranca-"));
@@ -38,6 +68,12 @@ const { rotas } = await import("../servidor/rotasDaAplicacao.mjs");
 const { obterBanco } = await import("../servidor/bancoDeDados.mjs");
 const { resumoCriptografico, senhaConfere } =
   await import("../servidor/autenticacao.mjs");
+const { cookieDeSessaoSeguro } = await import("../servidor/autenticacao.mjs");
+assert.equal(
+  cookieDeSessaoSeguro({ APP_URL: "http://192.168.24.11:3000" }),
+  false,
+);
+assert.equal(cookieDeSessaoSeguro({ APP_URL: "https://ecosol.example" }), true);
 const banco = obterBanco();
 const app = express();
 app.use(protecaoHttp("http://localhost:3000"));
@@ -124,6 +160,45 @@ try {
     200,
   );
   assert.equal(
+    (
+      await post(
+        "/teste",
+        {},
+        {
+          Origin: "http://localhost:3000",
+          "Sec-Fetch-Site": "cross-site",
+        },
+      )
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await post(
+        "/teste",
+        {},
+        {
+          Referer: "http://localhost:3000/equipe",
+          "Sec-Fetch-Site": "cross-site",
+        },
+      )
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await post(
+        "/teste",
+        {},
+        {
+          Referer: "https://outro.example/equipe",
+          "Sec-Fetch-Site": "cross-site",
+        },
+      )
+    ).status,
+    403,
+  );
+  assert.equal(
     (await post("/teste", {}, { "Sec-Fetch-Site": "cross-site" })).status,
     403,
   );
@@ -142,7 +217,7 @@ try {
   const anonimo = await fetch(base + "/api/dev/links");
   assert.equal(anonimo.status, 401);
   assert.equal(anonimo.headers.get("cache-control"), "no-store");
-  assert.equal(anonimo.headers.get("referrer-policy"), "no-referrer");
+  assert.equal(anonimo.headers.get("referrer-policy"), "same-origin");
   assert.equal(anonimo.headers.get("x-frame-options"), "SAMEORIGIN");
   const logs = [];
   const original = console.error;
