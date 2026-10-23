@@ -71,7 +71,18 @@ type ItemConferenciaGmail = {
   unidadeId: number | null;
   nomeProposto: string | null;
   situacao: "vinculo_seguro" | "revisar";
+  versao: number;
+  previaCentralDisponivel: boolean;
   metodo: string;
+};
+type SimulacaoCentral = {
+  documento: number;
+  situacao: "simulada" | "revisar";
+  motivos: string[];
+  ucNova?: string;
+  dadosFatura?: { energia?: string; tarifa?: string };
+  descontoContratual?: string;
+  valorBoleto?: string;
 };
 type PreviaPeriodoGmail = {
   inicio: string;
@@ -99,6 +110,10 @@ function instante(valor: number | null) {
 }
 
 const base = "/api/admin/gmail/contas";
+const documentosSimulacaoCentral = [685, 686, 689, 690, 698];
+function moeda(valor?: string) {
+  return valor === undefined ? "não encontrado" : `R$ ${valor}`;
+}
 const avisosDeRetorno: Record<RetornoOAuth, { texto: string; erro: boolean }> =
   {
     conectada: {
@@ -884,6 +899,10 @@ function TriagemGmail({ contaId }: { contaId: number }) {
   >({});
   const [erro, definirErro] = useState("");
   const [mensagem, definirMensagem] = useState("");
+  const [simulacoes, definirSimulacoes] = useState<
+    Record<number, SimulacaoCentral>
+  >({});
+  const [simulandoCentral, definirSimulandoCentral] = useState(false);
   const idsConferencia =
     "685,686,687,688,689,690,691,692,693,694,695,696,697,698,699,700,701,702,703";
   const conferencia = usarConsulta<{
@@ -936,6 +955,45 @@ function TriagemGmail({ contaId }: { contaId: number }) {
     } finally {
       definirOcupado(false);
     }
+  }
+
+  async function carregarSimulacaoCentral() {
+    definirErro("");
+    definirMensagem("");
+    definirSimulandoCentral(true);
+    try {
+      const resultado = await consultarServidor<{ itens: SimulacaoCentral[] }>(
+        `${base}/${contaId}/triagem/conferencia-central?documentos=${documentosSimulacaoCentral.join(",")}`,
+      );
+      definirSimulacoes(
+        Object.fromEntries(
+          resultado.itens.map((item) => [item.documento, item]),
+        ),
+      );
+    } catch (falha) {
+      definirErro((falha as Error).message);
+    } finally {
+      definirSimulandoCentral(false);
+    }
+  }
+
+  async function encaminharSimulado(item: ItemConferenciaGmail) {
+    if (simulacoes[item.id]?.situacao !== "simulada") return;
+    if (
+      !window.confirm(
+        "Encaminhar esta fatura para Faturas? A simulação não aprova nem emite cobrança; a aprovação financeira continua obrigatória no fluxo de Faturas.",
+      )
+    )
+      return;
+    await classificar(
+      {
+        id: item.id,
+        nome: item.nome,
+        classificacao: "triagem",
+        versao: item.versao,
+      },
+      "fatura",
+    );
   }
 
   const itens = [...(consulta.dados?.itens ?? []), ...extras];
@@ -1034,10 +1092,19 @@ function TriagemGmail({ contaId }: { contaId: number }) {
           >
             Atualizar prévia
           </button>
+          <button
+            className="admin-botao secundario"
+            type="button"
+            disabled={simulandoCentral}
+            onClick={carregarSimulacaoCentral}
+          >
+            {simulandoCentral ? "Simulando…" : "Simular valores da Central"}
+          </button>
         </div>
         <p>
-          Prévia somente leitura dos 19 documentos confirmados. A confirmação e
-          a renomeação continuam bloqueadas nesta etapa.
+          Prévia somente leitura dos 19 documentos confirmados. A simulação usa
+          o motor da Central sem gravar planilhas, PDFs ou cobranças. Ela não é
+          aprovação financeira.
         </p>
         {conferencia.erro && (
           <p className="admin-aviso erro" role="alert">
@@ -1075,24 +1142,76 @@ function TriagemGmail({ contaId }: { contaId: number }) {
                   {item.situacao === "vinculo_seguro"
                     ? "Vínculo seguro"
                     : "REVISAR"}
+                  {simulacoes[item.id] && (
+                    <>
+                      <br />
+                      Simulação Central: cliente{" "}
+                      {item.cliente ?? "não encontrado"}
+                      {" · "}UC{" "}
+                      {simulacoes[item.id].ucNova ??
+                        item.uc ??
+                        "não encontrada"}
+                      {" · "}usina {item.usina ?? "não encontrada"}
+                      {" · "}competência {item.competencia ?? "não encontrada"}
+                      {" · "}consumo{" "}
+                      {simulacoes[item.id].dadosFatura?.energia ??
+                        "não encontrado"}{" "}
+                      kWh
+                      {" · "}tarifa{" "}
+                      {moeda(simulacoes[item.id].dadosFatura?.tarifa)}
+                      {" · "}desconto{" "}
+                      {simulacoes[item.id].descontoContratual ??
+                        "não encontrado"}
+                      {" · "}valor simulado{" "}
+                      {moeda(simulacoes[item.id].valorBoleto)}
+                      <br />
+                      {simulacoes[item.id].situacao === "simulada"
+                        ? "Simulação válida — aguarda encaminhamento e aprovação humana em Faturas."
+                        : `REVISAR: ${simulacoes[item.id].motivos.join(", ") || "motivo não informado"}`}
+                    </>
+                  )}
                 </span>
                 <a
                   className="admin-botao secundario"
-                  href={`${base}/${contaId}/triagem/${item.id}/pdf`}
+                  href={
+                    documentosSimulacaoCentral.includes(item.id)
+                      ? `${base}/${contaId}/triagem/${item.id}/previa-central`
+                      : `${base}/${contaId}/triagem/${item.id}/pdf`
+                  }
                   target="_blank"
                   rel="noopener noreferrer"
                 >
                   Abrir PDF
                 </a>
-                {item.id === 685 ? (
+                {documentosSimulacaoCentral.includes(item.id) ? (
                   <a
                     className="admin-botao secundario"
-                    href={`${base}/${contaId}/triagem/685/previa-central`}
+                    href={`${base}/${contaId}/triagem/${item.id}/pdf`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Abrir original
+                  </a>
+                ) : null}
+                {item.previaCentralDisponivel ? (
+                  <a
+                    className="admin-botao secundario"
+                    href={`${base}/${contaId}/triagem/${item.id}/previa-central`}
                     target="_blank"
                     rel="noopener noreferrer"
                   >
                     Abrir prévia Central
                   </a>
+                ) : null}
+                {simulacoes[item.id]?.situacao === "simulada" ? (
+                  <button
+                    className="admin-botao secundario"
+                    type="button"
+                    disabled={ocupado}
+                    onClick={() => encaminharSimulado(item)}
+                  >
+                    Encaminhar para Faturas
+                  </button>
                 ) : null}
               </div>
             ))}

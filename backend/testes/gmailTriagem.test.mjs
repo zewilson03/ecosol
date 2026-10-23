@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import express from "express";
@@ -85,6 +85,33 @@ db.prepare(
   "gmail",
   anexoId,
 );
+const documentosCentralEmTeste = new Set([documentoId]);
+let situacaoDaSimulacaoCentral = "simulada";
+const simuladorCentralEmTeste = async ({ documentos }) => ({
+  resultados: documentos.map((documento) => ({
+    documento,
+    situacao: situacaoDaSimulacaoCentral,
+    motivos:
+      situacaoDaSimulacaoCentral === "simulada" ? [] : ["dados_incompletos"],
+    ucNova: "123",
+    dadosFatura: { energia: "10", tarifa: "1.000000" },
+    descontoContratual: "0.200000",
+    valorBoleto: "8.00",
+  })),
+});
+const previaCentralTemporaria = join(
+  process.env.ECOSOL_DATA_DIR,
+  "previa-central-atual.pdf",
+);
+writeFileSync(
+  previaCentralTemporaria,
+  Buffer.from("%PDF-1.4\nValor do boleto R$ 8,00\n"),
+);
+const geradorPreviaCentralEmTeste = async () => ({
+  arquivo: previaCentralTemporaria,
+  nome: "Fatura EQT - NOV - Teste.pdf",
+  limpar: async () => {},
+});
 
 function criarItem(nome) {
   const conteudo = Buffer.from(`%PDF-1.4\n${nome}\n`);
@@ -154,6 +181,9 @@ app.use(
   criarRotasGmail({
     banco: () => db,
     sincronizador: { emAndamento: () => false, sincronizar: async () => {} },
+    simuladorCentral: simuladorCentralEmTeste,
+    geradorPreviaCentral: geradorPreviaCentralEmTeste,
+    documentosCentral: documentosCentralEmTeste,
   }),
 );
 const servidor = app.listen(0, "127.0.0.1");
@@ -213,6 +243,36 @@ try {
     await chamar(`${triagem}/conferencia?documentos=${documentoId}`, admin)
   ).json();
   assert.match(conferencia.itens[0].nomeProposto, /^Fatura EQT - NOV - /);
+  assert.equal(conferencia.itens[0].previaCentralDisponivel, false);
+  assert.equal(conferencia.itens[0].versao, 1);
+  const simulacaoCentral = await (
+    await chamar(
+      `${triagem}/conferencia-central?documentos=${documentoId}`,
+      admin,
+    )
+  ).json();
+  assert.deepEqual(simulacaoCentral.itens[0], {
+    documento: documentoId,
+    situacao: "simulada",
+    motivos: [],
+    ucNova: "123",
+    dadosFatura: { energia: "10", tarifa: "1.000000" },
+    descontoContratual: "0.200000",
+    valorBoleto: "8.00",
+  });
+  const previaAtual = await chamar(
+    `${triagem}/${documentoId}/previa-central`,
+    admin,
+  );
+  assert.equal(previaAtual.status, 200);
+  assert.match(
+    previaAtual.headers.get("content-disposition") ?? "",
+    /Fatura%20EQT%20-%20NOV%20-%20Teste\.pdf/,
+  );
+  assert.match(
+    Buffer.from(await previaAtual.arrayBuffer()).toString("utf8"),
+    /R\$ 8,00/,
+  );
   const respostaPdf = await chamar(`${triagem}/${documentoId}/pdf`, admin);
   assert.equal(respostaPdf.status, 200);
   assert.equal(respostaPdf.headers.get("cache-control"), "no-store");
@@ -262,6 +322,11 @@ try {
     ).status,
     200,
   );
+  const encaminhadaSemAprovacao = db
+    .prepare("SELECT status,memoria FROM faturamento_documentos WHERE id=?")
+    .get(documentoId);
+  assert.equal(encaminhadaSemAprovacao.status, "Pendente de revisão");
+  assert.equal(encaminhadaSemAprovacao.memoria, null);
   assert.equal(
     (
       await chamar(`${triagem}/${documentoId}/classificacao`, admin, "POST", {
@@ -299,6 +364,7 @@ try {
   );
   const loteA = criarItem("lote-a.pdf");
   const loteB = criarItem("lote-b.pdf");
+  documentosCentralEmTeste.add(loteA.id);
   const classificarLote = `${triagem}/classificacao-em-lote`;
   const excluirLote = `${triagem}/excluir-em-lote`;
   assert.equal(
@@ -334,6 +400,27 @@ try {
       .get(loteA.id).classificacao,
     "triagem",
   );
+  situacaoDaSimulacaoCentral = "revisar";
+  assert.equal(
+    (await chamar(`${triagem}/${documentoId}/previa-central`, admin)).status,
+    409,
+  );
+  assert.equal(
+    (
+      await chamar(classificarLote, admin, "POST", {
+        itens: [loteA],
+        destino: "fatura",
+      })
+    ).status,
+    409,
+  );
+  assert.equal(
+    db
+      .prepare("SELECT classificacao FROM faturamento_documentos WHERE id=?")
+      .get(loteA.id).classificacao,
+    "triagem",
+  );
+  situacaoDaSimulacaoCentral = "simulada";
   const primeiraClassificacao = await chamar(classificarLote, admin, "POST", {
     itens: [loteA, loteB],
     destino: "nao_fatura",
