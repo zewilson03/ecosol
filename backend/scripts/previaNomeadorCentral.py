@@ -11,6 +11,7 @@ import argparse
 import importlib.util
 import json
 import os
+import shutil
 import sqlite3
 import stat
 import sys
@@ -33,6 +34,9 @@ def argumentos():
     parser.add_argument("--pasta-vendas")
     parser.add_argument("--somente-localizar", action="store_true")
     parser.add_argument("--simular", action="store_true")
+    parser.add_argument("--processar-isolado", action="store_true")
+    parser.add_argument("--processar-documental-isolado", action="store_true")
+    parser.add_argument("--diretorio-saida")
     parser.add_argument("--saida")
     parser.add_argument("--uc-antiga")
     parser.add_argument("--cliente")
@@ -42,9 +46,13 @@ def argumentos():
         parser.error("informe --documento ou --documentos")
     if (args.somente_localizar or args.simular) and not args.pasta_vendas and not args.planilha_venda:
         parser.error("a localizacao exige --pasta-vendas ou --planilha-venda")
-    if not args.somente_localizar and not args.simular and not args.documento:
+    if args.processar_isolado and not args.diretorio_saida:
+        parser.error("processamento isolado exige --diretorio-saida")
+    if args.processar_documental_isolado and (not args.diretorio_saida or not args.motor):
+        parser.error("processamento documental isolado exige --diretorio-saida e --motor")
+    if not args.somente_localizar and not args.simular and not args.processar_isolado and not args.processar_documental_isolado and not args.documento:
         parser.error("a geracao de previa exige um unico --documento")
-    if not args.somente_localizar and not args.simular:
+    if not args.somente_localizar and not args.simular and not args.processar_isolado and not args.processar_documental_isolado:
         obrigatorios = ("motor", "saida", "uc_antiga", "cliente", "usina")
         faltantes = [nome for nome in obrigatorios if not getattr(args, nome)]
         if faltantes:
@@ -82,7 +90,8 @@ def ler_pdf_do_gmail(caminho_banco: str, documento: int) -> tuple[bytes, str, di
                  FROM faturamento_documentos d
                  JOIN gmail_anexos a ON a.documento_id=d.id
                 WHERE d.id=? AND a.estado='capturado'
-                  AND d.classificacao='triagem' AND d.excluido_em IS NULL""",
+                  AND d.classificacao IN ('triagem','fatura')
+                  AND d.finalidade='cobranca' AND d.excluido_em IS NULL""",
             (documento,),
         ).fetchone()
     finally:
@@ -114,7 +123,8 @@ def ler_contexto_gmail(caminho_banco: str, documento: int) -> dict:
                    LEFT JOIN faturamento_clientes_operacionais o ON o.id=u.cliente_operacional_id
                    LEFT JOIN faturamento_clientes_provisorios p ON p.id=u.cliente_provisorio_id
                    LEFT JOIN usinas s ON s.id=u.usina_id
-                  WHERE d.id=? AND d.classificacao='triagem' AND d.excluido_em IS NULL""",
+                  WHERE d.id=? AND d.classificacao IN ('triagem','fatura')
+                    AND d.finalidade='cobranca' AND d.excluido_em IS NULL""",
             (documento,),
         ).fetchone()
         if not registro:
@@ -215,8 +225,6 @@ def localizar_linha_planilha(
         raise RuntimeError(f"planilha_da_usina_ambigua:{len(candidatas)}")
 
     planilha = candidatas[0]
-    usina_normalizada = atualizador.normalize_usina_name(usina)
-
     competencia = codigo_competencia(dados, atualizador, mes_faturamento)
     # A busca aleatória por UC usada pela Central exige worksheet normal. Esta
     # integração não chama save: o arquivo compartilhado permanece só entrada.
@@ -228,17 +236,38 @@ def localizar_linha_planilha(
         if primeira_linha is None:
             raise RuntimeError("tabela_de_venda_nao_localizada")
         classica = atualizador.is_classic_rateio_sheet(worksheet, primeira_linha)
-        ucs_antigas_normalizadas = {atualizador.normalize_uc(uc) for uc in ucs_antigas}
+        ucs_antigas_normalizadas = {
+            atualizador.normalize_uc(uc) for uc in ucs_antigas
+            if atualizador.normalize_uc(uc)
+        }
         uc_atual = atualizador.normalize_uc(uc_nova)
-        linhas = [
-            linha for linha in range(primeira_linha, worksheet.max_row + 1)
-            if atualizador.normalize_uc(worksheet.cell(linha, 3).value) in ucs_antigas_normalizadas
-            and atualizador.normalize_uc(worksheet.cell(linha, 4).value) == uc_atual
-            and atualizador.usinas_equivalentes(usina_normalizada, worksheet.cell(linha, 1).value)
-        ]
-        if len(linhas) != 1:
-            raise RuntimeError(f"linha_da_uc_ambigua:{len(linhas)}")
-        linha = linhas[0]
+        linhas_da_tabela = list(range(primeira_linha, worksheet.max_row + 1))
+
+        # Mantém a mesma cadeia de identificação de find_invoice() da Central:
+        # par antigo/nova, UC nova isolada e, por último, UC antiga isolada.
+        # A planilha já foi restringida pela usina no nome do arquivo. Não se
+        # compara a coluna A aqui: a Central não exige que o código abreviado
+        # da linha (por exemplo, ABD) seja igual ao nome cadastral da usina.
+        tentativas = (
+            lambda linha: (
+                atualizador.normalize_uc(worksheet.cell(linha, 3).value) in ucs_antigas_normalizadas
+                and atualizador.normalize_uc(worksheet.cell(linha, 4).value) == uc_atual
+            ),
+            lambda linha: bool(uc_atual) and atualizador.normalize_uc(worksheet.cell(linha, 4).value) == uc_atual,
+            lambda linha: (
+                atualizador.normalize_uc(worksheet.cell(linha, 3).value) in ucs_antigas_normalizadas
+            ),
+        )
+        linha = None
+        for corresponde in tentativas:
+            linhas = [linha for linha in linhas_da_tabela if corresponde(linha)]
+            if len(linhas) == 1:
+                linha = linhas[0]
+                break
+            if len(linhas) > 1:
+                raise RuntimeError(f"linha_da_uc_ambigua:{len(linhas)}")
+        if linha is None:
+            raise RuntimeError("linha_da_uc_ambigua:0")
         return {
             "planilha": str(planilha), "aba": aba, "linha": linha,
             "classica": classica, "colunaBoleto": 17 if classica else 12,
@@ -474,6 +503,8 @@ def simular_documento(args, app, atualizador, documento: int):
             "motivos": motivos,
             "planilha": localizacao["planilha"], "aba": localizacao["aba"],
             "linha": linha, "ucAntiga": localizacao["ucAntigaPlanilha"], "ucNova": uc_pdf,
+            "mesFaturamento": mes,
+            "celula": f"{'Q' if classica else 'L'}{linha}",
             "cliente": contexto["cliente"], "usina": contexto["usina"],
             "preenchidaNaPlanilha": preenchida,
             "dadosFatura": {
@@ -656,6 +687,163 @@ def gerar_previa(args):
                 pass
 
 
+def processar_isolado(args):
+    """Executa o atualizador original somente sobre cópias locais auditáveis.
+
+    A fonte compartilhada de vendas é aberta para leitura pela simulação; a
+    cópia é a única passada para process_workbook(), que é a rotina original
+    com efeitos (xlsx preenchido, CSV e PDFs carimbados).
+    """
+    app = carregar_motor(args.motor)
+    atualizador = carregar_modulo("atualizador_central", args.atualizador)
+    documentos = [int(valor) for valor in str(args.documentos or args.documento).split(",") if valor.strip()]
+    if not documentos:
+        raise RuntimeError("nenhum_documento_para_processar")
+    simulacoes = [simular_documento(args, app, atualizador, documento) for documento in documentos]
+    revisar = [s for s in simulacoes if s.get("situacao") != "simulada"]
+    if revisar:
+        return {"situacao": "revisar", "resultados": simulacoes}
+    planilhas = {s["planilha"] for s in simulacoes}
+    meses = {s["mesFaturamento"] for s in simulacoes}
+    usinas = {s["usina"] for s in simulacoes}
+    if len(planilhas) != 1 or len(meses) != 1 or len(usinas) != 1:
+        raise RuntimeError("lote_central_exige_mes_planilha_e_usina_unicos")
+
+    raiz = Path(args.diretorio_saida).resolve()
+    if raiz.exists():
+        raise RuntimeError("diretorio_de_homologacao_ja_existe")
+    entrada = raiz / "entrada"
+    artefatos = raiz / "artefatos"
+    impressao = raiz / "impressao"
+    entrada.mkdir(parents=True)
+    impressao.mkdir(parents=True)
+    origem_planilha = Path(next(iter(planilhas)))
+    copia_planilha = raiz / "planilha_entrada" / origem_planilha.name
+    copia_planilha.parent.mkdir(parents=True)
+    shutil.copy2(origem_planilha, copia_planilha)
+
+    for simulacao in simulacoes:
+        pdf, _, _ = ler_pdf_do_gmail(args.banco, simulacao["documento"])
+        base = app.limpar_nome_arquivo(
+            f"Fatura EQT - {simulacao['mesFaturamento']} - {simulacao['usina']} - "
+            f"{simulacao['cliente']} - {simulacao['ucAntiga']} - {simulacao['ucNova']}"
+        )
+        temporaria, identificacao = preparar_fatura_temporaria_da_central(
+            app, pdf, simulacao["ucAntiga"], simulacao["cliente"], simulacao["usina"],
+        )
+        try:
+            if identificacao["ucNova"] != simulacao["ucNova"] or identificacao["mes"] != simulacao["mesFaturamento"]:
+                raise RuntimeError("identificacao_temporaria_divergente")
+            shutil.copy2(temporaria, entrada / f"{base}__DOC_{simulacao['documento']}.pdf")
+        finally:
+            temporaria.unlink(missing_ok=True)
+
+    logs = []
+    resultado = atualizador.process_workbook(
+        copia_planilha, entrada, atualizador.DEFAULT_TARIFA_TOTAL_KWH, logs.append,
+        stamped_root_override=raiz / "pdfs_carimbados",
+        artifacts_dir=artefatos,
+        updated_workbooks_dir=raiz / "planilha_preenchida",
+        expected_usina=next(iter(usinas)), target_month=next(iter(meses)),
+    )
+    esperados = {s["ucNova"]: s["valorBoleto"] for s in simulacoes}
+    divergentes = [
+        item for item in resultado.traceability
+        if item.get("uc_nova") not in esperados
+        or item.get("valor_boleto") != esperados[item.get("uc_nova")]
+    ]
+    if resultado.pdfs_stamped != len(documentos) or divergentes:
+        return {
+            "situacao": "revisar", "documentos": documentos,
+            "motivos": [
+                *([f"processamento_incompleto:{resultado.pdfs_stamped}/{len(documentos)}"] if resultado.pdfs_stamped != len(documentos) else []),
+                *(["valor_do_processamento_original_diverge_da_simulacao"] if divergentes else []),
+            ],
+            "valoresProcessamento": [
+                {"ucNova": item.get("uc_nova"), "valor": item.get("valor_boleto")}
+                for item in resultado.traceability
+            ],
+            "logsCentral": logs,
+        }
+    finais = []
+    pasta_finais = raiz / "pdfs_finais"
+    pasta_finais.mkdir(parents=True)
+    for item in resultado.traceability:
+        origem = Path(item["pdf_final"])
+        base = app.limpar_nome_arquivo(
+            f"Fatura EQT - {next(s['mesFaturamento'] for s in simulacoes if s['ucNova'] == item['uc_nova'])} - "
+            f"{item['usina_planilha']} - {item['cliente']} - {item['uc_antiga']} - {item['uc_nova']}"
+        )
+        final = pasta_finais / app.criar_nome_saida_seguro(base, str(pasta_finais))
+        shutil.copy2(origem, final)
+        preparado = app.preparar_pdf_a4_para_impressao(str(final))
+        try:
+            destino_impressao = impressao / final.name
+            shutil.copy2(preparado, destino_impressao)
+        finally:
+            Path(preparado).unlink(missing_ok=True)
+        finais.append({**item, "pdf_final": str(final), "pdf_impressao": str(destino_impressao)})
+    return {
+        "situacao": "concluido", "documentos": documentos,
+        "planilhaFonte": str(origem_planilha), "planilhaPreenchida": str(resultado.output_path),
+        "log": str(resultado.log_path), "pdfs": finais, "logsCentral": logs,
+    }
+
+
+def processar_documental_isolado(args):
+    """Nomeia, carimba internamente e prepara A4 sem planilha nem boleto."""
+    if args.documentos:
+        documentos = [int(valor) for valor in args.documentos.split(",") if valor.strip()]
+    else:
+        documentos = [args.documento]
+    raiz = Path(args.diretorio_saida).resolve()
+    if raiz.exists():
+        raise RuntimeError("diretorio_de_homologacao_ja_existe")
+    app = carregar_motor(args.motor)
+    finais = []
+    for documento in documentos:
+        contexto = ler_contexto_gmail(args.banco, documento)
+        if not contexto["unidadeId"] or not contexto["ucNova"] or not contexto["cliente"] or not contexto["usina"]:
+            raise RuntimeError("vinculo_cadastral_incompleto")
+        if not contexto["ucsAntigas"]:
+            raise RuntimeError("uc_antiga_nao_referenciada")
+        pdf, nome_original, _ = ler_pdf_do_gmail(args.banco, documento)
+        uc_antiga = contexto["ucsAntigas"][0]
+        temporaria, identificado = preparar_fatura_temporaria_da_central(
+            app, pdf, uc_antiga, contexto["cliente"], contexto["usina"],
+        )
+        try:
+            if identificado["ucNova"] != contexto["ucNova"]:
+                raise RuntimeError("uc_pdf_diverge_do_vinculo_cadastral")
+            pasta_final = raiz / "pdfs_finais"
+            pasta_impressao = raiz / "impressao"
+            pasta_final.mkdir(parents=True, exist_ok=True)
+            pasta_impressao.mkdir(parents=True, exist_ok=True)
+            base = app.limpar_nome_arquivo(
+                f"Fatura EQT - {identificado['mes']} - {contexto['usina']} - {contexto['cliente']} - "
+                f"{uc_antiga} - {identificado['ucNova']}"
+            )
+            nome_final = app.criar_nome_saida_seguro(base, str(pasta_final))
+            destino = pasta_final / nome_final
+            shutil.copy2(temporaria, destino)
+            preparado = app.preparar_pdf_a4_para_impressao(str(destino))
+            try:
+                destino_impressao = pasta_impressao / nome_final
+                shutil.copy2(preparado, destino_impressao)
+            finally:
+                Path(preparado).unlink(missing_ok=True)
+            finais.append({
+                "documento": documento, "nomeOriginal": nome_original,
+                "nomeFinal": nome_final, "ucAntiga": uc_antiga,
+                "ucNova": identificado["ucNova"], "mesFaturamento": identificado["mes"],
+                "cliente": contexto["cliente"], "usina": contexto["usina"],
+                "pdf_final": str(destino), "pdf_impressao": str(destino_impressao),
+            })
+        finally:
+            temporaria.unlink(missing_ok=True)
+    return {"situacao": "concluido", "modo": "documental", "documentos": documentos, "pdfs": finais}
+
+
 if __name__ == "__main__":
     try:
         argumentos_execucao = argumentos()
@@ -663,6 +851,10 @@ if __name__ == "__main__":
             resultado = localizar_documentos(argumentos_execucao)
         elif argumentos_execucao.simular:
             resultado = simular_documentos(argumentos_execucao)
+        elif argumentos_execucao.processar_isolado:
+            resultado = processar_isolado(argumentos_execucao)
+        elif argumentos_execucao.processar_documental_isolado:
+            resultado = processar_documental_isolado(argumentos_execucao)
         else:
             resultado = gerar_previa(argumentos_execucao)
         print(json.dumps(resultado, ensure_ascii=False))

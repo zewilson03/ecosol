@@ -180,7 +180,8 @@ function clienteComRenovacao(cliente, refreshToken, agora) {
 }
 
 function proximaTentativa(item, agora) {
-  const minutos = Math.min(5 * 2 ** Math.min(item.tentativas - 1, 8), 24 * 60);
+  const tentativas = Math.max(1, Number(item.tentativas) || 1);
+  const minutos = Math.min(5 * 2 ** Math.min(tentativas - 1, 8), 24 * 60);
   return agora + minutos * 60_000;
 }
 
@@ -553,26 +554,41 @@ export function criarSincronizadorGmail({
   async function capturarPeriodo(contaId, periodoBruto) {
     if (emAndamento.has(contaId)) return { iniciada: false };
     emAndamento.add(contaId);
+    let execucao = null;
+    let repoDaExecucao = null;
     try {
       const periodo = validarPeriodoRecebimento(periodoBruto);
       const { db, repo, conta, cliente } = await abrirConta(contaId);
-      const execucao = repo.iniciarCapturaPeriodo({
+      repoDaExecucao = repo;
+      execucao = repo.iniciarCapturaPeriodo({
         contaId,
         inicio: periodo.inicioLocal,
         fim: periodo.fimLocal,
         agora: agora(),
       });
-      if (execucao.existente) return { iniciada: false, execucao };
-      const mensagens = await listarPeriodo({ cliente, periodo });
+      if (execucao.concluida || execucao.aguardar)
+        return { iniciada: false, execucao };
+      // Após descobrir o período uma vez, a retomada não consulta novamente o
+      // Gmail: processa a mesma seleção estável e evita ampliar a carga/quota.
+      const selecionadas = repo.mensagensDaCaptura(execucao.id);
+      const mensagens = selecionadas.length
+        ? selecionadas
+        : await listarPeriodo({ cliente, periodo });
       const totalAnexos = mensagens.reduce(
         (total, mensagem) => total + mensagem.anexos,
         0,
       );
-      repo.atualizarCapturaPeriodo({
-        id: execucao.id,
-        emails: mensagens.length,
-        anexos: totalAnexos,
-      });
+      if (!selecionadas.length) {
+        repo.atualizarCapturaPeriodo({
+          id: execucao.id,
+          emails: mensagens.length,
+          anexos: totalAnexos,
+        });
+        repo.registrarMensagensDaCaptura({
+          capturaId: execucao.id,
+          mensagens,
+        });
+      }
       repo.registrarMensagensAvulsas({
         contaId,
         mensagens: mensagens.map((mensagem) => mensagem.id),
@@ -596,24 +612,11 @@ export function criarSincronizadorGmail({
         db,
         somenteMensagens: anexos,
       });
-      const marcadores = ids.map(() => "?").join(",");
-      const estados = ids.length
-        ? db
-            .prepare(
-              `SELECT estado,COUNT(*) quantidade FROM gmail_anexos
-               WHERE conta_id=? AND message_id IN (${marcadores}) GROUP BY estado`,
-            )
-            .all(contaId, ...ids)
-        : [];
-      const quantidade = (estado) =>
-        estados.find((item) => item.estado === estado)?.quantidade ?? 0;
+      const contagens = repo.contagensDaCaptura(execucao.id);
       const resultado = repo.concluirCapturaPeriodo({
         id: execucao.id,
         estado: "concluida",
-        capturados: quantidade("capturado"),
-        duplicados: quantidade("duplicado"),
-        triagem: quantidade("pendente_manual"),
-        falhas: quantidade("falha_temporaria"),
+        ...contagens,
         agora: agora(),
       });
       return {
@@ -622,25 +625,30 @@ export function criarSincronizadorGmail({
       };
     } catch (erro) {
       try {
-        const periodo = validarPeriodoRecebimento(periodoBruto);
-        const repo = criarRepositorioGmail(banco());
-        const existente = repo.iniciarCapturaPeriodo({
-          contaId,
-          inicio: periodo.inicioLocal,
-          fim: periodo.fimLocal,
-          agora: agora(),
-        });
-        if (!existente.existente)
-          repo.concluirCapturaPeriodo({
-            id: existente.id,
-            estado: "falha",
-            capturados: 0,
-            duplicados: 0,
-            triagem: 0,
-            falhas: 1,
-            erroCodigo: codigoSeguro(erro),
+        const repo = repoDaExecucao ?? criarRepositorioGmail(banco());
+        if (!execucao) {
+          const periodo = validarPeriodoRecebimento(periodoBruto);
+          execucao = repo.iniciarCapturaPeriodo({
+            contaId,
+            inicio: periodo.inicioLocal,
+            fim: periodo.fimLocal,
             agora: agora(),
           });
+        }
+        if (execucao.estado === "em_andamento") {
+          const contagens = repo.contagensDaCaptura(execucao.id);
+          repo.concluirCapturaPeriodo({
+            id: execucao.id,
+            estado: "falha",
+            ...contagens,
+            falhas: contagens.falhas + 1,
+            erroCodigo: codigoSeguro(erro),
+            proximaTentativaEm: temporario(erro)
+              ? proximaTentativa(execucao, agora())
+              : null,
+            agora: agora(),
+          });
+        }
       } catch {
         // A falha original ainda será observável na próxima prévia manual.
       }

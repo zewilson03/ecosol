@@ -78,8 +78,16 @@ type ItemConferenciaGmail = {
 type SimulacaoCentral = {
   documento: number;
   situacao: "simulada" | "revisar";
-  motivos: string[];
+  motivos?: string[];
+  motivo?: string;
   ucNova?: string;
+  ucAntiga?: string;
+  cliente?: string;
+  usina?: string;
+  mesFaturamento?: string;
+  planilha?: string;
+  aba?: string;
+  linha?: number;
   dadosFatura?: { energia?: string; tarifa?: string };
   descontoContratual?: string;
   valorBoleto?: string;
@@ -92,6 +100,7 @@ type PreviaPeriodoGmail = {
   anexos: number;
 };
 type CapturaPeriodo = {
+  id: number;
   estado: "em_andamento" | "concluida" | "falha";
   emails: number;
   anexos: number;
@@ -99,6 +108,31 @@ type CapturaPeriodo = {
   duplicados: number;
   triagem: number;
   falhas: number;
+  erro_codigo?: string | null;
+  proxima_tentativa_em?: number | null;
+};
+type ItemPreparacaoCentral = {
+  id: number;
+  nome: string;
+  classificacao: string;
+  competencia: string | null;
+  situacao: "preparado" | "revisar";
+  modo: "financeiro" | "documental" | null;
+  motivos: string[];
+  simulacao?: SimulacaoCentral | null;
+};
+type PreparacaoCentralLote = {
+  resumo: {
+    totalCapturado: number;
+    documentosNoLote: number;
+    elegiveis: number;
+    preparados: number;
+    revisar: number;
+    processados: number;
+    falhas: number;
+    pdfsProntosParaImpressao: number;
+  };
+  itens: ItemPreparacaoCentral[];
 };
 
 function quantidade(estados: Contagem[], estado: string) {
@@ -110,9 +144,26 @@ function instante(valor: number | null) {
 }
 
 const base = "/api/admin/gmail/contas";
-const documentosSimulacaoCentral = [685, 686, 689, 690, 698];
 function moeda(valor?: string) {
   return valor === undefined ? "não encontrado" : `R$ ${valor}`;
+}
+function motivoCurto(motivos: string[]) {
+  const motivo = motivos[0] ?? "revisao_necessaria";
+  if (motivo.startsWith("localizacao_central_indisponivel"))
+    return "Localização temporariamente indisponível";
+  if (motivo.includes("vinculo_cadastral_incompleto"))
+    return "Vínculo cadastral incompleto";
+  if (motivo.startsWith("linha_da_uc_ambigua"))
+    return "Linha da UC não confirmada";
+  if (motivo.startsWith("planilha_da_usina_ambigua"))
+    return "Planilha da usina requer revisão";
+  if (motivo.startsWith("modalidade_operacional_nao_confirmada"))
+    return "Modalidade operacional não confirmada";
+  if (motivo.startsWith("simulacao_central"))
+    return "Simulação requer revisão";
+  if (motivo.startsWith("anexo_nao_disponivel"))
+    return "PDF indisponível nesta captura";
+  return "Revisar dados da fatura";
 }
 const avisosDeRetorno: Record<RetornoOAuth, { texto: string; erro: boolean }> =
   {
@@ -420,6 +471,17 @@ function AcompanhamentoGmail({
   const [consultandoPeriodo, definirConsultandoPeriodo] = useState(false);
   const [capturaPeriodo, definirCapturaPeriodo] =
     useState<CapturaPeriodo | null>(null);
+  const [documentosPeriodo, definirDocumentosPeriodo] = useState<number[]>([]);
+  const [preparacaoCentral, definirPreparacaoCentral] =
+    useState<PreparacaoCentralLote | null>(null);
+  const [preparandoCentral, definirPreparandoCentral] = useState(false);
+  const [etapa, definirEtapa] = useState<"capturar" | "preparar" | "conferir">(
+    "capturar",
+  );
+  const [buscaPreparacao, definirBuscaPreparacao] = useState("");
+  const [filtroSituacao, definirFiltroSituacao] = useState("todos");
+  const [filtroUsina, definirFiltroUsina] = useState("todas");
+  const [paginaPreparacao, definirPaginaPreparacao] = useState(1);
   const [erro, definirErro] = useState("");
   const [maisPendencias, definirMaisPendencias] = useState<PendenciasGmail>({
     mensagens: [],
@@ -469,6 +531,8 @@ function AcompanhamentoGmail({
   function alterarPeriodo(campo: "inicio" | "fim", valor: string) {
     definirPeriodo((atual) => ({ ...atual, [campo]: valor }));
     definirPreviaPeriodo(null);
+    definirPreparacaoCentral(null);
+    definirPaginaPreparacao(1);
   }
 
   async function aplicarAtalhoDiario() {
@@ -505,8 +569,26 @@ function AcompanhamentoGmail({
     }
   }
 
+  async function consultarSituacaoPeriodo() {
+    definirErro("");
+    try {
+      const resultado = await consultarServidor<{
+        captura: CapturaPeriodo | null;
+        documentos: number[];
+      }>(`${base}/${contaId}/periodo/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ periodo }),
+      });
+      definirCapturaPeriodo(resultado.captura);
+      definirDocumentosPeriodo(resultado.documentos);
+    } catch (falha) {
+      definirErro((falha as Error).message);
+    }
+  }
+
   async function capturarPeriodo() {
-    if (!previaPeriodo) return;
+    if (!previaPeriodo && !capturaPeriodo) return;
     definirErro("");
     definirIniciando(true);
     try {
@@ -517,19 +599,41 @@ function AcompanhamentoGmail({
       });
       definirPreviaPeriodo(null);
       definirCapturaPeriodo({
+        id: 0,
         estado: "em_andamento",
-        emails: 0,
-        anexos: 0,
+        emails: previaPeriodo?.emails ?? capturaPeriodo?.emails ?? 0,
+        anexos: previaPeriodo?.anexos ?? capturaPeriodo?.anexos ?? 0,
         capturados: 0,
         duplicados: 0,
         triagem: 0,
         falhas: 0,
       });
+      definirPreparacaoCentral(null);
       consulta.atualizar();
     } catch (falha) {
       definirErro((falha as Error).message);
     } finally {
       definirIniciando(false);
+    }
+  }
+
+  async function prepararLoteCentral() {
+    if (!capturaPeriodo?.id || capturaPeriodo.estado !== "concluida") return;
+    definirErro("");
+    definirPreparandoCentral(true);
+    try {
+      const resultado = await consultarServidor<PreparacaoCentralLote>(
+        `${base}/${contaId}/capturas/${capturaPeriodo.id}/central/preparar`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+      );
+      definirPreparacaoCentral(resultado);
+      definirEtapa("conferir");
+      definirPaginaPreparacao(1);
+    } catch (falha) {
+      definirPreparacaoCentral(null);
+      definirErro((falha as Error).message);
+    } finally {
+      definirPreparandoCentral(false);
     }
   }
 
@@ -539,13 +643,16 @@ function AcompanhamentoGmail({
       try {
         const resultado = await consultarServidor<{
           captura: CapturaPeriodo | null;
+          documentos: number[];
         }>(`${base}/${contaId}/periodo/status`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ periodo }),
         });
-        if (resultado.captura) definirCapturaPeriodo(resultado.captura);
-        else window.setTimeout(consultarStatus, 1000);
+        if (resultado.captura) {
+          definirCapturaPeriodo(resultado.captura);
+          definirDocumentosPeriodo(resultado.documentos);
+        } else window.setTimeout(consultarStatus, 1000);
       } catch (falha) {
         definirErro((falha as Error).message);
       }
@@ -621,10 +728,38 @@ function AcompanhamentoGmail({
   }
 
   const progresso = consulta.dados;
+  const itensPreparacao = preparacaoCentral?.itens ?? [];
+  const usinasPreparacao = [
+    ...new Set(
+      itensPreparacao
+        .map((item) => item.simulacao?.usina)
+        .filter((usina): usina is string => Boolean(usina)),
+    ),
+  ].sort();
+  const busca = buscaPreparacao.trim().toLocaleLowerCase("pt-BR");
+  const itensFiltrados = itensPreparacao.filter((item) => {
+    const texto = [
+      item.nome,
+      item.simulacao?.cliente,
+      item.simulacao?.ucNova,
+      item.simulacao?.ucAntiga,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLocaleLowerCase("pt-BR");
+    return (
+      (!busca || texto.includes(busca)) &&
+      (filtroSituacao === "todos" || item.situacao === filtroSituacao) &&
+      (filtroUsina === "todas" || item.simulacao?.usina === filtroUsina)
+    );
+  });
+  const totalPaginas = Math.max(1, Math.ceil(itensFiltrados.length / 20));
+  const pagina = Math.min(paginaPreparacao, totalPaginas);
+  const itensDaPagina = itensFiltrados.slice((pagina - 1) * 20, pagina * 20);
   return (
     <div className="gmail-acompanhamento">
       <div className="admin-barra">
-        <h4>Captura de faturas</h4>
+        <h4>Faturas por Gmail</h4>
         <button
           className="admin-botao secundario"
           type="button"
@@ -633,6 +768,21 @@ function AcompanhamentoGmail({
           Atualizar
         </button>
       </div>
+      <nav className="gmail-etapas" aria-label="Fluxo de faturamento Gmail">
+        {(["capturar", "preparar", "conferir"] as const).map(
+          (item, indice) => (
+            <button
+              key={item}
+              type="button"
+              className={`gmail-etapa ${etapa === item ? "ativa" : ""}`}
+              onClick={() => definirEtapa(item)}
+            >
+              <span>{indice + 1}</span>
+              {item.toUpperCase()}
+            </button>
+          ),
+        )}
+      </nav>
       {consulta.erro && (
         <p className="admin-aviso erro" role="alert">
           {consulta.erro}
@@ -643,8 +793,49 @@ function AcompanhamentoGmail({
           {erro}
         </p>
       )}
+      <section className="gmail-fluxo-guiado">
+        {etapa === "capturar" && (
+          <div className="gmail-passo">
+            <div className="gmail-passo-cabecalho"><span>ETAPA 1</span><h5>Capturar</h5></div>
+            <p>Escolha o período de recebimento. O início é inclusivo e o fim exclusivo.</p>
+            <div className="admin-campos gmail-campos-periodo">
+              <label>Recebido a partir de<input type="datetime-local" value={periodo.inicio} onChange={(evento) => alterarPeriodo("inicio", evento.target.value)} /></label>
+              <label>Recebido antes de<input type="datetime-local" value={periodo.fim} onChange={(evento) => alterarPeriodo("fim", evento.target.value)} /></label>
+            </div>
+            <div className="gmail-fluxo-acoes">
+              <button className="admin-botao secundario" type="button" onClick={aplicarAtalhoDiario} disabled={iniciando || consultandoPeriodo}>Ontem 08:00 → hoje 08:00</button>
+              {previaPeriodo ? <button className="admin-botao" type="button" onClick={capturarPeriodo} disabled={!ativo || iniciando}>Capturar e-mails da prévia</button> : <button className="admin-botao" type="button" onClick={consultarPreviaPeriodo} disabled={!ativo || iniciando || consultandoPeriodo}>{consultandoPeriodo ? "Consultando…" : "Consultar período"}</button>}
+            </div>
+            {previaPeriodo && <p className="admin-aviso">Prévia: {previaPeriodo.emails} e-mails e {previaPeriodo.anexos} PDFs elegíveis.</p>}
+            {capturaPeriodo && <div className="gmail-resumo-captura"><strong>{capturaPeriodo.estado === "concluida" ? "Captura concluída" : capturaPeriodo.estado === "em_andamento" ? "Captura em andamento" : "Captura com falha"}</strong><span>{periodo.inicio} até {periodo.fim}</span><span>Recebidos {capturaPeriodo.anexos}</span><span>Capturados {capturaPeriodo.capturados}</span><span>Triagem {capturaPeriodo.triagem}</span>{capturaPeriodo.estado === "concluida" && <button className="admin-botao secundario" type="button" onClick={() => definirEtapa("preparar")}>Avançar</button>}</div>}
+          </div>
+        )}
+        {etapa === "preparar" && (
+          <div className="gmail-passo">
+            <div className="gmail-passo-cabecalho"><span>ETAPA 2</span><h5>Preparar</h5></div>
+            {capturaPeriodo?.estado === "concluida" ? <><p>Captura selecionada: <strong>{capturaPeriodo.capturados} PDFs</strong>. A preparação não aprova, não imprime e não altera arquivos oficiais.</p><button className="admin-botao" type="button" onClick={prepararLoteCentral} disabled={preparandoCentral}>{preparandoCentral ? "Preparando…" : "Preparar lote"}</button>{preparacaoCentral && <div className="gmail-resumo-captura"><span>Preparados {preparacaoCentral.resumo.preparados}</span><span>REVISAR {preparacaoCentral.resumo.revisar}</span><span>Falhas técnicas {preparacaoCentral.resumo.falhas}</span><button className="admin-botao secundario" type="button" onClick={() => definirEtapa("conferir")}>Conferir resultado</button></div>}</> : <p className="admin-aviso">Conclua ou consulte uma captura na etapa anterior.</p>}
+          </div>
+        )}
+        {etapa === "conferir" && (
+          <div className="gmail-passo">
+            <div className="gmail-passo-cabecalho"><span>ETAPA 3</span><h5>Conferir</h5></div>
+            {!preparacaoCentral ? <p className="admin-aviso">Prepare o lote para disponibilizar a conferência.</p> : <>
+              <div className="gmail-indicadores"><span>Localizados <strong>{preparacaoCentral.resumo.elegiveis}</strong></span><span>Preparados <strong>{preparacaoCentral.resumo.preparados}</strong></span><span>REVISAR <strong>{preparacaoCentral.resumo.revisar}</strong></span><span>Falhas <strong>{preparacaoCentral.resumo.falhas}</strong></span><span>PDFs prontos <strong>{preparacaoCentral.resumo.pdfsProntosParaImpressao}</strong></span></div>
+              <div className="gmail-filtros"><label>Buscar cliente ou UC<input value={buscaPreparacao} onChange={(evento) => { definirBuscaPreparacao(evento.target.value); definirPaginaPreparacao(1); }} placeholder="Nome ou UC" /></label><label>Status<select value={filtroSituacao} onChange={(evento) => { definirFiltroSituacao(evento.target.value); definirPaginaPreparacao(1); }}><option value="todos">Todos</option><option value="preparado">Preparados</option><option value="revisar">Em revisão</option></select></label><label>Usina<select value={filtroUsina} onChange={(evento) => { definirFiltroUsina(evento.target.value); definirPaginaPreparacao(1); }}><option value="todas">Todas</option>{usinasPreparacao.map((usina) => <option key={usina}>{usina}</option>)}</select></label></div>
+              <div className="gmail-tabela"><div className="gmail-tabela-cabecalho"><span>Documento</span><span>Cliente / UC</span><span>Usina / competência</span><span>Boleto</span><span>Status</span><span>Ação</span></div>{itensDaPagina.map((item) => <article className="gmail-linha-preparacao" key={item.id}><span data-label="Documento">{item.nome}</span><span data-label="Cliente / UC">{item.simulacao?.cliente ?? "Não identificado"}<small>UC {item.simulacao?.ucNova ?? item.simulacao?.ucAntiga ?? "não encontrada"}</small></span><span data-label="Usina / competência">{item.simulacao?.usina ?? "Não identificada"}<small>{item.simulacao?.mesFaturamento ?? item.competencia ?? "Competência não encontrada"}</small></span><span data-label="Boleto">{item.modo === "documental" ? "Sem boleto" : item.simulacao?.valorBoleto ? moeda(item.simulacao.valorBoleto) : "—"}</span><span data-label="Status" className={`gmail-status-preparacao ${item.situacao}`}>{item.situacao === "preparado" ? "Preparado" : motivoCurto(item.motivos)}{item.situacao === "revisar" && <details><summary>Detalhe</summary><code>{item.motivos.join(", ")}</code></details>}</span><Link className="admin-botao secundario" to={`/admin/faturas?etapa=conferir&documento=${item.id}`}>Conferir</Link></article>)}</div>
+              {!itensDaPagina.length && <ListaVazia texto="Nenhum documento corresponde aos filtros." />}
+              <div className="gmail-paginacao"><button className="admin-botao secundario" type="button" disabled={pagina <= 1} onClick={() => definirPaginaPreparacao(pagina - 1)}>Anterior</button><span>Página {pagina} de {totalPaginas}</span><button className="admin-botao secundario" type="button" disabled={pagina >= totalPaginas} onClick={() => definirPaginaPreparacao(pagina + 1)}>Próxima</button></div>
+            </>}
+          </div>
+        )}
+      </section>
+      <details className="gmail-recursos-secundarios">
+        <summary>Histórico, sincronização e opções secundárias</summary>
+        <div className="gmail-conta-acoes"><button className="admin-botao secundario" type="button" onClick={sincronizar} disabled={!ativo || iniciando || progresso?.emAndamento}>{iniciando ? "Iniciando…" : "Sincronizar agora"}</button><button className="admin-botao secundario" type="button" onClick={consultarSituacaoPeriodo}>Consultar situação do período</button></div>
+      </details>
       {progresso && (
-        <>
+        <details className="gmail-legado-recolhido">
+          <summary>Detalhes operacionais e pendências</summary>
           <p role="status">
             {progresso.emAndamento
               ? "Sincronização em andamento…"
@@ -754,12 +945,28 @@ function AcompanhamentoGmail({
                 {consultandoPeriodo ? "Consultando…" : "Ver prévia"}
               </button>
               <button
+                className="admin-botao secundario"
+                type="button"
+                onClick={consultarSituacaoPeriodo}
+                disabled={!ativo || iniciando || consultandoPeriodo}
+              >
+                Consultar situação
+              </button>
+              <button
                 className="admin-botao"
                 type="button"
                 onClick={capturarPeriodo}
-                disabled={!ativo || iniciando || !previaPeriodo}
+                disabled={
+                  !ativo ||
+                  iniciando ||
+                  (!previaPeriodo &&
+                    (!capturaPeriodo || capturaPeriodo.estado === "concluida"))
+                }
               >
-                Capturar e-mails da prévia
+                {capturaPeriodo?.estado === "falha" ||
+                capturaPeriodo?.estado === "em_andamento"
+                  ? "Retomar captura da prévia"
+                  : "Capturar e-mails da prévia"}
               </button>
             </div>
             {previaPeriodo && (
@@ -793,7 +1000,74 @@ function AcompanhamentoGmail({
                     capturaPeriodo.falhas,
                 )}
                 .
+                {capturaPeriodo.erro_codigo
+                  ? ` Motivo: ${capturaPeriodo.erro_codigo}.`
+                  : ""}
+                {capturaPeriodo.proxima_tentativa_em
+                  ? ` Nova tentativa disponível após ${instante(capturaPeriodo.proxima_tentativa_em)}.`
+                  : ""}
+                {documentosPeriodo.length ? (
+                  <>
+                    {" "}
+                    <Link
+                      to={`/admin/gmail?documentos=${documentosPeriodo.join(",")}`}
+                    >
+                      Conferir {documentosPeriodo.length} documento(s) deste
+                      período
+                    </Link>
+                    .
+                  </>
+                ) : null}
               </p>
+            )}
+            {capturaPeriodo?.estado === "concluida" && capturaPeriodo.id > 0 && (
+              <section className="gmail-periodo" aria-label="Preparação Central do lote">
+                <div className="admin-barra">
+                  <h5>Preparação Central</h5>
+                  <button
+                    className="admin-botao"
+                    type="button"
+                    onClick={prepararLoteCentral}
+                    disabled={preparandoCentral}
+                  >
+                    {preparandoCentral ? "Preparando…" : "Preparar lote"}
+                  </button>
+                </div>
+                <p>
+                  Usa exclusivamente os PDFs vinculados a este período. A preparação
+                  é somente leitura e não aprova, imprime ou altera arquivos oficiais.
+                </p>
+                {preparacaoCentral && (
+                  <>
+                    <p role="status">
+                      Capturados: {preparacaoCentral.resumo.totalCapturado}; elegíveis: {preparacaoCentral.resumo.elegiveis}; preparados: {preparacaoCentral.resumo.preparados}; REVISAR: {preparacaoCentral.resumo.revisar}; processados: {preparacaoCentral.resumo.processados}; falhas: {preparacaoCentral.resumo.falhas}; PDFs prontos para impressão: {preparacaoCentral.resumo.pdfsProntosParaImpressao}.
+                    </p>
+                    <div className="gmail-triagem-lote">
+                      {preparacaoCentral.itens.map((item) => (
+                        <article className="gmail-triagem-item" key={item.id}>
+                          <span>
+                            <strong>{item.nome}</strong> · {item.situacao === "preparado" ? `PREPARADO (${item.modo})` : `REVISAR: ${item.motivos.join(", ")}`}
+                            {item.simulacao && (
+                              <>
+                                <br />
+                                UC antiga {item.simulacao.ucAntiga ?? "não encontrada"} · UC {item.simulacao.ucNova ?? "não encontrada"} · {item.simulacao.cliente ?? "cliente não encontrado"} · {item.simulacao.usina ?? "usina não encontrada"} · competência {item.simulacao.mesFaturamento ?? item.competencia ?? "não encontrada"}
+                                <br />
+                                Planilha {item.simulacao.planilha ?? "não encontrada"} · aba {item.simulacao.aba ?? "não encontrada"} · linha {item.simulacao.linha ?? "não encontrada"} · {item.modo === "financeiro" ? item.simulacao.valorBoleto ? `valor simulado R$ ${item.simulacao.valorBoleto}` : "valor não encontrado" : "fluxo documental — sem cálculo de boleto"}
+                              </>
+                            )}
+                          </span>
+                          <Link
+                            className="admin-botao secundario"
+                            to={`/admin/faturas?etapa=conferir&documento=${item.id}`}
+                          >
+                            Ver documento
+                          </Link>
+                        </article>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </section>
             )}
           </section>
           {pendencias.dados?.mensagens.length ||
@@ -881,13 +1155,14 @@ function AcompanhamentoGmail({
             PDFs novos ficam na triagem restrita até um administrador confirmar
             que são faturas. Nenhum valor é aprovado automaticamente.
           </p>
-        </>
+        </details>
       )}
     </div>
   );
 }
 
 function TriagemGmail({ contaId }: { contaId: number }) {
+  const [parametros] = useSearchParams();
   const consulta = usarConsulta<PaginaTriagemGmail>(
     `${base}/${contaId}/triagem`,
   );
@@ -903,12 +1178,15 @@ function TriagemGmail({ contaId }: { contaId: number }) {
     Record<number, SimulacaoCentral>
   >({});
   const [simulandoCentral, definirSimulandoCentral] = useState(false);
-  const idsConferencia =
-    "685,686,687,688,689,690,691,692,693,694,695,696,697,698,699,700,701,702,703";
+  const idsConferencia = parametros.get("documentos") ?? "";
   const conferencia = usarConsulta<{
     itens: ItemConferenciaGmail[];
     ausentes: number[];
-  }>(`${base}/${contaId}/triagem/conferencia?documentos=${idsConferencia}`);
+  }>(
+    idsConferencia
+      ? `${base}/${contaId}/triagem/conferencia?documentos=${idsConferencia}`
+      : null,
+  );
   useEffect(() => {
     definirExtras([]);
     definirProximo(consulta.dados?.proximoAntes ?? null);
@@ -958,12 +1236,13 @@ function TriagemGmail({ contaId }: { contaId: number }) {
   }
 
   async function carregarSimulacaoCentral() {
+    if (!idsConferencia) return;
     definirErro("");
     definirMensagem("");
     definirSimulandoCentral(true);
     try {
       const resultado = await consultarServidor<{ itens: SimulacaoCentral[] }>(
-        `${base}/${contaId}/triagem/conferencia-central?documentos=${documentosSimulacaoCentral.join(",")}`,
+        `${base}/${contaId}/triagem/conferencia-central?documentos=${idsConferencia}`,
       );
       definirSimulacoes(
         Object.fromEntries(
@@ -1079,12 +1358,12 @@ function TriagemGmail({ contaId }: { contaId: number }) {
       ?.quantidade ?? 0;
   return (
     <section className="gmail-triagem">
-      <section
+      {idsConferencia ? <section
         className="gmail-periodo"
-        aria-label="Conferência do lote de 22 de outubro"
+        aria-label="Conferência do lote selecionado"
       >
         <div className="admin-barra">
-          <h4>Lote Gmail — 22/10/2026</h4>
+          <h4>Lote Gmail selecionado</h4>
           <button
             className="admin-botao secundario"
             type="button"
@@ -1102,9 +1381,9 @@ function TriagemGmail({ contaId }: { contaId: number }) {
           </button>
         </div>
         <p>
-          Prévia somente leitura dos 19 documentos confirmados. A simulação usa
-          o motor da Central sem gravar planilhas, PDFs ou cobranças. Ela não é
-          aprovação financeira.
+          Prévia somente leitura dos documentos vinculados ao período. A
+          simulação usa o motor da Central sem gravar planilhas, PDFs ou
+          cobranças. Ela não é aprovação financeira.
         </p>
         {conferencia.erro && (
           <p className="admin-aviso erro" role="alert">
@@ -1167,32 +1446,18 @@ function TriagemGmail({ contaId }: { contaId: number }) {
                       <br />
                       {simulacoes[item.id].situacao === "simulada"
                         ? "Simulação válida — aguarda encaminhamento e aprovação humana em Faturas."
-                        : `REVISAR: ${simulacoes[item.id].motivos.join(", ") || "motivo não informado"}`}
+                        : `REVISAR: ${simulacoes[item.id].motivos?.join(", ") || simulacoes[item.id].motivo || "motivo não informado"}`}
                     </>
                   )}
                 </span>
                 <a
                   className="admin-botao secundario"
-                  href={
-                    documentosSimulacaoCentral.includes(item.id)
-                      ? `${base}/${contaId}/triagem/${item.id}/previa-central`
-                      : `${base}/${contaId}/triagem/${item.id}/pdf`
-                  }
+                  href={`${base}/${contaId}/triagem/${item.id}/pdf`}
                   target="_blank"
                   rel="noopener noreferrer"
                 >
                   Abrir PDF
                 </a>
-                {documentosSimulacaoCentral.includes(item.id) ? (
-                  <a
-                    className="admin-botao secundario"
-                    href={`${base}/${contaId}/triagem/${item.id}/pdf`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Abrir original
-                  </a>
-                ) : null}
                 {item.previaCentralDisponivel ? (
                   <a
                     className="admin-botao secundario"
@@ -1217,7 +1482,7 @@ function TriagemGmail({ contaId }: { contaId: number }) {
             ))}
           </>
         )}
-      </section>
+      </section> : null}
       <div className="admin-barra">
         <h4>Triagem de PDFs</h4>
         <button

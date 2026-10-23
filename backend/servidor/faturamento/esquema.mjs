@@ -118,7 +118,40 @@ export function prepararFaturamento(banco) {
       gmail_anexo_id INTEGER,
       criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS faturamento_processamentos_central (
+      id TEXT PRIMARY KEY,
+      chave_idempotencia TEXT NOT NULL UNIQUE,
+      documento_id INTEGER NOT NULL REFERENCES faturamento_documentos(id) ON DELETE RESTRICT,
+      documento_versao INTEGER NOT NULL,
+      ambiente TEXT NOT NULL CHECK(ambiente='homologacao'),
+      modo TEXT NOT NULL DEFAULT 'financeiro'
+        CHECK(modo IN ('financeiro','documental')),
+      estado TEXT NOT NULL CHECK(estado IN ('em_andamento','concluido','revisar','falhou')),
+      origem TEXT NOT NULL,
+      resultado TEXT,
+      responsavel TEXT NOT NULL,
+      administrador_id INTEGER NOT NULL,
+      criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      concluido_em TEXT
+    );
+    CREATE INDEX IF NOT EXISTS faturamento_processamentos_central_documento
+      ON faturamento_processamentos_central(documento_id,criado_em DESC);
+    CREATE TABLE IF NOT EXISTS usinas_processamento_central (
+      usina_id INTEGER PRIMARY KEY REFERENCES usinas(id) ON DELETE RESTRICT,
+      modo TEXT NOT NULL CHECK(modo IN ('financeiro','documental')),
+      origem TEXT NOT NULL,
+      criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
   `);
+  if (
+    !banco
+      .prepare("PRAGMA table_info(faturamento_processamentos_central)")
+      .all()
+      .some((c) => c.name === "modo")
+  )
+    banco.exec(
+      "ALTER TABLE faturamento_processamentos_central ADD COLUMN modo TEXT NOT NULL DEFAULT 'financeiro' CHECK(modo IN ('financeiro','documental'))",
+    );
   if (
     !banco
       .prepare("PRAGMA table_info(faturamento_saidas_carteira)")
