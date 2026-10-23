@@ -1,7 +1,11 @@
 import { createHash, randomBytes } from "node:crypto";
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { Router } from "express";
 import { obterBanco } from "../bancoDeDados.mjs";
 import { sessaoAtual } from "../autenticacao.mjs";
@@ -78,16 +82,110 @@ const pastaDoProjeto = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "../../..",
 );
-const previaCentralDeDemonstracao = {
-  documentoId: 685,
-  arquivo: join(
-    pastaDoProjeto,
-    "output",
-    "pdf",
-    "Fatura EQT - NOV - CARLOS UNIÃO - Supermercado Reis e Lopes - 11813738 - 16577201233.pdf",
-  ),
-};
+const executarArquivo = promisify(execFile);
+const documentosDaSimulacaoCentral = new Set([685, 686, 689, 690, 698]);
+const codigoFonteCentralPadrao =
+  "C:\\Users\\User\\Desktop\\00 - Central de Faturas Ecosol\\_SUPORTE_ORGANIZACAO\\ARQUIVOS_RETIRADOS_DA_RAIZ_20260917\\CODIGO_FONTE_V146";
+const planilhasAtualizadasPadrao =
+  "G:\\.shortcut-targets-by-id\\1WBX1jPldTDgAie6u0FujV9L6xWIjRtdx\\01 - Usinas Goiás\\00 - Planilhas Atualizadas";
 
+function ultimoJsonDaSaida(saida) {
+  for (const linha of String(saida ?? "")
+    .split(/\r?\n/)
+    .reverse()) {
+    if (!linha.trim()) continue;
+    try {
+      return JSON.parse(linha);
+    } catch {
+      // O motor Python pode emitir avisos antes do resultado estruturado.
+    }
+  }
+  throw new Error("simulacao_central_sem_resultado");
+}
+
+async function executarSimulacaoCentral({ documentos }) {
+  const codigoFonte =
+    process.env.ECOSOL_CENTRAL_CODIGO_FONTE ?? codigoFonteCentralPadrao;
+  const planilhas =
+    process.env.ECOSOL_PLANILHAS_ATUALIZADAS ?? planilhasAtualizadasPadrao;
+  const { stdout } = await executarArquivo(
+    process.env.ECOSOL_PYTHON ?? "python",
+    [
+      join(pastaDoProjeto, "backend", "scripts", "previaNomeadorCentral.py"),
+      "--simular",
+      "--banco",
+      join(pastaDoProjeto, "backend", "data", "ecosol.db"),
+      "--documentos",
+      documentos.join(","),
+      "--motor",
+      join(codigoFonte, "nomeador_engine.py"),
+      "--atualizador",
+      join(codigoFonte, "atualizador_engine.py"),
+      "--pasta-vendas",
+      planilhas,
+    ],
+    { windowsHide: true, timeout: 120_000, maxBuffer: 2 * 1024 * 1024 },
+  );
+  const resultado = ultimoJsonDaSaida(stdout);
+  if (!Array.isArray(resultado?.resultados))
+    throw new Error("simulacao_central_invalida");
+  return resultado;
+}
+
+async function gerarPreviaCentralTemporaria({ documento, simulacao }) {
+  const codigoFonte =
+    process.env.ECOSOL_CENTRAL_CODIGO_FONTE ?? codigoFonteCentralPadrao;
+  const planilhas =
+    process.env.ECOSOL_PLANILHAS_ATUALIZADAS ?? planilhasAtualizadasPadrao;
+  const pastaTemporaria = await mkdtemp(
+    join(tmpdir(), "ecosol-previa-central-"),
+  );
+  const destino = join(pastaTemporaria, `documento-${documento}.pdf`);
+  const limpar = () => rm(pastaTemporaria, { recursive: true, force: true });
+  try {
+    const { stdout } = await executarArquivo(
+      process.env.ECOSOL_PYTHON ?? "python",
+      [
+        join(pastaDoProjeto, "backend", "scripts", "previaNomeadorCentral.py"),
+        "--banco",
+        join(pastaDoProjeto, "backend", "data", "ecosol.db"),
+        "--documento",
+        String(documento),
+        "--motor",
+        join(codigoFonte, "nomeador_engine.py"),
+        "--atualizador",
+        join(codigoFonte, "atualizador_engine.py"),
+        "--pasta-vendas",
+        planilhas,
+        "--saida",
+        destino,
+        "--uc-antiga",
+        simulacao.ucAntiga,
+        "--cliente",
+        simulacao.cliente,
+        "--usina",
+        simulacao.usina,
+      ],
+      { windowsHide: true, timeout: 120_000, maxBuffer: 2 * 1024 * 1024 },
+    );
+    const resultado = ultimoJsonDaSaida(stdout);
+    const arquivo = resolve(resultado?.saida ?? "");
+    const nome = resultado?.nomeFinal;
+    if (
+      !resultado?.boleto?.valorCalculadoCentral ||
+      resultado.boleto.valorCalculadoCentral !== simulacao.valorBoleto ||
+      typeof nome !== "string" ||
+      nome !== basename(arquivo) ||
+      !arquivo.startsWith(resolve(pastaTemporaria) + "\\") ||
+      !existsSync(arquivo)
+    )
+      throw new Error("previa_central_diverge_da_simulacao");
+    return { arquivo, nome, limpar };
+  } catch (erro) {
+    await limpar();
+    throw erro;
+  }
+}
 function irParaPainel(resposta, resultado) {
   resposta.set("Cache-Control", "no-store");
   resposta.set("Referrer-Policy", "no-referrer");
@@ -120,6 +218,10 @@ function erroDaTriagem(resposta, erro, acao) {
     return resposta
       .status(409)
       .json({ erro: "Documento alterado; atualize a triagem." });
+  if (erro.message === "simulacao_central_revisar")
+    return resposta.status(409).json({
+      erro: "A simulação da Central exige revisão antes de encaminhar para Faturas.",
+    });
   return resposta.status(500).json({ erro: `Falha na ${acao}.` });
 }
 
@@ -129,8 +231,45 @@ export function criarRotasGmail({
   clienteGoogle = criarClienteGoogle,
   agora = Date.now,
   sincronizador = criarSincronizadorGmail(),
+  simuladorCentral = executarSimulacaoCentral,
+  geradorPreviaCentral = gerarPreviaCentralTemporaria,
+  documentosCentral = documentosDaSimulacaoCentral,
 } = {}) {
   const rotas = Router();
+
+  async function simularDocumentosDaConta(contaId, ids) {
+    const unicos = [...new Set(ids)];
+    const marcadores = unicos.map(() => "?").join(",");
+    const existentes = banco()
+      .prepare(
+        `SELECT d.id FROM gmail_anexos a JOIN faturamento_documentos d ON d.id=a.documento_id
+         WHERE a.conta_id=? AND a.estado='capturado' AND d.id IN (${marcadores})`,
+      )
+      .all(contaId, ...unicos)
+      .map((item) => item.id);
+    if (existentes.length !== unicos.length)
+      throw new Error("documento_indisponivel");
+    const resultado = await simuladorCentral({ documentos: unicos });
+    const resultados = resultado?.resultados;
+    if (
+      !Array.isArray(resultados) ||
+      resultados.length !== unicos.length ||
+      unicos.some((id) => !resultados.some((item) => item?.documento === id))
+    )
+      throw new Error("simulacao_central_invalida");
+    return resultados;
+  }
+
+  async function exigirSimulacaoAprovavel(contaId, itens, destino) {
+    if (destino !== "fatura") return;
+    const ids = itens
+      .map((item) => idValido(item?.id ?? item))
+      .filter((id) => id && documentosCentral.has(id));
+    if (!ids.length) return;
+    const resultados = await simularDocumentosDaConta(contaId, ids);
+    if (resultados.some((item) => item.situacao !== "simulada"))
+      throw new Error("simulacao_central_revisar");
+  }
   rotas.use("/api/admin/gmail", (requisicao, resposta, proximo) => {
     if (
       requisicao.originalUrl.split("?", 1)[0] ===
@@ -477,6 +616,11 @@ export function criarRotasGmail({
               unidadeId: unidade?.id ?? null,
               nomeProposto: proposto,
               situacao: unidade && competencia ? "vinculo_seguro" : "revisar",
+              versao: item.versao,
+              // PDFs de demonstração antigos não podem ser fonte financeira.
+              // Uma prévia de PDF futura será gerada após a revisão, usando a
+              // mesma simulação calculate_boleto exposta nesta tela.
+              previaCentralDisponivel: false,
               metodo: "UC extraída do quadro principal",
             };
           });
@@ -493,18 +637,46 @@ export function criarRotasGmail({
     },
   );
 
-  // Prévia de homologação deliberadamente limitada ao único PDF conferido.
-  // Não aciona o motor, não altera o documento e não habilita processamento em lote.
   rotas.get(
-    "/api/admin/gmail/contas/:id/triagem/:documentoId/previa-central",
-    (requisicao, resposta) => {
+    "/api/admin/gmail/contas/:id/triagem/conferencia-central",
+    async (requisicao, resposta) => {
       const contaId = idValido(requisicao.params.id);
-      const documentoId = idValido(requisicao.params.documentoId);
+      const ids = String(requisicao.query.documentos ?? "")
+        .split(",")
+        .map((valor) => idValido(valor.trim()))
+        .filter(Boolean);
       if (
         !contaId ||
-        documentoId !== previaCentralDeDemonstracao.documentoId ||
-        !existsSync(previaCentralDeDemonstracao.arquivo)
+        !ids.length ||
+        ids.length > documentosCentral.size ||
+        new Set(ids).size !== ids.length ||
+        ids.some((id) => !documentosCentral.has(id))
       )
+        return resposta
+          .status(400)
+          .json({ erro: "Seleção de documentos inválida." });
+      try {
+        criarRepositorioGmail(banco()).obterConta(contaId);
+        const itens = await simularDocumentosDaConta(contaId, ids);
+        resposta.set("Cache-Control", "no-store");
+        return resposta.json({ itens });
+      } catch (erro) {
+        if (erro.message === "documento_indisponivel")
+          return resposta.status(404).json({ erro: "Documento inexistente." });
+        return resposta.status(503).json({
+          erro: "Não foi possível concluir a simulação da Central. Tente novamente.",
+        });
+      }
+    },
+  );
+
+  // A prévia é temporária e deriva do mesmo calculate_boleto usado na revisão.
+  rotas.get(
+    "/api/admin/gmail/contas/:id/triagem/:documentoId/previa-central",
+    async (requisicao, resposta) => {
+      const contaId = idValido(requisicao.params.id);
+      const documentoId = idValido(requisicao.params.documentoId);
+      if (!contaId || !documentosCentral.has(documentoId))
         return resposta.status(404).json({ erro: "Prévia indisponível." });
       const existe = banco()
         .prepare(
@@ -514,9 +686,36 @@ export function criarRotasGmail({
         .get(contaId, documentoId);
       if (!existe)
         return resposta.status(404).json({ erro: "Prévia indisponível." });
-      resposta.set("Cache-Control", "no-store");
-      resposta.set("Content-Disposition", "inline");
-      return resposta.sendFile(previaCentralDeDemonstracao.arquivo);
+      let previa;
+      try {
+        const [simulacao] = await simularDocumentosDaConta(contaId, [
+          documentoId,
+        ]);
+        if (simulacao.situacao !== "simulada")
+          return resposta.status(409).json({
+            erro: "A simulação da Central exige revisão antes de gerar a prévia.",
+          });
+        previa = await geradorPreviaCentral({
+          documento: documentoId,
+          simulacao,
+        });
+        resposta.set({
+          "Cache-Control": "no-store",
+          "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(previa.nome)}`,
+          "Content-Type": "application/pdf",
+          "X-Content-Type-Options": "nosniff",
+        });
+        return resposta.sendFile(previa.arquivo, async (erro) => {
+          await previa.limpar();
+          if (erro && !resposta.headersSent)
+            resposta.status(500).json({ erro: "Falha ao abrir a prévia." });
+        });
+      } catch {
+        await previa?.limpar();
+        return resposta.status(503).json({
+          erro: "Não foi possível gerar a prévia atual da Central.",
+        });
+      }
     },
   );
 
@@ -543,11 +742,16 @@ export function criarRotasGmail({
 
   rotas.post(
     "/api/admin/gmail/contas/:id/triagem/classificacao-em-lote",
-    (requisicao, resposta) => {
+    async (requisicao, resposta) => {
       const contaId = idValido(requisicao.params.id);
       if (!contaId)
         return resposta.status(400).json({ erro: "Conta inválida." });
       try {
+        await exigirSimulacaoAprovavel(
+          contaId,
+          requisicao.body?.itens ?? [],
+          requisicao.body?.destino,
+        );
         const resultado = classificarDocumentosGmail({
           banco: banco(),
           contaId,
@@ -587,12 +791,17 @@ export function criarRotasGmail({
 
   rotas.post(
     "/api/admin/gmail/contas/:id/triagem/:documentoId/classificacao",
-    (requisicao, resposta) => {
+    async (requisicao, resposta) => {
       const contaId = idValido(requisicao.params.id);
       const documentoId = idValido(requisicao.params.documentoId);
       if (!contaId || !documentoId)
         return resposta.status(400).json({ erro: "Documento inválido." });
       try {
+        await exigirSimulacaoAprovavel(
+          contaId,
+          [documentoId],
+          requisicao.body?.destino,
+        );
         const resultado = classificarDocumentoGmail({
           banco: banco(),
           contaId,
