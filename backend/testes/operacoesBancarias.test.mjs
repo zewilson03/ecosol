@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,23 +9,22 @@ process.env.ECOSOL_DATA_DIR = mkdtempSync(join(tmpdir(), "ecosol-operacoes-"));
 process.env.NODE_ENV = "test";
 process.env.SICOOB_AMBIENTE = "homologacao";
 process.env.SICOOB_CONTA_REFERENCIA = "conta-teste";
-process.env.BANCARIO_MFA_ENCRYPTION_KEY = randomBytes(32).toString("base64");
 
 const { resumoCriptografico, protegerSenha } =
   await import("../servidor/autenticacao.mjs");
 const { obterBanco } = await import("../servidor/bancoDeDados.mjs");
 const { prepararBancario } = await import("../servidor/bancario/esquema.mjs");
+const { hashCanonico, jsonCanonico } =
+  await import("../servidor/bancario/operacoes.mjs");
 const { rotasAdministrativas } =
   await import("../servidor/rotasAdministrativas.mjs");
-const { gerarSegredoTotp, cifrarSegredoTotp, codigoTotp } =
-  await import("../servidor/bancario/totp.mjs");
+
 const banco = obterBanco();
+prepararBancario(banco);
 const senhaDeTeste = "Senha bancaria de teste 2026";
 const hashDeTeste = await protegerSenha(senhaDeTeste);
-const segredosPorCookie = new Map();
-prepararBancario(banco);
 
-function criarPessoa(nome, nivel, papeis = []) {
+function criarPessoa(nome, nivel) {
   const id = Number(
     banco
       .prepare(
@@ -33,39 +32,29 @@ function criarPessoa(nome, nivel, papeis = []) {
       )
       .run(nome, `${nome}@teste.local`, hashDeTeste, nivel).lastInsertRowid,
   );
-  for (const papel of papeis)
-    banco
-      .prepare(
-        "INSERT INTO bancario_papeis_equipe(staff_id,papel,concedido_por) VALUES(?,?,?)",
-      )
-      .run(id, papel, 9999);
   const token = randomBytes(32).toString("hex");
   banco
     .prepare(
       "INSERT INTO sessions(staff_id,token_hash,role,expires_at) VALUES(?,?,?,?)",
     )
     .run(id, resumoCriptografico(token), "staff", Date.now() + 60_000);
-  const cookie = `ecosol_session=${token}`;
-  const segredo = gerarSegredoTotp();
-  banco
-    .prepare(
-      "INSERT INTO bancario_mfa_equipe(staff_id,segredo_cifrado,ativado_em) VALUES(?,?,CURRENT_TIMESTAMP)",
-    )
-    .run(id, cifrarSegredoTotp(segredo, id));
-  segredosPorCookie.set(cookie, segredo);
-  return { id, cookie };
+  return { id, cookie: `ecosol_session=${token}` };
 }
 
-const preparador = criarPessoa("preparador", 3, [
-  "operador_financeiro",
-  "aprovador_financeiro",
-]);
-const aprovador = criarPessoa("aprovador", 3, ["aprovador_financeiro"]);
-const auditor = criarPessoa("auditor", 1, ["consulta_auditoria"]);
-const administradorIntegracao = criarPessoa("administrador-integracao", 3, [
-  "administrador_integracao",
-]);
-const semPapel = criarPessoa("sem-papel", 3);
+const colaborador = criarPessoa("colaborador", 1);
+const proprietario = criarPessoa("proprietario", 3);
+const proprietarioDois = criarPessoa("proprietario-dois", 3);
+const outroAdministrador = criarPessoa("outro-administrador", 3);
+banco
+  .prepare(
+    "INSERT INTO equipe_papeis_criticos(staff_id,papel) VALUES(?,'proprietario')",
+  )
+  .run(proprietario.id);
+banco
+  .prepare(
+    "INSERT INTO equipe_papeis_criticos(staff_id,papel) VALUES(?,'proprietario')",
+  )
+  .run(proprietarioDois.id);
 
 const clienteId = Number(
   banco
@@ -105,7 +94,7 @@ function criarFatura(sufixo, totalCentavos = 12345) {
         `INSERT INTO faturamento_documentos
          (hash,nome,pdf,lote,texto,extracao,dados,memoria,unidade_id,
           competencia,status,classificacao,finalidade,versao)
-         VALUES(?,?,?,?,?,?,?,?,?,?,'Aprovada — aguardando emissão','fatura','cobranca',?)`,
+         VALUES(?,?,?,?,?,?,?,?,?,?,'Aprovada — aguardando emissão','fatura','cobranca',7)`,
       )
       .run(
         hash,
@@ -118,9 +107,34 @@ function criarFatura(sufixo, totalCentavos = 12345) {
         JSON.stringify(memoria),
         unidadeId,
         `2026-${sufixo}`,
-        7,
       ).lastInsertRowid,
   );
+}
+
+function criarPagamento(preparadoPor, sufixo) {
+  const snapshot = {
+    versao: 1,
+    tipo: "pagamento",
+    origem: { referencia: `titulo-${sufixo}` },
+    pagamento: { valor_centavos: 5000, moeda: "BRL" },
+  };
+  const id = randomUUID();
+  banco
+    .prepare(
+      `INSERT INTO bancario_operacoes
+       (id,tipo,ambiente,conta_referencia,origem_tipo,origem_id,origem_versao,
+        idempotencia,valor_centavos,snapshot,snapshot_hash,estado,preparado_por)
+       VALUES(?,'pagamento','homologacao','conta-teste','manual',?,1,?,5000,?,?,'aguardando_aprovacao',?)`,
+    )
+    .run(
+      id,
+      `titulo-${sufixo}`,
+      hashCanonico({ tipo: "pagamento", sufixo }),
+      jsonCanonico(snapshot),
+      hashCanonico(snapshot),
+      preparadoPor,
+    );
+  return id;
 }
 
 const aplicacao = express();
@@ -129,417 +143,200 @@ const servidor = aplicacao.listen(0, "127.0.0.1");
 await new Promise((resolver) => servidor.once("listening", resolver));
 const base = `http://127.0.0.1:${servidor.address().port}`;
 process.env.APP_URL = base;
-const confirmacoes = new Map();
-const confirmacoesPendentes = new Map();
 
-async function chamar(caminho, cookie, metodo = "GET", corpo) {
-  if (
-    metodo !== "GET" &&
-    caminho.startsWith("/api/admin/bancario/") &&
-    cookie
-  ) {
-    if (!confirmacoes.has(cookie)) {
-      if (!confirmacoesPendentes.has(cookie))
-        confirmacoesPendentes.set(
-          cookie,
-          (async () => {
-            const confirmacao = await fetch(
-              base + "/api/admin/bancario/confirmar-identidade",
-              {
-                method: "POST",
-                headers: {
-                  Cookie: cookie,
-                  Origin: base,
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                  senha: senhaDeTeste,
-                  codigo: codigoTotp(
-                    segredosPorCookie.get(cookie),
-                    Math.floor(Date.now() / 30_000),
-                  ),
-                }),
-              },
-            );
-            assert.equal(confirmacao.status, 200);
-            confirmacoes.set(cookie, (await confirmacao.json()).prova);
-          })(),
-        );
-      await confirmacoesPendentes.get(cookie);
-    }
-  }
+async function chamar(caminho, pessoa, metodo = "GET", corpo, prova) {
   return fetch(base + caminho, {
     method: metodo,
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
       ...(metodo !== "GET" ? { Origin: base } : {}),
-      ...(confirmacoes.has(cookie)
-        ? { "X-Ecosol-Confirmacao-Bancaria": confirmacoes.get(cookie) }
-        : {}),
-      ...(cookie ? { Cookie: cookie } : {}),
+      ...(prova ? { "X-Ecosol-Confirmacao-Bancaria": prova } : {}),
+      ...(pessoa ? { Cookie: pessoa.cookie } : {}),
     },
     ...(corpo ? { body: JSON.stringify(corpo) } : {}),
   });
 }
 
 try {
-  const faturaId = criarFatura("10");
+  const senhaConfirmacao = "Confirmacao financeira 2026";
+  const cadastroCredencial = await chamar(
+    "/api/admin/bancario/credencial-confirmacao",
+    proprietario,
+    "PUT",
+    { nova_senha: senhaConfirmacao },
+  );
+  assert.equal(cadastroCredencial.status, 200);
   assert.equal(
     (
       await chamar(
-        "/api/admin/bancario/operacoes/cobrancas",
-        semPapel.cookie,
-        "POST",
-        { documento_id: faturaId },
+        "/api/admin/bancario/credencial-confirmacao",
+        proprietarioDois,
+        "PUT",
+        { nova_senha: "Outra confirmacao 2026" },
       )
     ).status,
     403,
   );
-
-  const criacoes = await Promise.all(
-    [1, 2].map(() =>
-      chamar(
-        "/api/admin/bancario/operacoes/cobrancas",
-        preparador.cookie,
-        "POST",
-        { documento_id: faturaId },
-      ),
-    ),
+  const faturaId = criarFatura("10");
+  const criada = await chamar(
+    "/api/admin/bancario/operacoes/cobrancas",
+    colaborador,
+    "POST",
+    { documento_id: faturaId },
   );
-  assert.deepEqual(
-    criacoes.map((resposta) => resposta.status).sort(),
-    [200, 201],
-  );
-  const resultados = await Promise.all(
-    criacoes.map((resposta) => resposta.json()),
-  );
-  assert.equal(resultados[0].operacao.id, resultados[1].operacao.id);
-  const operacaoId = resultados[0].operacao.id;
-  assert.equal(resultados[0].operacao.estado, "aguardando_aprovacao");
-  assert.equal(resultados[0].operacao.valor_centavos, 12345);
-  assert.equal(
-    banco.prepare("SELECT COUNT(*) AS n FROM bancario_operacoes").get().n,
-    1,
-  );
-
-  assert.equal(
-    (
-      await chamar(
-        `/api/admin/bancario/operacoes/${operacaoId}/enfileirar`,
-        preparador.cookie,
-        "POST",
-      )
-    ).status,
-    409,
-  );
-  assert.equal(
-    (
-      await chamar(
-        `/api/admin/bancario/operacoes/${operacaoId}/aprovar`,
-        preparador.cookie,
-        "POST",
-      )
-    ).status,
-    409,
-  );
-
-  const aprovada = await (
-    await chamar(
-      `/api/admin/bancario/operacoes/${operacaoId}/aprovar`,
-      aprovador.cookie,
-      "POST",
-    )
-  ).json();
-  assert.equal(aprovada.alterada, true);
-  assert.equal(aprovada.operacao.estado, "aprovada");
-  const repetida = await (
-    await chamar(
-      `/api/admin/bancario/operacoes/${operacaoId}/aprovar`,
-      aprovador.cookie,
-      "POST",
-    )
-  ).json();
-  assert.equal(repetida.alterada, false);
+  assert.equal(criada.status, 201);
+  const cobranca = await criada.json();
+  assert.equal(cobranca.operacao.estado, "aprovada");
+  assert.equal(cobranca.operacao.aprovador_id, null);
   assert.equal(
     banco.prepare("SELECT COUNT(*) AS n FROM bancario_aprovacoes").get().n,
-    1,
+    0,
   );
 
-  assert.equal(
-    (
-      await chamar(
-        `/api/admin/bancario/operacoes/${operacaoId}/enfileirar`,
-        aprovador.cookie,
-        "POST",
-      )
-    ).status,
-    403,
+  const repetida = await chamar(
+    "/api/admin/bancario/operacoes/cobrancas",
+    colaborador,
+    "POST",
+    { documento_id: faturaId },
   );
-  const fila = await (
-    await chamar(
-      `/api/admin/bancario/operacoes/${operacaoId}/enfileirar`,
-      preparador.cookie,
-      "POST",
-    )
-  ).json();
-  assert.equal(fila.criada, true);
-  assert.equal(fila.operacao.estado, "envio_pendente");
-  assert.equal(fila.operacao.intencao.estado, "pendente");
-  const filaRepetida = await (
-    await chamar(
-      `/api/admin/bancario/operacoes/${operacaoId}/enfileirar`,
-      preparador.cookie,
-      "POST",
-    )
-  ).json();
-  assert.equal(filaRepetida.criada, false);
+  assert.equal(repetida.status, 200);
+  assert.equal((await repetida.json()).operacao.id, cobranca.operacao.id);
+
+  const aprovacaoDesnecessaria = await chamar(
+    `/api/admin/bancario/operacoes/${cobranca.operacao.id}/aprovar`,
+    proprietario,
+    "POST",
+    { senha: senhaConfirmacao },
+  );
+  assert.equal(aprovacaoDesnecessaria.status, 409);
+
+  const fila = await chamar(
+    `/api/admin/bancario/operacoes/${cobranca.operacao.id}/enfileirar`,
+    colaborador,
+    "POST",
+  );
+  assert.equal(fila.status, 200);
+  assert.equal((await fila.json()).operacao.estado, "envio_pendente");
   assert.equal(
     banco.prepare("SELECT COUNT(*) AS n FROM bancario_intencoes").get().n,
     1,
   );
 
-  assert.equal(
-    (await chamar("/api/admin/bancario/operacoes", semPapel.cookie)).status,
-    403,
-  );
+  const lista = await chamar("/api/admin/bancario/operacoes", colaborador);
+  assert.equal(lista.status, 200);
+  assert.equal((await lista.json()).length, 1);
+
+  const pagamentoId = criarPagamento(colaborador.id, "a");
   assert.equal(
     (
       await chamar(
-        "/api/admin/bancario/operacoes",
-        administradorIntegracao.cookie,
+        `/api/admin/bancario/operacoes/${pagamentoId}`,
+        outroAdministrador,
       )
     ).status,
-    403,
+    404,
   );
-  const lista = await (
-    await chamar("/api/admin/bancario/operacoes", auditor.cookie)
-  ).json();
-  assert.equal(lista.length, 1);
-  assert.equal("snapshot" in lista[0], false);
-  const detalhe = await (
-    await chamar(`/api/admin/bancario/operacoes/${operacaoId}`, auditor.cookie)
-  ).json();
-  assert.equal(detalhe.snapshot.cobranca.valor_centavos, 12345);
-  assert.equal(detalhe.snapshot.cliente.documento, "*******4705");
-
-  assert.throws(
-    () =>
-      banco
-        .prepare("UPDATE bancario_operacoes SET estado='liquidada' WHERE id=?")
-        .run(operacaoId),
-    /Transição bancária inválida/,
+  assert.equal(
+    (await chamar(`/api/admin/bancario/operacoes/${pagamentoId}`, proprietario))
+      .status,
+    200,
   );
-
-  const faturaAlteradaId = criarFatura("11", 54321);
-  const nova = await (
-    await chamar(
-      "/api/admin/bancario/operacoes/cobrancas",
-      preparador.cookie,
-      "POST",
-      { documento_id: faturaAlteradaId },
-    )
-  ).json();
-  await chamar(
-    `/api/admin/bancario/operacoes/${nova.operacao.id}/aprovar`,
-    aprovador.cookie,
-    "POST",
-  );
-  banco
-    .prepare("UPDATE faturamento_documentos SET versao=versao+1 WHERE id=?")
-    .run(faturaAlteradaId);
   assert.equal(
     (
       await chamar(
-        `/api/admin/bancario/operacoes/${nova.operacao.id}/enfileirar`,
-        preparador.cookie,
+        `/api/admin/bancario/operacoes/${pagamentoId}/aprovar`,
+        outroAdministrador,
         "POST",
+        { senha: senhaDeTeste },
       )
     ).status,
-    409,
+    403,
+  );
+  assert.equal(
+    (
+      await chamar(
+        `/api/admin/bancario/operacoes/${pagamentoId}/aprovar`,
+        proprietario,
+        "POST",
+        { senha: senhaDeTeste },
+      )
+    ).status,
+    401,
+  );
+
+  const senhaErrada = await chamar(
+    `/api/admin/bancario/operacoes/${pagamentoId}/aprovar`,
+    proprietario,
+    "POST",
+    { senha: "senha incorreta" },
+  );
+  assert.equal(senhaErrada.status, 401);
+  const aprovada = await chamar(
+    `/api/admin/bancario/operacoes/${pagamentoId}/aprovar`,
+    proprietario,
+    "POST",
+    { senha: senhaConfirmacao },
+  );
+  assert.equal(aprovada.status, 200);
+  const pagamento = await aprovada.json();
+  assert.equal(pagamento.operacao.estado, "aprovada");
+  assert.equal(pagamento.operacao.aprovador_id, proprietario.id);
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT COUNT(*) AS n FROM bancario_aprovacoes_pagamento_proprietario",
+      )
+      .get().n,
+    1,
   );
   assert.equal(
     banco
       .prepare(
-        "SELECT COUNT(*) AS n FROM bancario_intencoes WHERE operacao_id=?",
+        "SELECT COUNT(*) AS n FROM bancario_auditoria_operacoes WHERE operacao_id=? AND acao='Pagamento aprovado pelo Proprietário com senha de confirmação'",
       )
-      .get(nova.operacao.id).n,
-    0,
-  );
-
-  const faturaPapelRevogadoId = criarFatura("12", 22222);
-  const papelRevogado = await (
-    await chamar(
-      "/api/admin/bancario/operacoes/cobrancas",
-      preparador.cookie,
-      "POST",
-      { documento_id: faturaPapelRevogadoId },
-    )
-  ).json();
-  await chamar(
-    `/api/admin/bancario/operacoes/${papelRevogado.operacao.id}/aprovar`,
-    aprovador.cookie,
-    "POST",
-  );
-  banco
-    .prepare(
-      "DELETE FROM bancario_papeis_equipe WHERE staff_id=? AND papel='aprovador_financeiro'",
-    )
-    .run(aprovador.id);
-  assert.equal(
-    (
-      await chamar(
-        `/api/admin/bancario/operacoes/${papelRevogado.operacao.id}/enfileirar`,
-        preparador.cookie,
-        "POST",
-      )
-    ).status,
-    409,
-  );
-
-  const faturaCadastroPendenteId = criarFatura("01", 11111);
-  banco
-    .prepare(
-      "UPDATE faturamento_unidades SET pendencia_cadastro='Documento sintético' WHERE id=?",
-    )
-    .run(unidadeId);
-  assert.equal(
-    (
-      await chamar(
-        "/api/admin/bancario/operacoes/cobrancas",
-        preparador.cookie,
-        "POST",
-        { documento_id: faturaCadastroPendenteId },
-      )
-    ).status,
-    409,
-  );
-  assert.equal(
-    banco
-      .prepare("SELECT COUNT(*) AS n FROM bancario_auditoria_operacoes")
-      .get().n,
-    7,
-  );
-  banco
-    .prepare(
-      "UPDATE faturamento_unidades SET pendencia_cadastro=NULL WHERE id=?",
-    )
-    .run(unidadeId);
-  banco
-    .prepare(
-      "INSERT INTO equipe_papeis_criticos(staff_id,papel) VALUES(?,'proprietario')",
-    )
-    .run(semPapel.id);
-  banco
-    .prepare(
-      "INSERT INTO equipe_papeis_criticos(staff_id,papel) VALUES(?,'proprietario')",
-    )
-    .run(administradorIntegracao.id);
-  assert.throws(
-    () =>
-      banco
-        .prepare(
-          "INSERT INTO equipe_papeis_criticos(staff_id,papel) VALUES(?,'proprietario')",
-        )
-        .run(preparador.id),
-    /Limite de contas/,
-  );
-  assert.throws(
-    () =>
-      banco
-        .prepare("UPDATE staff_users SET access_level=2 WHERE id=?")
-        .run(semPapel.id),
-    /Remova o papel crítico/,
-  );
-  const faturaProprietarioId = criarFatura("proprietario", 33333);
-  const propria = await (
-    await chamar(
-      "/api/admin/bancario/operacoes/cobrancas",
-      semPapel.cookie,
-      "POST",
-      { documento_id: faturaProprietarioId },
-    )
-  ).json();
-  assert.equal(
-    (
-      await chamar(
-        `/api/admin/bancario/operacoes/${propria.operacao.id}/aprovar`,
-        semPapel.cookie,
-        "POST",
-      )
-    ).status,
-    400,
-  );
-  const autoaprovada = await (
-    await chamar(
-      `/api/admin/bancario/operacoes/${propria.operacao.id}/aprovar`,
-      semPapel.cookie,
-      "POST",
-      { confirmacao_autoaprovacao: true },
-    )
-  ).json();
-  assert.equal(autoaprovada.operacao.estado, "aprovada");
-  assert.equal(autoaprovada.operacao.autoaprovada, 1);
-  assert.equal(autoaprovada.operacao.aprovador_id, semPapel.id);
-  assert.equal(
-    banco
-      .prepare("SELECT COUNT(*) AS n FROM bancario_autoaprovacoes_proprietario")
-      .get().n,
+      .get(pagamentoId).n,
     1,
   );
+
+  const pagamentoDoProprietarioDois = criarPagamento(colaborador.id, "owner-2");
+  const aprovadoPeloSegundo = await chamar(
+    `/api/admin/bancario/operacoes/${pagamentoDoProprietarioDois}/aprovar`,
+    proprietarioDois,
+    "POST",
+    { senha: senhaConfirmacao },
+  );
+  assert.equal(aprovadoPeloSegundo.status, 200);
+  assert.equal(
+    (await aprovadoPeloSegundo.json()).operacao.aprovador_id,
+    proprietarioDois.id,
+  );
+
+  banco
+    .prepare(
+      `INSERT INTO bancario_intencoes
+       (id,operacao_id,operacao_versao,acao,estado)
+       VALUES(?,?,1,'executar_pagamento','pendente')`,
+    )
+    .run(randomUUID(), pagamentoId);
   banco
     .prepare("DELETE FROM equipe_papeis_criticos WHERE staff_id=?")
-    .run(semPapel.id);
-  assert.equal(
-    (
-      await chamar(
-        `/api/admin/bancario/operacoes/${propria.operacao.id}/enfileirar`,
-        preparador.cookie,
-        "POST",
-      )
-    ).status,
-    409,
-  );
-  banco
-    .prepare(
-      "INSERT INTO equipe_papeis_criticos(staff_id,papel) VALUES(?,'proprietario')",
-    )
-    .run(semPapel.id);
-  assert.equal(
-    (
-      await chamar(
-        `/api/admin/bancario/operacoes/${propria.operacao.id}/enfileirar`,
-        semPapel.cookie,
-        "POST",
-      )
-    ).status,
-    200,
-  );
-  const guardiao = criarPessoa("guardiao-recuperacao", 1);
-  banco
-    .prepare(
-      "INSERT INTO equipe_papeis_criticos(staff_id,papel) VALUES(?,'guardiao_recuperacao')",
-    )
-    .run(guardiao.id);
-  assert.equal(
-    (await chamar("/api/admin/usinas", guardiao.cookie)).status,
-    403,
-  );
-  assert.equal(
-    (await chamar("/api/admin/bancario/operacoes", guardiao.cookie)).status,
-    403,
-  );
+    .run(proprietario.id);
+  const pagamentoSemProprietario = criarPagamento(colaborador.id, "b");
   assert.throws(
     () =>
       banco
         .prepare(
-          "INSERT INTO equipe_papeis_criticos(staff_id,papel) VALUES(?,'guardiao_recuperacao')",
+          `INSERT INTO bancario_aprovacoes_pagamento_proprietario
+           (operacao_id,operacao_versao,snapshot_hash,proprietario_id)
+           SELECT id,versao,snapshot_hash,? FROM bancario_operacoes WHERE id=?`,
         )
-        .run(preparador.id),
-    /Limite de contas/,
+        .run(proprietario.id, pagamentoSemProprietario),
+    /Pagamento exige aprovação atual do Proprietário/,
   );
+
   console.log(
-    "OK: snapshot, aprovação segregada, autoaprovação restrita ao Proprietário, fila e bloqueio por versão.",
+    "OK: cobranças não exigem senha; pagamentos exigem Proprietário e a senha financeira gerida pelo Proprietário 1.",
   );
 } finally {
   await new Promise((resolver) => servidor.close(resolver));

@@ -95,7 +95,7 @@ Certificado e chave privada devem ficar fora do repositório, com permissões re
 
 ## Regras obrigatórias de operação
 
-- Regra geral: uma pessoa prepara e outra aprova. Exceção exclusiva: o perfil crítico **Proprietário** pode autoaprovar a própria operação com MFA ativo, confirmação recente, aceite explícito e auditoria específica. Nenhum outro perfil pode autoaprovar.
+- Regra geral: uma pessoa prepara e outra aprova. Exceção exclusiva: o perfil crítico **Proprietário** pode autoaprovar a própria operação com nova digitação da senha financeira e auditoria específica. Nenhum outro perfil pode autoaprovar.
 - Qualquer alteração de valor, favorecido, vencimento, conta, linha digitável ou versão da fatura invalida a aprovação.
 - Timeout, queda de conexão, 401/403 durante registro e reinício após envio são **resultado desconhecido**, não falha financeira confirmada.
 - Repetir consulta pode ser seguro conforme contrato. Repetir registro/pagamento somente é permitido quando a idempotência remota tiver sido comprovada e testada.
@@ -118,7 +118,7 @@ Certificado e chave privada devem ficar fora do repositório, com permissões re
 - Conectar os contratos OAuth, cobrança, consulta, baixa e pagamentos à documentação efetivamente contratada.
 - Criar a rota de webhook somente se o produto a suportar, com autenticação oficial, deduplicação e reconciliação.
 - Implementar conciliação diária com bruto, tarifa, líquido, data e identificadores externos.
-- Reautenticação recente, MFA TOTP e confirmação explícita contra CSRF já protegem as mutações bancárias (validade de cinco minutos, vínculo à sessão e bloqueio por origem). Configurar a chave, concluir a validação assistida e definir recuperação organizacional para perda de todos os fatores antes da operação financeira em produção. Ver [guia de MFA](06-mfa-acoes-bancarias.md).
+- Reautenticação recente pela senha da equipe e confirmação explícita contra CSRF protegem as mutações administrativas (validade de cinco minutos, vínculo à sessão e bloqueio por origem). Aprovações de pagamentos usam a senha financeira própria. Configurar e testar o SMTP de recuperação antes da operação financeira em produção. Ver [guia da senha financeira](06-mfa-acoes-bancarias.md).
 - Criar a interface de emissão final, comprovantes, retorno de pagamentos e tratamento manual de divergências.
 - Executar homologação e, após aceite, piloto de produção controlado.
 

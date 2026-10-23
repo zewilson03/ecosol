@@ -65,6 +65,47 @@ function email(valor) {
   return resultado;
 }
 
+function enumeracao(valor, campo, permitidos) {
+  const resultado = inteiro(valor, campo);
+  if (!permitidos.includes(resultado)) falhar(campo);
+  return resultado;
+}
+
+function especieDocumento(valor) {
+  const resultado = texto(valor, "espécie do documento", 3).toUpperCase();
+  const permitidas = new Set([
+    "CH",
+    "DM",
+    "DMI",
+    "DS",
+    "DSI",
+    "DR",
+    "LC",
+    "NCC",
+    "NCE",
+    "NCI",
+    "NCR",
+    "NP",
+    "NPR",
+    "TM",
+    "TS",
+    "NS",
+    "RC",
+    "FAT",
+    "ND",
+    "AP",
+    "ME",
+    "PC",
+    "NF",
+    "DD",
+    "CC",
+    "BDP",
+    "OU",
+  ]);
+  if (!permitidas.has(resultado)) falhar("espécie do documento");
+  return resultado;
+}
+
 /**
  * Converte uma intenção congelada do Ecosol no corpo da Cobrança Bancária v3.
  * Nenhum código de modalidade, conta ou política de encargos é presumido.
@@ -89,31 +130,29 @@ export function mapearCobrancaParaSicoob({ operacao, pagador, convenio } = {}) {
     numeroCliente: inteiro(convenio?.numeroCliente, "número do cliente", {
       minimo: 1,
     }),
-    codigoModalidade: inteiro(convenio?.codigoModalidade, "modalidade", {
-      minimo: 1,
-    }),
+    codigoModalidade: enumeracao(
+      convenio?.codigoModalidade,
+      "modalidade",
+      [1, 3, 4, 5, 6, 8],
+    ),
     numeroContaCorrente: inteiro(
       convenio?.numeroContaCorrente,
       "conta corrente",
       { minimo: 1 },
     ),
-    codigoEspecieDocumento: texto(
-      convenio?.codigoEspecieDocumento,
-      "espécie do documento",
-      8,
-    ),
+    codigoEspecieDocumento: especieDocumento(convenio?.codigoEspecieDocumento),
     dataEmissao: emissao,
     seuNumero,
     identificacaoBoletoEmpresa: identificacao,
-    identificacaoEmissaoBoleto: inteiro(
+    identificacaoEmissaoBoleto: enumeracao(
       convenio?.identificacaoEmissaoBoleto,
       "identificação de emissão",
-      { minimo: 1 },
+      [1, 2],
     ),
-    identificacaoDistribuicaoBoleto: inteiro(
+    identificacaoDistribuicaoBoleto: enumeracao(
       convenio?.identificacaoDistribuicaoBoleto,
       "identificação de distribuição",
-      { minimo: 1 },
+      [1, 2],
     ),
     valor: reaisDosCentavos(operacao?.valorCentavos, "valor"),
     dataVencimento: vencimento,
@@ -126,10 +165,10 @@ export function mapearCobrancaParaSicoob({ operacao, pagador, convenio } = {}) {
         "CPF/CNPJ do pagador",
         [11, 14],
       ),
-      nome: texto(pagador?.nome, "nome do pagador", 120),
-      endereco: texto(pagador?.endereco, "endereço do pagador", 160),
-      bairro: texto(pagador?.bairro, "bairro do pagador", 80),
-      cidade: texto(pagador?.cidade, "cidade do pagador", 80),
+      nome: texto(pagador?.nome, "nome do pagador", 50),
+      endereco: texto(pagador?.endereco, "endereço do pagador", 40),
+      bairro: texto(pagador?.bairro, "bairro do pagador", 30),
+      cidade: texto(pagador?.cidade, "cidade do pagador", 40),
       cep: digitos(pagador?.cep, "CEP do pagador", [8]),
       uf: uf(pagador?.uf),
       ...(pagador?.email ? { email: email(pagador.email) } : {}),
@@ -138,19 +177,18 @@ export function mapearCobrancaParaSicoob({ operacao, pagador, convenio } = {}) {
       ? operacao.mensagensInstrucao
           .slice(0, 5)
           .map((mensagem, indice) =>
-            texto(mensagem, `instrução ${indice + 1}`, 160),
+            texto(mensagem, `instrução ${indice + 1}`, 40),
           )
       : [],
     gerarPdf: convenio?.gerarPdf === true,
-    numeroContratoCobranca: inteiro(
-      convenio?.numeroContratoCobranca,
-      "contrato de cobrança",
-      { minimo: 1 },
-    ),
-    tipoFormularioImpressaoPDF: inteiro(
-      convenio?.tipoFormularioImpressaoPDF,
-      "formulário de impressão",
-      { minimo: 1 },
-    ),
+    ...(convenio?.numeroContratoCobranca != null
+      ? {
+          numeroContratoCobranca: inteiro(
+            convenio.numeroContratoCobranca,
+            "contrato de cobrança",
+            { minimo: 1 },
+          ),
+        }
+      : {}),
   };
 }

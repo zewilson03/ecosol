@@ -9,7 +9,6 @@ process.env.ECOSOL_DATA_DIR = mkdtempSync(join(tmpdir(), "ecosol-bancario-"));
 process.env.NODE_ENV = "test";
 process.env.BANCARIO_EXECUTOR_MODO = "simulado";
 process.env.SICOOB_AMBIENTE = "homologacao";
-process.env.BANCARIO_MFA_ENCRYPTION_KEY = randomBytes(32).toString("base64");
 
 const { resumoCriptografico, protegerSenha } =
   await import("../servidor/autenticacao.mjs");
@@ -18,14 +17,11 @@ const { exigirPapelBancario } =
   await import("../servidor/bancario/permissoes.mjs");
 const { rotasAdministrativas } =
   await import("../servidor/rotasAdministrativas.mjs");
-const { gerarSegredoTotp, cifrarSegredoTotp, codigoTotp } =
-  await import("../servidor/bancario/totp.mjs");
 
 const banco = obterBanco();
 const senhaDeTeste = "Senha bancaria de teste 2026";
 const hashDeTeste = await protegerSenha(senhaDeTeste);
 const pessoas = {};
-const segredos = {};
 for (const [chave, nivel] of [
   ["auditor", 1],
   ["operador", 2],
@@ -40,17 +36,9 @@ for (const [chave, nivel] of [
       )
       .run(chave, `${chave}@teste.local`, hashDeTeste, nivel).lastInsertRowid,
   );
-  const segredo = gerarSegredoTotp();
-  segredos[chave] = segredo;
-  banco
-    .prepare(
-      "INSERT INTO bancario_mfa_equipe(staff_id,segredo_cifrado,ativado_em) VALUES(?,?,CURRENT_TIMESTAMP)",
-    )
-    .run(pessoas[chave], cifrarSegredoTotp(segredo, pessoas[chave]));
 }
 
 const cookies = {};
-const segredosPorCookie = new Map();
 for (const [chave, id] of Object.entries(pessoas)) {
   const token = randomBytes(32).toString("hex");
   banco
@@ -59,7 +47,6 @@ for (const [chave, id] of Object.entries(pessoas)) {
     )
     .run(id, resumoCriptografico(token), "staff", Date.now() + 60_000);
   cookies[chave] = `ecosol_session=${token}`;
-  segredosPorCookie.set(cookies[chave], segredos[chave]);
 }
 
 const aplicacao = express();
@@ -88,10 +75,6 @@ async function chamar(caminho, cookie, metodo = "GET", corpo) {
           },
           body: JSON.stringify({
             senha: senhaDeTeste,
-            codigo: codigoTotp(
-              segredosPorCookie.get(cookie),
-              Math.floor(Date.now() / 30_000),
-            ),
           }),
         },
       );

@@ -5,21 +5,16 @@ import {
   origemConfiavel,
 } from "./confirmacaoSensivel.mjs";
 import {
-  ativarMfa,
-  estadoMfa,
-  iniciarMfa,
-  iniciarMfaAposRecuperacao,
-  substituirMfa,
-} from "./mfa.mjs";
-import {
-  aprovarRecuperacaoMfa,
-  listarRecuperacoesMfa,
-  minhaRecuperacaoMfa,
-  solicitarRecuperacaoMfa,
-} from "./recuperacaoMfa.mjs";
+  concluirRecuperacaoCredencial,
+  estadoCredencialConfirmacao,
+  salvarCredencialConfirmacao,
+  solicitarRecuperacaoCredencial,
+} from "./credencialConfirmacao.mjs";
 import {
   exigirPapelBancario,
   exigirUmDosPapeisBancarios,
+  temPapelBancario,
+  temPapelCritico,
 } from "./permissoes.mjs";
 import {
   aprovarOperacao,
@@ -38,62 +33,74 @@ import { executarConciliacaoManual } from "./conciliacaoManual.mjs";
 
 export const rotasOperacoesBancarias = Router();
 
-rotasOperacoesBancarias.get("/api/admin/bancario/mfa", estadoMfa);
-rotasOperacoesBancarias.post(
-  "/api/admin/bancario/mfa/iniciar",
-  (req, res, next) => (origemConfiavel(req) ? next() : res.sendStatus(403)),
-  iniciarMfa,
-);
-rotasOperacoesBancarias.post(
-  "/api/admin/bancario/mfa/ativar",
-  (req, res, next) => (origemConfiavel(req) ? next() : res.sendStatus(403)),
-  ativarMfa,
-);
-rotasOperacoesBancarias.post(
-  "/api/admin/bancario/mfa/substituir",
-  (req, res, next) => (origemConfiavel(req) ? next() : res.sendStatus(403)),
-  substituirMfa,
-);
 rotasOperacoesBancarias.get(
-  "/api/admin/bancario/mfa/recuperacao/minha",
-  minhaRecuperacaoMfa,
+  "/api/admin/bancario/credencial-confirmacao",
+  exigirProprietario,
+  (req, res) => res.json(estadoCredencialConfirmacao(req.administrador)),
 );
-
+rotasOperacoesBancarias.put(
+  "/api/admin/bancario/credencial-confirmacao",
+  exigirProprietario,
+  exigirOrigemConfiavel,
+  async (req, res) =>
+    res.json(
+      await salvarCredencialConfirmacao(
+        req.administrador,
+        req.body?.senha_atual,
+        req.body?.nova_senha,
+      ),
+    ),
+);
 rotasOperacoesBancarias.post(
-  "/api/admin/bancario/mfa/recuperacao/solicitar",
-  (req, res, next) => (origemConfiavel(req) ? next() : res.sendStatus(403)),
-  solicitarRecuperacaoMfa,
+  "/api/admin/bancario/credencial-confirmacao/recuperar",
+  exigirProprietario,
+  exigirOrigemConfiavel,
+  async (req, res) =>
+    res.json(await solicitarRecuperacaoCredencial(req.administrador)),
 );
 rotasOperacoesBancarias.post(
-  "/api/admin/bancario/mfa/recuperacao/:id/iniciar",
-  (req, res, next) => (origemConfiavel(req) ? next() : res.sendStatus(403)),
-  iniciarMfaAposRecuperacao,
-);
-rotasOperacoesBancarias.get(
-  "/api/admin/bancario/mfa/recuperacoes",
-  listarRecuperacoesMfa,
-);
-rotasOperacoesBancarias.post(
-  "/api/admin/bancario/mfa/recuperacoes/:id/aprovar",
-  exigirConfirmacaoBancaria,
-  aprovarRecuperacaoMfa,
+  "/api/admin/bancario/credencial-confirmacao/redefinir",
+  exigirProprietario,
+  exigirOrigemConfiavel,
+  async (req, res) =>
+    res.json(
+      await concluirRecuperacaoCredencial(
+        req.administrador,
+        req.body?.codigo,
+        req.body?.nova_senha,
+      ),
+    ),
 );
 
 rotasOperacoesBancarias.post(
   "/api/admin/bancario/confirmar-identidade",
   confirmarIdentidadeBancaria,
 );
-rotasOperacoesBancarias.use("/api/admin/bancario", (req, res, next) => {
-  if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method))
-    return exigirConfirmacaoBancaria(req, res, next);
+function exigirContaNominalDaEquipe(req, res, next) {
+  if (!req.administrador?.id)
+    return res.status(403).json({ erro: "Use uma conta nominal da equipe." });
   next();
-});
+}
 
-const podeConsultar = exigirUmDosPapeisBancarios(
-  "consulta_auditoria",
-  "operador_financeiro",
-  "aprovador_financeiro",
-);
+function exigirOrigemConfiavel(req, res, next) {
+  return origemConfiavel(req) ? next() : res.sendStatus(403);
+}
+
+function exigirProprietario(req, res, next) {
+  if (!temPapelCritico(req.administrador?.id, "proprietario"))
+    return res
+      .status(403)
+      .json({ erro: "Somente o Proprietário pode aprovar pagamentos." });
+  next();
+}
+
+function podeConsultarTodasAsOperacoes(administradorId) {
+  return [
+    "consulta_auditoria",
+    "operador_financeiro",
+    "aprovador_financeiro",
+  ].some((papel) => temPapelBancario(administradorId, papel));
+}
 
 rotasOperacoesBancarias.get(
   "/api/admin/bancario/executor",
@@ -122,25 +129,40 @@ rotasOperacoesBancarias.get(
 rotasOperacoesBancarias.patch(
   "/api/admin/bancario/executor",
   exigirPapelBancario("administrador_integracao"),
+  exigirConfirmacaoBancaria,
   (req, res) =>
     res.json(alterarEstadoDoExecutor(req.body.pausado, req.administrador)),
 );
 
 rotasOperacoesBancarias.get(
   "/api/admin/bancario/operacoes",
-  podeConsultar,
-  (_req, res) => res.json(listarOperacoes()),
+  exigirContaNominalDaEquipe,
+  (req, res) =>
+    res.json(
+      listarOperacoes(
+        req.administrador.id,
+        podeConsultarTodasAsOperacoes(req.administrador.id),
+      ),
+    ),
 );
 
 rotasOperacoesBancarias.get(
   "/api/admin/bancario/operacoes/:id",
-  podeConsultar,
-  (req, res) => res.json(obterOperacao(String(req.params.id))),
+  exigirContaNominalDaEquipe,
+  (req, res) =>
+    res.json(
+      obterOperacao(
+        String(req.params.id),
+        req.administrador.id,
+        podeConsultarTodasAsOperacoes(req.administrador.id),
+      ),
+    ),
 );
 
 rotasOperacoesBancarias.post(
   "/api/admin/bancario/operacoes/:id/conciliar",
   exigirPapelBancario("administrador_integracao"),
+  exigirConfirmacaoBancaria,
   async (req, res) =>
     res.json(
       await executarConciliacaoManual({
@@ -152,7 +174,8 @@ rotasOperacoesBancarias.post(
 
 rotasOperacoesBancarias.post(
   "/api/admin/bancario/operacoes/cobrancas",
-  exigirPapelBancario("operador_financeiro"),
+  exigirContaNominalDaEquipe,
+  exigirOrigemConfiavel,
   (req, res) => {
     const resultado = criarOperacaoDeCobranca(
       Number(req.body.documento_id),
@@ -164,20 +187,22 @@ rotasOperacoesBancarias.post(
 
 rotasOperacoesBancarias.post(
   "/api/admin/bancario/operacoes/:id/aprovar",
-  exigirPapelBancario("aprovador_financeiro"),
-  (req, res) =>
+  exigirProprietario,
+  exigirOrigemConfiavel,
+  async (req, res) =>
     res.json(
-      aprovarOperacao(
+      await aprovarOperacao(
         String(req.params.id),
         req.administrador,
-        req.body?.confirmacao_autoaprovacao === true,
+        req.body?.senha,
       ),
     ),
 );
 
 rotasOperacoesBancarias.post(
   "/api/admin/bancario/operacoes/:id/enfileirar",
-  exigirPapelBancario("operador_financeiro"),
+  exigirContaNominalDaEquipe,
+  exigirOrigemConfiavel,
   (req, res) =>
     res.json(enfileirarOperacao(String(req.params.id), req.administrador)),
 );

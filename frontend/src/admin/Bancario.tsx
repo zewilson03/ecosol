@@ -6,9 +6,9 @@ import {
   ListaVazia,
 } from "./ComponentesDoPainel";
 import {
+  aprovarPagamentoComSenhaDoProprietario,
   consultarServidor,
   consultarServidorBancario,
-  configurarMfaRecuperado,
   formatarData,
   formatarDinheiro,
   usarConsulta,
@@ -37,10 +37,11 @@ type Detalhe = Operacao & {
   preparado_por: number;
   autoaprovada: number;
   snapshot: {
-    origem: { nome: string };
-    cliente: { nome: string; documento: string };
-    unidade: { uc: string; competencia: string };
-    cobranca: { valor_centavos: number; vencimento: string };
+    origem: { nome?: string; referencia?: string };
+    cliente?: { nome: string; documento: string };
+    unidade?: { uc: string; competencia: string };
+    cobranca?: { valor_centavos: number; vencimento: string };
+    pagamento?: { valor_centavos: number; moeda: string };
   };
   intencao: null | {
     estado: string;
@@ -82,17 +83,6 @@ type Executor = {
   alterado_em: string;
 };
 
-type PedidoRecuperacao = {
-  id: string;
-  staff_id: number;
-  pessoa: string;
-  estado: string;
-  exige_guardiao: number;
-  solicitado_em: number;
-  expira_em: number;
-  total_aprovacoes: number;
-};
-
 const nomesEstados: Record<string, string> = {
   aguardando_aprovacao: "Aguardando aprovação",
   aprovada: "Aprovada",
@@ -112,30 +102,17 @@ export default function Bancario() {
   const sessao = usarConsulta<Sessao>("/api/sessao");
   const papeis =
     sessao.dados?.perfil === "equipe" ? sessao.dados.papeis_bancarios : [];
-  const podeConsultar = papeis.some((papel) =>
-    [
-      "consulta_auditoria",
-      "operador_financeiro",
-      "aprovador_financeiro",
-    ].includes(papel),
-  );
-  const operador = papeis.includes("operador_financeiro");
-  const aprovador = papeis.includes("aprovador_financeiro");
-  const gestor = papeis.includes("administrador_integracao");
-  const podeAprovarRecuperacao =
+  const podeConsultar = sessao.dados?.perfil === "equipe";
+  const operador = sessao.dados?.perfil === "equipe";
+  const proprietario =
     sessao.dados?.perfil === "equipe" &&
-    (sessao.dados.administrador.proprietario === true ||
-      sessao.dados.administrador.guardiao_recuperacao === true);
-  const minhaRecuperacao = usarConsulta<{
-    pedido: Pick<PedidoRecuperacao, "id" | "estado" | "expira_em"> | null;
-  }>(
-    sessao.dados?.perfil === "equipe"
-      ? "/api/admin/bancario/mfa/recuperacao/minha"
-      : null,
-  );
-  const recuperacoes = usarConsulta<PedidoRecuperacao[]>(
-    podeAprovarRecuperacao ? "/api/admin/bancario/mfa/recuperacoes" : null,
-  );
+    sessao.dados.administrador.proprietario === true;
+  const gestor = papeis.includes("administrador_integracao");
+  const credencial = usarConsulta<{
+    configurada: boolean;
+    proprietario_principal: string | null;
+    pode_gerenciar: boolean;
+  }>(proprietario ? "/api/admin/bancario/credencial-confirmacao" : null);
   const operacoes = usarConsulta<Operacao[]>(
     podeConsultar ? "/api/admin/bancario/operacoes" : null,
   );
@@ -150,14 +127,12 @@ export default function Bancario() {
     selecionado ? `/api/admin/bancario/operacoes/${selecionado}` : null,
   );
   const [ocupado, setOcupado] = useState(false);
-  const [autoaprovacaoConfirmadaPara, setAutoaprovacaoConfirmadaPara] =
-    useState<string | null>(null);
   const [mensagem, setMensagem] = useState("");
   const [erro, setErro] = useState("");
-  const [senhaRecuperacao, setSenhaRecuperacao] = useState("");
-  const [identidadeConferida, setIdentidadeConferida] = useState<string | null>(
-    null,
-  );
+  const [senhaAtual, setSenhaAtual] = useState("");
+  const [novaSenha, setNovaSenha] = useState("");
+  const [codigoTemporario, setCodigoTemporario] = useState("");
+  const [recuperando, setRecuperando] = useState(false);
 
   const prontas = useMemo(() => {
     const usados = new Set(
@@ -181,8 +156,7 @@ export default function Bancario() {
       operacoes.atualizar();
       detalhe.atualizar();
       executor.atualizar();
-      minhaRecuperacao.atualizar();
-      recuperacoes.atualizar();
+      credencial.atualizar();
     } catch (falha) {
       setErro((falha as Error).message);
     } finally {
@@ -191,15 +165,6 @@ export default function Bancario() {
   }
 
   const operacao = detalhe.dados;
-  const propriaOperacao = Boolean(
-    operacao &&
-    sessao.dados?.perfil === "equipe" &&
-    operacao.preparado_por === sessao.dados.administrador.id,
-  );
-  const podeAutoaprovar =
-    propriaOperacao &&
-    sessao.dados?.perfil === "equipe" &&
-    sessao.dados.administrador.proprietario === true;
   return (
     <>
       <CabecalhoDoModulo
@@ -237,132 +202,124 @@ export default function Bancario() {
         <ObservabilidadeBancaria podeConciliar={gestor} />
       )}
 
-      {sessao.dados?.perfil === "equipe" && (
+      {proprietario && credencial.dados?.pode_gerenciar && (
         <section className="bancario-executor">
           <div>
-            <span className="admin-legenda">RECUPERAÇÃO DE ACESSO</span>
-            <h2>Perdeu o autenticador e todos os códigos?</h2>
+            <span className="admin-legenda">CONFIRMAÇÃO DE PAGAMENTOS</span>
+            <h2>Senha financeira</h2>
             <p>
-              A recuperação exige conferência presencial e duas aprovações
-              nominais. Ela não desativa o MFA atual.
+              Somente{" "}
+              {credencial.dados.proprietario_principal ?? "o Proprietário 1"}{" "}
+              pode cadastrá-la ou alterá-la. Os dois Proprietários podem usá-la
+              para aprovar pagamentos.
             </p>
-            {minhaRecuperacao.dados?.pedido && (
-              <p>
-                Seu pedido está {minhaRecuperacao.dados.pedido.estado}. Expira
-                em{" "}
-                {new Date(
-                  minhaRecuperacao.dados.pedido.expira_em,
-                ).toLocaleString("pt-BR")}
-                .
-              </p>
-            )}
           </div>
-          {minhaRecuperacao.dados?.pedido?.estado === "aprovado" ? (
-            <button
-              className="admin-botao"
-              disabled={ocupado}
-              onClick={() =>
-                executar(
-                  () =>
-                    configurarMfaRecuperado(minhaRecuperacao.dados!.pedido!.id),
-                  "Novo autenticador ativado. Guarde os novos códigos.",
-                )
-              }
-            >
-              Cadastrar novo autenticador
-            </button>
-          ) : !minhaRecuperacao.dados?.pedido ? (
-            <form
-              onSubmit={(evento) => {
-                evento.preventDefault();
-                executar(async () => {
-                  await consultarServidor(
-                    "/api/admin/bancario/mfa/recuperacao/solicitar",
-                    {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ senha: senhaRecuperacao }),
-                    },
-                  );
-                  setSenhaRecuperacao("");
-                }, "Pedido registrado. Procure os aprovadores para conferir sua identidade presencialmente.");
-              }}
-            >
+          <form
+            onSubmit={(evento) => {
+              evento.preventDefault();
+              executar(
+                async () => {
+                  if (recuperando) {
+                    await consultarServidor(
+                      "/api/admin/bancario/credencial-confirmacao/redefinir",
+                      {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          codigo: codigoTemporario,
+                          nova_senha: novaSenha,
+                        }),
+                      },
+                    );
+                    setCodigoTemporario("");
+                    setRecuperando(false);
+                  } else {
+                    await consultarServidor(
+                      "/api/admin/bancario/credencial-confirmacao",
+                      {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          senha_atual: senhaAtual,
+                          nova_senha: novaSenha,
+                        }),
+                      },
+                    );
+                    setSenhaAtual("");
+                  }
+                  setNovaSenha("");
+                },
+                recuperando ? "Senha redefinida." : "Senha financeira salva.",
+              );
+            }}
+          >
+            {!recuperando && credencial.dados.configurada && (
               <label>
-                Senha da equipe
+                Senha financeira atual
                 <input
                   type="password"
                   autoComplete="current-password"
                   required
                   maxLength={128}
-                  value={senhaRecuperacao}
+                  value={senhaAtual}
+                  onChange={(evento) => setSenhaAtual(evento.target.value)}
+                />
+              </label>
+            )}
+            {recuperando && (
+              <label>
+                Senha temporária recebida por e-mail
+                <input
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  required
+                  pattern="[0-9]{6}"
+                  maxLength={6}
+                  value={codigoTemporario}
                   onChange={(evento) =>
-                    setSenhaRecuperacao(evento.target.value)
+                    setCodigoTemporario(evento.target.value)
                   }
                 />
               </label>
-              <button className="admin-botao secundario" disabled={ocupado}>
-                Solicitar recuperação
+            )}
+            <label>
+              {recuperando ? "Nova senha financeira" : "Nova senha financeira"}
+              <input
+                type="password"
+                autoComplete="new-password"
+                required
+                minLength={10}
+                maxLength={128}
+                value={novaSenha}
+                onChange={(evento) => setNovaSenha(evento.target.value)}
+              />
+            </label>
+            <button className="admin-botao" disabled={ocupado}>
+              {recuperando
+                ? "Redefinir senha"
+                : credencial.dados.configurada
+                  ? "Alterar senha"
+                  : "Cadastrar senha"}
+            </button>
+            {credencial.dados.configurada && !recuperando && (
+              <button
+                type="button"
+                className="admin-botao secundario"
+                disabled={ocupado}
+                onClick={() =>
+                  executar(async () => {
+                    await consultarServidor(
+                      "/api/admin/bancario/credencial-confirmacao/recuperar",
+                      { method: "POST" },
+                    );
+                    setRecuperando(true);
+                  }, "Senha temporária enviada ao e-mail do Proprietário 1.")
+                }
+              >
+                Esqueci a senha
               </button>
-            </form>
-          ) : null}
-        </section>
-      )}
-      {podeAprovarRecuperacao && (recuperacoes.dados?.length ?? 0) > 0 && (
-        <section className="bancario-preparar">
-          <span className="admin-legenda">PEDIDOS PARA CONFERÊNCIA</span>
-          <h2>Recuperações de MFA</h2>
-          <p>
-            Confirme a identidade presencialmente antes de aprovar. A aprovação
-            exige seu próprio MFA.
-          </p>
-          {recuperacoes.dados?.map((pedido) => (
-            <div className="bancario-documentos" key={pedido.id}>
-              <div>
-                <span>
-                  <strong>{pedido.pessoa}</strong>
-                  <small>
-                    {pedido.total_aprovacoes} aprovação(ões) · expira em{" "}
-                    {new Date(pedido.expira_em).toLocaleString("pt-BR")}
-                  </small>
-                </span>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={identidadeConferida === pedido.id}
-                    onChange={(evento) =>
-                      setIdentidadeConferida(
-                        evento.target.checked ? pedido.id : null,
-                      )
-                    }
-                  />{" "}
-                  Conferi a identidade presencialmente
-                </label>
-                <button
-                  className="admin-botao"
-                  disabled={ocupado || identidadeConferida !== pedido.id}
-                  onClick={() =>
-                    executar(
-                      () =>
-                        consultarServidorBancario(
-                          `/api/admin/bancario/mfa/recuperacoes/${pedido.id}/aprovar`,
-                          {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({
-                              identidade_conferida_presencialmente: true,
-                            }),
-                          },
-                        ),
-                      "Aprovação registrada.",
-                    )
-                  }
-                >
-                  Aprovar recuperação
-                </button>
-              </div>
-            </div>
-          ))}
+            )}
+          </form>
         </section>
       )}
 
@@ -409,10 +366,10 @@ export default function Bancario() {
         <section className="bancario-preparar">
           <div>
             <span className="admin-legenda">COBRANÇAS APROVADAS</span>
-            <h2>Preparar para aprovação bancária</h2>
+            <h2>Preparar cobrança para emissão</h2>
             <p>
-              O sistema congela uma cópia dos valores aprovados e impede a
-              emissão duplicada.
+              O sistema congela os valores aprovados e impede emissão duplicada.
+              Cobranças não exigem senha adicional.
             </p>
           </div>
           <EstadoDaConsulta {...documentos} repetir={documentos.atualizar} />
@@ -433,7 +390,7 @@ export default function Bancario() {
                   disabled={ocupado}
                   onClick={() =>
                     executar(async () => {
-                      const resposta = await consultarServidorBancario<{
+                      const resposta = await consultarServidor<{
                         operacao: Operacao;
                       }>("/api/admin/bancario/operacoes/cobrancas", {
                         method: "POST",
@@ -441,7 +398,7 @@ export default function Bancario() {
                         body: JSON.stringify({ documento_id: documento.id }),
                       });
                       setSelecionado(resposta.operacao.id);
-                    }, "Cobrança preparada. Outra pessoa deve aprová-la.")
+                    }, "Cobrança preparada para emissão.")
                   }
                 >
                   Preparar
@@ -503,29 +460,43 @@ export default function Bancario() {
                     <div className="bancario-secao-titulo">
                       <div>
                         <span className="admin-legenda">DETALHES</span>
-                        <h2>{operacao.snapshot.origem.nome}</h2>
+                        <h2>
+                          {operacao.snapshot.origem.nome ??
+                            operacao.snapshot.origem.referencia ??
+                            (operacao.tipo === "pagamento"
+                              ? "Pagamento"
+                              : "Cobrança")}
+                        </h2>
                       </div>
                       <b className={`bancario-status ${operacao.estado}`}>
                         {nomesEstados[operacao.estado] ?? operacao.estado}
                       </b>
                     </div>
                     <dl className="bancario-resumo">
-                      <div>
-                        <dt>Cliente</dt>
-                        <dd>{operacao.snapshot.cliente.nome}</dd>
-                      </div>
-                      <div>
-                        <dt>Documento protegido</dt>
-                        <dd>{operacao.snapshot.cliente.documento}</dd>
-                      </div>
-                      <div>
-                        <dt>UC</dt>
-                        <dd>{operacao.snapshot.unidade.uc}</dd>
-                      </div>
-                      <div>
-                        <dt>Competência</dt>
-                        <dd>{operacao.snapshot.unidade.competencia}</dd>
-                      </div>
+                      {operacao.snapshot.cliente && (
+                        <>
+                          <div>
+                            <dt>Cliente</dt>
+                            <dd>{operacao.snapshot.cliente.nome}</dd>
+                          </div>
+                          <div>
+                            <dt>Documento protegido</dt>
+                            <dd>{operacao.snapshot.cliente.documento}</dd>
+                          </div>
+                        </>
+                      )}
+                      {operacao.snapshot.unidade && (
+                        <>
+                          <div>
+                            <dt>UC</dt>
+                            <dd>{operacao.snapshot.unidade.uc}</dd>
+                          </div>
+                          <div>
+                            <dt>Competência</dt>
+                            <dd>{operacao.snapshot.unidade.competencia}</dd>
+                          </div>
+                        </>
+                      )}
                       <div>
                         <dt>Valor</dt>
                         <dd>{formatarDinheiro(operacao.valor_centavos)}</dd>
@@ -546,89 +517,47 @@ export default function Bancario() {
                       </div>
                     </dl>
                     <div className="bancario-acoes">
-                      {aprovador &&
+                      {proprietario &&
+                        operacao.tipo === "pagamento" &&
                         operacao.estado === "aguardando_aprovacao" && (
-                          <>
-                            {podeAutoaprovar && (
-                              <label className="bancario-autoaprovacao">
-                                <input
-                                  type="checkbox"
-                                  checked={
-                                    autoaprovacaoConfirmadaPara === operacao.id
-                                  }
-                                  onChange={(evento) =>
-                                    setAutoaprovacaoConfirmadaPara(
-                                      evento.target.checked
-                                        ? operacao.id
-                                        : null,
-                                    )
-                                  }
-                                />
-                                Confirmo que estou aprovando uma operação que eu
-                                mesmo preparei.
-                              </label>
-                            )}
-                            {!propriaOperacao || podeAutoaprovar ? (
-                              <button
-                                className="admin-botao"
-                                disabled={
-                                  ocupado ||
-                                  (podeAutoaprovar &&
-                                    autoaprovacaoConfirmadaPara !== operacao.id)
-                                }
-                                onClick={() =>
-                                  executar(
-                                    () =>
-                                      consultarServidorBancario(
-                                        `/api/admin/bancario/operacoes/${operacao.id}/aprovar`,
-                                        {
-                                          method: "POST",
-                                          ...(podeAutoaprovar
-                                            ? {
-                                                headers: {
-                                                  "Content-Type":
-                                                    "application/json",
-                                                },
-                                                body: JSON.stringify({
-                                                  confirmacao_autoaprovacao: true,
-                                                }),
-                                              }
-                                            : {}),
-                                        },
-                                      ),
-                                    "Operação aprovada.",
-                                  )
-                                }
-                              >
-                                {podeAutoaprovar
-                                  ? "Autoaprovar operação"
-                                  : "Aprovar operação"}
-                              </button>
-                            ) : (
-                              <small>
-                                Esta operação exige aprovação de outra pessoa.
-                              </small>
-                            )}
-                          </>
+                          <button
+                            className="admin-botao"
+                            disabled={ocupado}
+                            onClick={() =>
+                              executar(
+                                () =>
+                                  aprovarPagamentoComSenhaDoProprietario(
+                                    `/api/admin/bancario/operacoes/${operacao.id}/aprovar`,
+                                  ),
+                                "Pagamento aprovado pelo Proprietário.",
+                              )
+                            }
+                          >
+                            Aprovar pagamento com senha
+                          </button>
                         )}
-                      {operador && operacao.estado === "aprovada" && (
-                        <button
-                          className="admin-botao"
-                          disabled={ocupado}
-                          onClick={() =>
-                            executar(
-                              () =>
-                                consultarServidorBancario(
-                                  `/api/admin/bancario/operacoes/${operacao.id}/enfileirar`,
-                                  { method: "POST" },
-                                ),
-                              "Operação colocada na fila simulada.",
-                            )
-                          }
-                        >
-                          Enviar à fila simulada
-                        </button>
-                      )}
+                      {operador &&
+                        operacao.tipo === "cobranca" &&
+                        ["aprovada", "aguardando_aprovacao"].includes(
+                          operacao.estado,
+                        ) && (
+                          <button
+                            className="admin-botao"
+                            disabled={ocupado}
+                            onClick={() =>
+                              executar(
+                                () =>
+                                  consultarServidor(
+                                    `/api/admin/bancario/operacoes/${operacao.id}/enfileirar`,
+                                    { method: "POST" },
+                                  ),
+                                "Operação colocada na fila simulada.",
+                              )
+                            }
+                          >
+                            Enviar à fila simulada
+                          </button>
+                        )}
                     </div>
                     <div className="bancario-historicos">
                       <div>

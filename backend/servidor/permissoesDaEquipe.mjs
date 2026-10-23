@@ -19,8 +19,6 @@ export function identificarAdministrador(requisicao) {
     )
     .get(sessao.staff_id);
   if (!administrador) return null;
-  if (temPapelCritico(sessao.staff_id, "guardiao_recuperacao"))
-    return { ...administrador, nivel: 0, guardiao_recuperacao: true };
   return {
     ...administrador,
     proprietario: temPapelCritico(sessao.staff_id, "proprietario"),

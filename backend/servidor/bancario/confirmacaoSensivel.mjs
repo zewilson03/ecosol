@@ -6,7 +6,6 @@ import {
   senhaConfere,
   sessaoAtual,
 } from "../autenticacao.mjs";
-import { consumirSegundoFator, identificadorMfa, mfaAtivo } from "./mfa.mjs";
 
 const validadeMs = 5 * 60_000;
 const confirmacoes = new Map();
@@ -58,16 +57,6 @@ export async function confirmarIdentidadeBancaria(req, res) {
   if (!pessoa || !(await senhaConfere(senha, pessoa.password_hash)))
     return res.status(401).json({ erro: "Senha incorreta." });
 
-  if (!mfaAtivo(atual.sessao.staff_id))
-    return res.status(428).json({
-      erro: "Ative o aplicativo autenticador antes de realizar ações bancárias.",
-      codigo: "MFA_NAO_CONFIGURADO",
-    });
-  if (!consumirSegundoFator(atual.sessao.staff_id, req.body?.codigo))
-    return res
-      .status(401)
-      .json({ erro: "Código MFA incorreto, repetido ou expirado." });
-
   obterBanco()
     .prepare("DELETE FROM login_attempts WHERE key=?")
     .run(chaveLimite);
@@ -80,7 +69,6 @@ export async function confirmarIdentidadeBancaria(req, res) {
     hash: resumoCriptografico(prova),
     expiraEm,
     senhaHash: pessoa.password_hash,
-    mfaId: identificadorMfa(atual.sessao.staff_id),
   });
   return res.json({ prova, expira_em: expiraEm });
 }
@@ -99,10 +87,7 @@ export function exigirConfirmacaoBancaria(req, res, next) {
   const hashAtual = obterBanco()
     .prepare("SELECT password_hash FROM staff_users WHERE id=?")
     .get(atual.sessao.staff_id)?.password_hash;
-  if (
-    hashAtual !== registro.senhaHash ||
-    identificadorMfa(atual.sessao.staff_id) !== registro.mfaId
-  ) {
+  if (hashAtual !== registro.senhaHash) {
     confirmacoes.delete(atual.chave);
     return res.status(403).json({ erro: "Confirme novamente sua senha." });
   }

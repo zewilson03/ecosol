@@ -2,10 +2,7 @@ import { Router } from "express";
 import { resumoCriptografico } from "./autenticacao.mjs";
 import { obterBanco } from "./bancoDeDados.mjs";
 import { registrarHistorico } from "./faturamento/registros.mjs";
-import {
-  exigirNivel,
-  identificarAdministrador,
-} from "./permissoesDaEquipe.mjs";
+import { exigirNivel } from "./permissoesDaEquipe.mjs";
 import {
   nivelMinimoDoPapel,
   rotasPermissoesBancarias,
@@ -25,35 +22,6 @@ rotasAdministrativas.use("/api/admin", (requisicao, resposta, proximo) => {
     requisicao.originalUrl.split("?", 1)[0] === "/api/admin/gmail/oauth/retorno"
   )
     return proximo();
-  const guardiao = identificarAdministrador(requisicao);
-  if (guardiao?.guardiao_recuperacao) {
-    const caminho = requisicao.originalUrl.split("?", 1)[0];
-    const rotasMfa = new Set([
-      "/api/admin/bancario/mfa",
-      "/api/admin/bancario/mfa/iniciar",
-      "/api/admin/bancario/mfa/ativar",
-      "/api/admin/bancario/mfa/substituir",
-      "/api/admin/bancario/mfa/recuperacao/minha",
-      "/api/admin/bancario/mfa/recuperacao/solicitar",
-      "/api/admin/bancario/mfa/recuperacoes",
-      "/api/admin/bancario/confirmar-identidade",
-    ]);
-    const rotaPedido =
-      /^\/api\/admin\/bancario\/mfa\/recuperacao\/[0-9a-f-]{36}\/iniciar$/.test(
-        caminho,
-      );
-    const rotaAprovacao =
-      /^\/api\/admin\/bancario\/mfa\/recuperacoes\/[0-9a-f-]{36}\/aprovar$/.test(
-        caminho,
-      );
-    if (rotasMfa.has(caminho) || rotaPedido || rotaAprovacao) {
-      requisicao.administrador = guardiao;
-      return proximo();
-    }
-    return resposta
-      .status(403)
-      .json({ erro: "Guardião não acessa outras áreas." });
-  }
   return exigirAdministrador(requisicao, resposta, proximo);
 });
 rotasAdministrativas.use(rotasPermissoesBancarias);

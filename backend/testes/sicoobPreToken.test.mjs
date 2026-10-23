@@ -159,6 +159,8 @@ try {
     SICOOB_HOMOLOGACAO_CLIENT_ID: "cliente-homologacao",
     SICOOB_HOMOLOGACAO_CLIENT_SECRET: segredo,
     SICOOB_HOMOLOGACAO_CONTRATO_VERSAO: "contrato-de-teste",
+    SICOOB_HOMOLOGACAO_MTLS_CERT_PATH: "certificado-teste.pem",
+    SICOOB_HOMOLOGACAO_MTLS_KEY_PATH: "chave-teste.pem",
     SICOOB_PRODUCAO_API_BASE_URL: "https://producao.invalid",
     SICOOB_PRODUCAO_CLIENT_ID: "nao-deve-ser-lido",
   };
@@ -170,7 +172,50 @@ try {
   assert.equal(configuracao.apiBaseUrl, origem);
   const resumo = resumirConfiguracaoSicoob(configuracao);
   assert.equal(resumo.oauth_configurado, true);
+  assert.equal(resumo.mtls_configurado, true);
   assert.equal(JSON.stringify(resumo).includes(segredo), false);
+  assert.throws(
+    () =>
+      obterConfiguracaoSicoob({
+        variaveis: {
+          ...variaveis,
+          SICOOB_HOMOLOGACAO_MTLS_PFX_PATH: "certificado-teste.pfx",
+        },
+      }),
+    /PFX ou certificado\/chave PEM/,
+  );
+  assert.throws(
+    () =>
+      obterConfiguracaoSicoob({
+        variaveis: {
+          ...variaveis,
+          SICOOB_HOMOLOGACAO_MTLS_CERT_PATH: "",
+          SICOOB_HOMOLOGACAO_MTLS_KEY_PATH: "",
+        },
+        exigirCompleta: true,
+      }),
+    /MTLS_PFX_PATH/,
+  );
+  const configuracaoPfx = obterConfiguracaoSicoob({
+    variaveis: {
+      ...variaveis,
+      SICOOB_HOMOLOGACAO_MTLS_CERT_PATH: "",
+      SICOOB_HOMOLOGACAO_MTLS_KEY_PATH: "",
+      SICOOB_HOMOLOGACAO_MTLS_PFX_PATH: "certificado-teste.pfx",
+      SICOOB_HOMOLOGACAO_MTLS_PFX_PASSPHRASE: segredo,
+    },
+    exigirCompleta: true,
+  });
+  assert.equal(
+    resumirConfiguracaoSicoob(configuracaoPfx).mtls_configurado,
+    true,
+  );
+  assert.equal(
+    JSON.stringify(resumirConfiguracaoSicoob(configuracaoPfx)).includes(
+      segredo,
+    ),
+    false,
+  );
   assert.throws(
     () =>
       obterConfiguracaoSicoob({
@@ -226,6 +271,15 @@ try {
     variaveis,
     permitirHttpLocal: true,
     timeoutMs: 500,
+    // O teste HTTP local não realiza TLS; injeta caminhos apenas para validar
+    // a configuração. A criação real do agente mTLS é coberta separadamente.
+    criarAgenteMtls(configuracaoRecebida) {
+      assert.equal(
+        configuracaoRecebida.certificadoPath,
+        "certificado-teste.pem",
+      );
+      return undefined;
+    },
     contratoOAuth: {
       criarRequisicaoToken(configuracaoRecebida) {
         assert.equal(configuracaoRecebida.clientId, "cliente-homologacao");

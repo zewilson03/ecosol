@@ -11,8 +11,6 @@ const camposConvenioEmissao = [
   "codigoEspecieDocumento",
   "identificacaoEmissaoBoleto",
   "identificacaoDistribuicaoBoleto",
-  "numeroContratoCobranca",
-  "tipoFormularioImpressaoPDF",
 ];
 
 function preenchido(valor) {

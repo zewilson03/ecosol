@@ -26,6 +26,7 @@ export function criarIntegracaoSicoob({
   relogio,
   permitirHttpLocal = false,
   timeoutMs = 10_000,
+  criarAgenteMtls = criarAgenteMtlsSicoob,
 } = {}) {
   const configuracao = obterConfiguracaoSicoob({
     variaveis,
@@ -39,9 +40,9 @@ export function criarIntegracaoSicoob({
       "O contrato OAuth oficial do Sicoob ainda não foi configurado.",
     );
 
-  const agente = configuracao.certificadoPath
-    ? criarAgenteMtlsSicoob(configuracao)
-    : undefined;
+  if (typeof criarAgenteMtls !== "function")
+    throw new Error("Informe como criar o agente mTLS do Sicoob.");
+  const agente = criarAgenteMtls(configuracao);
   const tokenUrl = new URL(configuracao.oauthTokenUrl);
   const clienteToken = criarClienteHttpSeguro({
     baseUrl: tokenUrl.origin,

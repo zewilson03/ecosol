@@ -35,6 +35,24 @@ function validarPar(configuracao, primeiro, segundo, descricao) {
     falhar(`${descricao} deve informar os dois arquivos em conjunto.`);
 }
 
+function validarMtls(configuracao) {
+  const usaPem = Boolean(
+    configuracao.certificadoPath || configuracao.chavePrivadaPath,
+  );
+  const usaPfx = Boolean(configuracao.pfxPath);
+  if (usaPem && usaPfx)
+    falhar(
+      "A configuração mTLS deve usar PFX ou certificado/chave PEM, não ambos.",
+    );
+  validarPar(
+    configuracao,
+    "certificadoPath",
+    "chavePrivadaPath",
+    "A configuração mTLS em PEM",
+  );
+  return usaPfx || Boolean(configuracao.certificadoPath);
+}
+
 function inteiroOpcional(ambiente, nome) {
   const valor = lerTexto(ambiente, nome);
   if (!valor) return null;
@@ -72,6 +90,8 @@ export function obterConfiguracaoSicoob({
     certificadoPath: lerTexto(variaveis, `${prefixo}MTLS_CERT_PATH`),
     chavePrivadaPath: lerTexto(variaveis, `${prefixo}MTLS_KEY_PATH`),
     chavePrivadaSenha: lerTexto(variaveis, `${prefixo}MTLS_KEY_PASSPHRASE`),
+    pfxPath: lerTexto(variaveis, `${prefixo}MTLS_PFX_PATH`),
+    pfxSenha: lerTexto(variaveis, `${prefixo}MTLS_PFX_PASSPHRASE`),
     contratoVersao: lerTexto(variaveis, `${prefixo}CONTRATO_VERSAO`),
     cobranca: Object.freeze({
       numeroCliente: inteiroOpcional(
@@ -102,20 +122,11 @@ export function obterConfiguracaoSicoob({
         variaveis,
         `${prefixo}COBRANCA_NUMERO_CONTRATO`,
       ),
-      tipoFormularioImpressaoPDF: inteiroOpcional(
-        variaveis,
-        `${prefixo}COBRANCA_TIPO_FORMULARIO_PDF`,
-      ),
       gerarPdf: lerTexto(variaveis, `${prefixo}COBRANCA_GERAR_PDF`) === "SIM",
     }),
   };
 
-  validarPar(
-    configuracao,
-    "certificadoPath",
-    "chavePrivadaPath",
-    "A configuração mTLS",
-  );
+  const mtlsConfigurado = validarMtls(configuracao);
   const apiUrl = validarUrl(configuracao.apiBaseUrl, `${prefixo}API_BASE_URL`, {
     ambiente,
     nodeEnv,
@@ -150,6 +161,11 @@ export function obterConfiguracaoSicoob({
       .map(([, nome]) => nome);
     if (ausentes.length)
       falhar(`Configuração Sicoob incompleta: ${ausentes.join(", ")}.`);
+    if (!mtlsConfigurado)
+      falhar(
+        `Configuração Sicoob incompleta: ${prefixo}MTLS_PFX_PATH ou ` +
+          `${prefixo}MTLS_CERT_PATH/${prefixo}MTLS_KEY_PATH.`,
+      );
   }
 
   return Object.freeze(configuracao);
@@ -164,7 +180,8 @@ export function resumirConfiguracaoSicoob(configuracao) {
       configuracao.oauthTokenUrl && configuracao.clientId,
     ),
     mtls_configurado: Boolean(
-      configuracao.certificadoPath && configuracao.chavePrivadaPath,
+      configuracao.pfxPath ||
+      (configuracao.certificadoPath && configuracao.chavePrivadaPath),
     ),
     contrato_versao: configuracao.contratoVersao || null,
   };

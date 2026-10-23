@@ -1,52 +1,29 @@
-# MFA para ações bancárias
+# Senha de confirmação das ações bancárias
 
-Status: implementado no Ecosol; requer configuração da chave local e validação assistida no navegador antes de homologação bancária.
+## Regra adotada
 
-## Objetivo e limites
+O Ecosol não exige aplicativo autenticador para o módulo bancário. Cobranças podem ser preparadas e enfileiradas por qualquer conta nominal da equipe sem senha financeira adicional. Pagamentos representam saída de dinheiro e somente podem ser aprovados por uma conta com o papel crítico **Proprietário**, mediante nova digitação da senha de confirmação financeira.
 
-Uma sessão da equipe e a senha, isoladamente, não autorizam alterações de permissões bancárias, preparação ou aprovação de cobranças, controle do executor nem envio à fila. Essas ações exigem uma confirmação recente com senha e TOTP (ou um código de recuperação). A confirmação dura cinco minutos, fica ligada à sessão e deixa de valer quando a senha ou o autenticador muda. O papel bancário continua sendo verificado separadamente pelo servidor.
+Existe uma única senha financeira para a empresa:
 
-TOTP segue [RFC 6238](https://www.rfc-editor.org/rfc/rfc6238). O verificador aceita janela de até um passo de 30 segundos em cada direção, registra o último passo aceito para impedir reutilização e limita tentativas por conta. Essa proteção não é resistente a phishing; antes de pagamentos reais, avaliar também uma opção resistente a phishing, como autenticação criptográfica vinculada à origem, conforme o [NIST SP 800-63B](https://pages.nist.gov/800-63-4/sp800-63b.html).
+- o **Proprietário 1** é o primeiro Proprietário vigente pelo registro de concessão do papel e é o único que pode cadastrar, alterar ou recuperar a senha;
+- o **Proprietário 2** pode utilizar a mesma senha para aprovar pagamentos, mas não pode consultá-la, trocá-la nem iniciar sua recuperação;
+- a senha nunca é armazenada ou registrada em texto; o banco conserva apenas um hash `scrypt` com sal;
+- cada aprovação registra a conta nominal que efetivamente utilizou a senha, a versão e o hash imutável do pagamento;
+- a perda do papel Proprietário invalida a autorização para novas aprovações e para o envio de pagamentos ainda não executados.
 
-## Configuração operacional
+## Recuperação
 
-1. Gerar uma chave aleatória Base64 de **32 bytes** para `BANCARIO_MFA_ENCRYPTION_KEY` e defini-la somente em `backend/.env.local` ou no gerenciador de segredos do ambiente. Não reutilizar a chave do Gmail.
-2. Manter uma cópia segura da chave fora do computador do Ecosol. Uma restauração do banco sem a mesma chave não consegue verificar os autenticadores já cadastrados.
-3. Usar HTTPS e `APP_URL` correspondente ao endereço público em produção. Se `APP_URL` for HTTP em produção, as ações bancárias são recusadas.
-4. Fazer backup do banco e testar a restauração com a chave preservada antes de liberar operações reais.
+O Proprietário 1 solicita a recuperação em sua própria sessão autenticada. O sistema envia ao e-mail nominal dele uma senha temporária aleatória de seis dígitos, válida por 15 minutos e utilizável uma única vez. Senhas temporárias anteriores são invalidadas quando uma nova é emitida. Depois de confirmá-la, o Proprietário 1 cadastra uma nova senha financeira.
 
-Sem chave válida, a ativação do MFA falha de forma segura e as ações bancárias continuam bloqueadas. Nenhum segredo ou código de recuperação deve ser enviado por chat, incluído em logs ou salvo no repositório.
+Em desenvolvimento, a mensagem é gravada em `dev_mail`. Em produção, o envio usa as configurações SMTP (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` e `SMTP_FROM`). Para usar Gmail, deve-se configurar uma conta Gmail dedicada com senha de aplicativo no SMTP; a conexão atual de leitura de faturas não possui permissão de envio e não é reutilizada.
 
-## Fluxo da equipe
+Solicitação e validação têm limitação de tentativas. A senha temporária e a senha permanente não aparecem na auditoria. A auditoria registra somente os eventos de cadastro, alteração, solicitação e conclusão da recuperação.
 
-1. Na primeira ação bancária, informar a senha da conta nominal da equipe.
-2. Adicionar manualmente no aplicativo autenticador a chave exibida pelo Ecosol, sob o nome “Ecosol”. A chave pendente expira em dez minutos e é cifrada no banco.
-3. Digitar o código de seis dígitos para concluir a ativação.
-4. Guardar, fora do Ecosol, os dez códigos de recuperação apresentados uma única vez. Cada um serve apenas uma vez.
-5. Para uma ação bancária, confirmar senha e código atual (ou um código de recuperação). O servidor emite uma prova temporária de cinco minutos vinculada à sessão; cada rota confere também origem e permissão.
+## Outras ações sensíveis
 
-O código TOTP usado para ativar o autenticador não pode ser reutilizado na confirmação seguinte: aguarde o próximo código ou use um código de recuperação.
+Administração do executor e conciliação manual continuam exigindo a senha de login atual da conta nominal, com confirmação temporária vinculada à sessão e proteção de origem. Elas não usam a senha financeira compartilhada. MFA deixou de fazer parte desse fluxo.
 
-## Perda e troca do autenticador
+## Limites e risco aceito
 
-Quem ainda tem um código de recuperação pode escolher **“Perdi o autenticador — trocar dispositivo”**, confirmar senha e código de recuperação, cadastrar uma nova chave e validá-la. O autenticador antigo permanece ativo durante a configuração. Ao confirmar a troca, o código de recuperação usado e todos os antigos são invalidados; dez novos códigos são exibidos uma vez; provas bancárias emitidas antes da troca deixam de valer.
-
-Se o dispositivo **e todos os códigos de recuperação** forem perdidos, não há redefinição automática nem desativação administrativa de um clique. A conta fica sem poder autorizar ações bancárias. A pessoa solicita a recuperação com a senha da equipe; dois aprovadores nominais e distintos confirmam sua identidade presencialmente, com MFA próprio, e o titular cadastra um novo autenticador. O titular não pode aprovar sua própria recuperação. O pedido expira em 24 horas, é consumido uma única vez e deixa rastro de auditoria.
-
-O perfil especial **Proprietário** foi definido para duas pessoas no máximo, com acesso global às abas e aos papéis bancários. Um **Guardião de recuperação** separado tem apenas o papel excepcional de recuperação. Para uma conta comum, são necessários os dois Proprietários; para recuperar um Proprietário, são necessários o outro Proprietário e o Guardião. Cada aprovador usa sua própria sessão, MFA ativo e confirmação bancária recente. As aprovações são verificadas novamente antes de iniciar e de concluir a troca; a troca revoga os códigos antigos e as confirmações bancárias anteriores. Nenhum aprovador isolado pode desativar o MFA. **Pendente antes de uso operacional:** cadastrar nominalmente o Guardião, testar o fluxo assistido com as pessoas designadas e definir um canal previamente confirmado para notificação do titular. O sistema ainda não envia essa notificação.
-
-O banco local consultado em 19/10/2026 ainda não possui contas nominais para Victor Japiassu, Veygna e Matheus. O perfil Proprietário foi reservado a Victor e Veygna; Matheus foi indicado como Guardião. Nenhum papel crítico foi atribuído enquanto essas contas não existirem e não tiverem suas identidades verificadas.
-
-## Autoaprovação excepcional do Proprietário
-
-Por decisão expressa do responsável pelo projeto, **somente o Proprietário** pode preparar e aprovar a própria operação bancária. Isso reduz a segregação de funções e aumenta o risco de erro ou fraude caso essa conta seja comprometida. A exceção exige MFA, confirmação bancária recente e aceite explícito, fica registrada em tabela e auditoria próprias, e perde validade antes do envio se o perfil Proprietário for revogado. Administrador da integração, Operador financeiro, Aprovador financeiro, Guardião e demais níveis continuam obrigados a usar aprovador distinto. O executor Sicoob continua pausado até a homologação e configuração bancária.
-
-## Proteção resistente a phishing
-
-O TOTP atual continua sendo uma proteção de segundo fator, mas **não é resistente a phishing**. O caminho previsto é adicionar passkeys/WebAuthn com verificação de origem, desafio de uso único e autenticação local do dispositivo, sem substituir a autorização por papel e a segregação entre preparador e aprovador. O domínio HTTPS definitivo do Ecosol ainda não foi escolhido. Uma credencial cadastrada em `localhost` não poderá simplesmente ser transferida para outro domínio; a equipe deverá cadastrar novas credenciais no domínio de produção. Por isso, passkeys e eventual obrigatoriedade para ações bancárias permanecem pendentes de implementação e homologação nesse domínio. Até essa transição, não apresentar o fluxo atual como resistente a phishing.
-
-## Evidências e aceite
-
-- Testes automatizados cobrem vetor público de TOTP, segredo cifrado, ativação, código incorreto, replay, recuperação de uso único, troca, invalidação de prova anterior e sessão expirada.
-- Teste assistido no navegador ainda deve confirmar o cadastro em um aplicativo autenticador real, a leitura dos códigos de recuperação e a experiência de troca.
-- MFA não substitui segregação entre preparador e aprovador, conciliação, idempotência nem homologação Sicoob.
+A senha única reduz a proteção contra phishing, compartilhamento indevido e comprometimento simultâneo dos dois Proprietários. Esse risco é uma decisão operacional explícita. Permanecem obrigatórios: HTTPS em produção, contas nominais, sessões individuais, limitação de tentativas, auditoria, idempotência, reconciliação e separação das credenciais Sicoob.

@@ -7,17 +7,15 @@ Deixar a integração Sicoob pronta para receber os dados oficiais de homologaç
 ## Sequência
 
 1. **Revisão do commit proposto.** Conferir o diff staged, a exclusão de `output/calculos-validacao-2026-10-14.jpg` (fora do escopo e não staged), a documentação e os testes. José aprova o conteúdo antes do commit. Nenhum push ou implantação faz parte desta etapa.
-2. **Segurança bancária.** Validar a chave `BANCARIO_MFA_ENCRYPTION_KEY` em armazenamento seguro, com cópia protegida fora do computador. Criar as contas nominais de Victor e Veygna somente com identidade e credenciais conferidas; obter o e-mail nominal do Guardião Matheus. Atribuir papéis críticos apenas após verificação humana. Cada pessoa ativa o próprio MFA, guarda os códigos e participa de um ensaio presencial de recuperação. Definir e confirmar o canal de notificação do titular antes de usar a recuperação excepcional na operação.
+2. **Segurança bancária.** Manter as contas nominais dos dois Proprietários e atribuir papéis críticos somente após verificação humana. O Proprietário 1 cadastra a senha financeira e confirma seu e-mail nominal; ambos testam a aprovação de pagamento. Configurar e ensaiar o SMTP para recuperação por código temporário antes da produção.
 3. **Contrato oficial Sicoob.** Quando o banco entregar a documentação e as credenciais, confirmar versão da API, endpoints de homologação, método OAuth, escopos, mTLS/certificado, identificador da cobrança, chave idempotente, consulta, cancelamento, PDF e limites. Não supor campos ou URLs nem guardar segredos no repositório. Até lá, manter o executor desligado e a fila pausada.
-4. **Ensaios pré-token.** Rodar `npm.cmd run test:bancario`, `npm.cmd run test:exportacao-clientes`, `npm.cmd run test:permissoes`, `npm.cmd run test:seguranca`, `npm.cmd run build` e `npm.cmd run format:check`. Revisar duplicidade, concorrência, timeout, resposta desconhecida, persistência, reconciliação, reversão e auditoria. Exercitar no navegador a exportação de clientes com nível 3, a negativa em nível inferior e os caminhos de recuperação MFA.
+4. **Ensaios pré-token.** Rodar `npm.cmd run test:bancario`, `npm.cmd run test:exportacao-clientes`, `npm.cmd run test:permissoes`, `npm.cmd run test:seguranca`, `npm.cmd run build` e `npm.cmd run format:check`. Revisar duplicidade, concorrência, timeout, resposta desconhecida, persistência, reconciliação, reversão e auditoria. Exercitar no navegador a exportação de clientes com nível 3, a negativa em nível inferior e a recuperação da senha financeira.
 5. **Decisão de avanço.** Registrar evidências e pendências no Jira. Só iniciar a homologação conectada após contrato oficial, configuração segura, contas nominais e aprovação humana do plano. A emissão real permanece fora de escopo até autorização separada.
 
 ## Pendências que não devem ser ocultadas
 
 - Nenhuma conta nominal de Victor ou Veygna foi encontrada no banco local em 19/10/2026; não atribuir papéis críticos a terceiros por aproximação de nome.
-- O e-mail nominal do Guardião ainda não foi informado.
-- Não existe canal previamente confirmado para notificar o titular após recuperação excepcional; o código registra o evento, mas não envia aviso.
-- Passkeys resistentes a phishing dependem de domínio HTTPS definitivo; em `localhost` só cabe ensaio local.
+- O SMTP de produção para a recuperação da senha financeira ainda precisa ser configurado e testado.
 - Em 22/10/2026, OAuth Client Credentials e Cobrança Bancária v3 já possuem contrato local baseado na documentação oficial, com inclusão, consulta, `health` e artefatos de boleto testados contra servidor sintético. Credenciais, certificado, convênio e homologação conectada continuam pendentes; o executor permanece desligado.
 
 ## Critérios de aceite para encerrar o dia

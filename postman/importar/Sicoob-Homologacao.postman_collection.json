@@ -1,0 +1,84 @@
+{
+  "info": {
+    "name": "Sicoob - Homologacao",
+    "description": "Obtencao controlada do token OAuth Sicoob em homologacao. Nao persiste tokens nem contem credenciais reais.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "OAuth - client secret",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/x-www-form-urlencoded" },
+          { "key": "Accept", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            { "key": "grant_type", "value": "client_credentials", "type": "text" },
+            { "key": "client_id", "value": "{{sicoob_client_id}}", "type": "text" },
+            { "key": "client_secret", "value": "{{sicoob_client_secret}}", "type": "text" },
+            { "key": "scope", "value": "{{sicoob_scope}}", "type": "text" }
+          ]
+        },
+        "url": "{{sicoob_oauth_token_url}}",
+        "description": "Use somente quando o Portal Sicoob confirmar autenticacao com client secret."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('OAuth respondeu com sucesso', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+              "pm.test('Resposta possui token OAuth valido', function () {",
+              "  const corpo = pm.response.json();",
+              "  pm.expect(corpo.access_token).to.be.a('string').and.not.empty;",
+              "  pm.expect(corpo.token_type || 'Bearer').to.be.a('string');",
+              "  pm.expect(Number(corpo.expires_in)).to.be.above(0);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "OAuth - mTLS sem client secret",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/x-www-form-urlencoded" },
+          { "key": "Accept", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            { "key": "grant_type", "value": "client_credentials", "type": "text" },
+            { "key": "client_id", "value": "{{sicoob_client_id}}", "type": "text" },
+            { "key": "scope", "value": "{{sicoob_scope}}", "type": "text" }
+          ]
+        },
+        "url": "{{sicoob_oauth_token_url}}",
+        "description": "Use somente quando o Portal Sicoob confirmar client ID com certificado mTLS e sem client secret."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('OAuth respondeu com sucesso', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+              "pm.test('Resposta possui token OAuth valido', function () {",
+              "  const corpo = pm.response.json();",
+              "  pm.expect(corpo.access_token).to.be.a('string').and.not.empty;",
+              "  pm.expect(corpo.token_type || 'Bearer').to.be.a('string');",
+              "  pm.expect(Number(corpo.expires_in)).to.be.above(0);",
+              "});"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

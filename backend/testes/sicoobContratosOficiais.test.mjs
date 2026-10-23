@@ -57,8 +57,6 @@ const entrada = {
     identificacaoEmissaoBoleto: 1,
     identificacaoDistribuicaoBoleto: 1,
     gerarPdf: true,
-    numeroContratoCobranca: 789,
-    tipoFormularioImpressaoPDF: 1,
   },
 };
 const boleto = mapearCobrancaParaSicoob(entrada);
@@ -70,6 +68,8 @@ assert.equal(boleto.seuNumero.length, 18);
 assert.equal(boleto.identificacaoBoletoEmpresa.length, 20);
 assert.equal("nossoNumero" in boleto, false);
 assert.equal("valorMulta" in boleto, false);
+assert.equal("numeroContratoCobranca" in boleto, false);
+assert.equal("tipoFormularioImpressaoPDF" in boleto, false);
 
 assert.throws(
   () =>
@@ -302,6 +302,7 @@ const origem = `http://127.0.0.1:${endereco.port}`;
 try {
   const integracao = criarIntegracaoSicoob({
     permitirHttpLocal: true,
+    criarAgenteMtls: () => undefined,
     variaveis: {
       NODE_ENV: "test",
       SICOOB_AMBIENTE: "homologacao",
@@ -311,6 +312,7 @@ try {
       SICOOB_HOMOLOGACAO_CLIENT_ID: "cliente-de-homologacao",
       SICOOB_HOMOLOGACAO_OAUTH_SCOPE: "boletos_consulta",
       SICOOB_HOMOLOGACAO_CONTRATO_VERSAO: "cobranca-v3",
+      SICOOB_HOMOLOGACAO_MTLS_PFX_PATH: "certificado-teste.pfx",
     },
     contratoCobranca: {
       criarRequisicaoRegistro() {
@@ -336,6 +338,7 @@ try {
 
   const integracaoComCobranca = criarIntegracaoSicoob({
     permitirHttpLocal: true,
+    criarAgenteMtls: () => undefined,
     relogio: () => Date.parse("2026-10-22T12:00:00Z"),
     variaveis: {
       NODE_ENV: "test",
@@ -346,6 +349,7 @@ try {
       SICOOB_HOMOLOGACAO_CLIENT_ID: "cliente-de-homologacao",
       SICOOB_HOMOLOGACAO_OAUTH_SCOPE: "boletos_consulta boletos_inclusao",
       SICOOB_HOMOLOGACAO_CONTRATO_VERSAO: "cobranca-v3",
+      SICOOB_HOMOLOGACAO_MTLS_PFX_PATH: "certificado-teste.pfx",
       SICOOB_HOMOLOGACAO_COBRANCA_NUMERO_CLIENTE: "123",
       SICOOB_HOMOLOGACAO_COBRANCA_CODIGO_MODALIDADE: "1",
       SICOOB_HOMOLOGACAO_COBRANCA_NUMERO_CONTA_CORRENTE: "456",
@@ -353,7 +357,6 @@ try {
       SICOOB_HOMOLOGACAO_COBRANCA_IDENTIFICACAO_EMISSAO: "1",
       SICOOB_HOMOLOGACAO_COBRANCA_IDENTIFICACAO_DISTRIBUICAO: "1",
       SICOOB_HOMOLOGACAO_COBRANCA_NUMERO_CONTRATO: "789",
-      SICOOB_HOMOLOGACAO_COBRANCA_TIPO_FORMULARIO_PDF: "1",
     },
   });
   const entradaAdaptador = {

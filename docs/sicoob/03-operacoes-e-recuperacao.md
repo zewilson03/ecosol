@@ -1,17 +1,18 @@
 # Operações, persistência e recuperação
 
-Status em 22/10/2026: núcleo local, executor simulado, OAuth Client Credentials, mTLS, contrato de Cobrança Bancária v3, inclusão, consulta e persistência de artefatos implementados e testados localmente com dados sintéticos. O executor real continua desligado e nenhuma comunicação financeira foi efetuada com o Sicoob. Cancelamento, pagamentos, webhook/conciliação real e homologação conectada permanecem pendentes.
+Status em 23/10/2026: núcleo local, executor simulado, OAuth Client Credentials, mTLS, contrato de Cobrança Bancária v3, inclusão, consulta e persistência de artefatos implementados e testados localmente com dados sintéticos. Cobranças são emitidas por contas nominais da equipe sem aprovação ou senha adicional. A fundação de aprovação de pagamentos exige exclusivamente o Proprietário, senha atual e confirmação bancária; criação e envio real de pagamentos continuam pendentes.
 
 ## Entrega local implementada
 
 - `bancario_operacoes`: identidade lógica, BRL em centavos, origem/versionamento, snapshot canônico, hash, idempotência, estado e preparador.
-- `bancario_aprovacoes`: aprovação comum vinculada à versão e ao hash, obrigatoriamente por pessoa diferente do preparador.
-- `bancario_autoaprovacoes_proprietario`: exceção exclusiva do Proprietário, com perfil crítico vigente, MFA/confirmação recente e auditoria; nenhum outro perfil pode autoaprovar.
+- Cobranças novas entram no estado `aprovada` sem registro de aprovação adicional; o cálculo aprovado, o snapshot e a idempotência continuam obrigatórios.
+- `bancario_aprovacoes_pagamento_proprietario`: aprovação exclusiva de pagamento vinculada à versão e ao hash, com Proprietário vigente e evidência auditável do uso da senha financeira, sem persistir senha ou código temporário.
+- `bancario_credencial_confirmacao` e `bancario_recuperacoes_credencial`: hash da senha financeira e recuperação de uso único geridos exclusivamente pelo Proprietário 1.
 - `bancario_intencoes`: uma intenção de emissão por operação/versão, pronta para o futuro executor.
 - `bancario_auditoria_operacoes`: preparação, aprovação e entrada na fila com ator e transição.
 - `bancario_artefatos_cobranca`: `nossoNumero`, linha digitável, código de barras, QR Code, PDF e hash do PDF, sem expor esses dados em logs.
-- Triggers rejeitam transições inválidas, aprovação divergente e intenção sem aprovação válida.
-- A origem é revalidada imediatamente antes da fila; mudança na fatura exige nova preparação e nova aprovação.
+- Triggers rejeitam transições inválidas, aprovação de pagamento divergente e intenção de pagamento sem aprovação vigente do Proprietário.
+- A origem é revalidada imediatamente antes da fila; mudança na fatura exige nova preparação, mas cobrança não exige uma aprovação bancária separada.
 - `SICOOB_AMBIENTE` aceita `homologacao` ou `producao`; `SICOOB_CONTA_REFERENCIA` é apenas uma referência interna, nunca credencial ou número secreto. Homologação é o padrão local enquanto não houver conexão externa.
 
 ## Executor simulado

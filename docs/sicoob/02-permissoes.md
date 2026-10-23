@@ -1,29 +1,29 @@
 # Matriz proposta de permissões bancárias
 
-Status: base local implementada em 16/10/2026. Os quatro papéis, a negação por padrão, a gestão independente e a auditoria de concessão/revogação estão disponíveis. A escolha nominal dos responsáveis pela empresa e a reautenticação/MFA ainda são pendências anteriores ao uso real.
+Status em 23/10/2026: a emissão de cobrança foi separada da saída de dinheiro. Qualquer conta nominal da equipe pode preparar e enfileirar uma cobrança sem senha adicional. Pagamentos permanecem bloqueados até aprovação exclusiva do Proprietário, com senha atual e confirmação bancária recente. O envio real de pagamentos ainda não está implementado.
 
 Negar por padrão. Adicionar permissões específicas ao usuário sem converter automaticamente todo nível 3 em aprovador bancário. Verificar permissão e escopo da conta/CNPJ no backend a cada ação. Cliente do portal não possui permissões bancárias; só pode consultar seus próprios documentos liberados.
 
-| Ação                                          | Consulta/auditoria     | Operador financeiro       | Aprovador financeiro               | Administrador da integração   | Serviço automático              |
-| --------------------------------------------- | ---------------------- | ------------------------- | ---------------------------------- | ----------------------------- | ------------------------------- |
-| Consultar operações autorizadas               | Sim                    | Sim                       | Sim                                | Apenas diagnóstico necessário | Somente conciliação             |
-| Preparar cobrança baseada em cálculo aprovado | Não                    | Sim                       | Não por atribuição automática      | Não                           | Não                             |
-| Solicitar emissão de cobrança validada        | Não                    | Sim, permissão específica | Não por atribuição automática      | Não                           | Executar intenção autorizada    |
-| Preparar/editar pagamento                     | Não                    | Sim                       | Não por atribuição automática      | Não                           | Não                             |
-| Aprovar saída de dinheiro                     | Não                    | Não                       | Sim, outro usuário                 | Não                           | Não                             |
-| Executar pagamento aprovado                   | Não                    | Não diretamente           | Não diretamente                    | Não                           | Sim, após revalidar condições   |
-| Solicitar cancelamento                        | Não                    | Sim                       | Autorizar quando aplicável à saída | Não                           | Executar solicitação autorizada |
-| Configurar conta, segredo e ambiente          | Não                    | Não                       | Não                                | Sim, reautenticação recente   | Não                             |
-| Conciliar divergência manual                  | Consultar              | Propor correção           | Confirmar correção justificada     | Não                           | Apenas evidências verificadas   |
-| Exportar auditoria                            | Sim, permissão própria | Não por padrão            | Não por padrão                     | Não por padrão                | Exportação protegida            |
+| Ação                                          | Consulta/auditoria      | Operador financeiro     | Aprovador financeiro               | Administrador da integração   | Serviço automático              |
+| --------------------------------------------- | ----------------------- | ----------------------- | ---------------------------------- | ----------------------------- | ------------------------------- |
+| Consultar operações autorizadas               | Sim                     | Sim                     | Sim                                | Apenas diagnóstico necessário | Somente conciliação             |
+| Preparar cobrança baseada em cálculo aprovado | Conta nominal da equipe | Conta nominal da equipe | Conta nominal da equipe            | Conta nominal da equipe       | Não                             |
+| Solicitar emissão de cobrança validada        | Conta nominal da equipe | Conta nominal da equipe | Conta nominal da equipe            | Conta nominal da equipe       | Executar intenção idempotente   |
+| Preparar/editar pagamento                     | Não                     | Sim                     | Não por atribuição automática      | Não                           | Não                             |
+| Aprovar saída de dinheiro                     | Não                     | Não                     | Não                                | Não                           | Não                             |
+| Executar pagamento aprovado                   | Não                     | Não diretamente         | Não diretamente                    | Não                           | Sim, após revalidar condições   |
+| Solicitar cancelamento                        | Não                     | Sim                     | Autorizar quando aplicável à saída | Não                           | Executar solicitação autorizada |
+| Configurar conta, segredo e ambiente          | Não                     | Não                     | Não                                | Sim, reautenticação recente   | Não                             |
+| Conciliar divergência manual                  | Consultar               | Propor correção         | Confirmar correção justificada     | Não                           | Apenas evidências verificadas   |
+| Exportar auditoria                            | Sim, permissão própria  | Não por padrão          | Não por padrão                     | Não por padrão                | Exportação protegida            |
 
-O mesmo usuário pode acumular papéis quando necessário, mas a autoaprovação é proibida para todos os perfis comuns. A única exceção é o perfil crítico **Proprietário**, limitado a duas contas nominais: ele pode preparar e aprovar a própria operação, desde que use MFA ativo, confirmação bancária recente e aceite explícito, ficando a exceção registrada em tabela e auditoria próprias. O Administrador da integração, o Operador financeiro, o Aprovador financeiro e o Guardião de recuperação não recebem essa exceção. A criação ou elevação de um aprovador continua exigindo controle independente; ninguém pode conceder a si mesmo poder financeiro. A autorização exigida pelo Sicoob não é substituída pela aprovação local.
+Cobrança não movimenta saldo da Ecosol e não exige aprovação local nem senha adicional depois que a fatura foi calculada e aprovada no fluxo de faturamento. Pagamento representa saída de dinheiro: somente o perfil crítico **Proprietário** pode aprová-lo, ainda que outra pessoa o tenha preparado. A aprovação exige a senha de confirmação financeira cadastrada pelo Proprietário 1 e auditoria vinculada à conta nominal, à versão e ao hash do pagamento. Administrador da integração, Operador financeiro, Aprovador financeiro e Guardião não podem aprovar pagamentos. A autorização exigida pelo Sicoob não é substituída pela aprovação local.
 
 ## Regras da autorização
 
 - Vincular aprovação a ID, versão, hash canônico do conteúdo, conta/CNPJ de origem, ambiente, beneficiário, documento do favorecido, linha digitável, valor em centavos e data de execução.
 - Mudanças nesses dados invalidam a aprovação. Anexos substituídos também exigem revisão. Dados consultados do banco devem ser conferidos com os apresentados ao aprovador.
-- Usar prazo curto para o desafio de reautenticação (proposta: cinco minutos, distinto do agendamento). Exigir MFA na aprovação e na administração de credenciais; escolher mecanismo na implementação.
+- Exigir uma nova digitação da senha financeira em cada aprovação de pagamento. O Proprietário 2 pode utilizá-la, mas somente o Proprietário 1 pode cadastrá-la, alterá-la ou recuperá-la.
 - Antes do despacho, revalidar permissões, versão, aprovação, limites e situação da operação. Agendamento confirmado no banco mantém seu próprio ciclo; revogar usuário não cancela automaticamente um agendamento bancário.
 - Reservar limites locais atomicamente para impedir dois lotes simultâneos ultrapassarem o limite. Operação com resultado desconhecido mantém a reserva até conciliação. Limites locais nunca aumentam o limite bancário.
 - Operações mutantes do navegador exigem proteção CSRF explícita e origem esperada. Callbacks bancários ficam em rotas próprias com autenticação do provedor, sem depender de cookie ou de Origin do navegador.

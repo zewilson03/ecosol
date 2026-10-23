@@ -1,0 +1,27 @@
+name: Sicoob - Homologacao
+values:
+  - key: sicoob_oauth_token_url
+    value: ''
+    enabled: true
+    type: default
+    description: URL HTTPS oficial do endpoint OAuth de homologacao.
+  - key: sicoob_api_base_url
+    value: ''
+    enabled: true
+    type: default
+    description: URL HTTPS base da API Sicoob em homologacao.
+  - key: sicoob_client_id
+    value: ''
+    enabled: true
+    type: secret
+    description: Client ID da aplicacao Ecosol no Portal Developers.
+  - key: sicoob_client_secret
+    value: ''
+    enabled: true
+    type: secret
+    description: Client secret, somente quando exigido pelo contrato OAuth.
+  - key: sicoob_scope
+    value: ''
+    enabled: true
+    type: default
+    description: Escopos exatamente como autorizados no Portal Developers.

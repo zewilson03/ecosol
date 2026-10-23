@@ -1,0 +1,6 @@
+$kind: collection
+name: Sicoob - Homologacao
+description: >-
+  Requisicoes de autenticacao OAuth do Sicoob em homologacao. Preencha os
+  valores somente no ambiente local ou no Postman Vault. Nunca versione
+  credenciais, certificados, chaves privadas ou tokens.

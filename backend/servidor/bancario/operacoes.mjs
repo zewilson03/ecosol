@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { obterBanco } from "../bancoDeDados.mjs";
+import { conferirCredencialConfirmacao } from "./credencialConfirmacao.mjs";
 import { temPapelCritico } from "./permissoes.mjs";
 
 const STATUS_FATURA_APROVADA = "Aprovada — aguardando emissão";
@@ -137,9 +138,9 @@ function linhaCompleta(banco, operacaoId) {
     .prepare(
       `SELECT o.*,
               p.name AS preparador_nome,
-              COALESCE(a.aprovador_id,auto.proprietario_id) AS aprovador_id,
-              COALESCE(a.criado_em,auto.criado_em) AS aprovado_em,
-              (auto.id IS NOT NULL) AS autoaprovada,
+              COALESCE(pg.proprietario_id,a.aprovador_id,auto.proprietario_id) AS aprovador_id,
+              COALESCE(pg.criado_em,a.criado_em,auto.criado_em) AS aprovado_em,
+              (pg.id IS NOT NULL OR auto.id IS NOT NULL) AS autoaprovada,
               aprov.name AS aprovador_nome
        FROM bancario_operacoes o
        JOIN staff_users p ON p.id=o.preparado_por
@@ -147,7 +148,10 @@ function linhaCompleta(banco, operacaoId) {
          ON a.operacao_id=o.id AND a.operacao_versao=o.versao
        LEFT JOIN bancario_autoaprovacoes_proprietario auto
          ON auto.operacao_id=o.id AND auto.operacao_versao=o.versao
-       LEFT JOIN staff_users aprov ON aprov.id=COALESCE(a.aprovador_id,auto.proprietario_id)
+       LEFT JOIN bancario_aprovacoes_pagamento_proprietario pg
+         ON pg.operacao_id=o.id AND pg.operacao_versao=o.versao
+       LEFT JOIN staff_users aprov
+         ON aprov.id=COALESCE(pg.proprietario_id,a.aprovador_id,auto.proprietario_id)
        WHERE o.id=?`,
     )
     .get(operacaoId);
@@ -290,80 +294,57 @@ export function criarOperacaoDeCobranca(documentoId, administrador) {
         memoria.vencimento_ecosol,
         jsonCanonico(snapshot),
         snapshotHash,
-        "aguardando_aprovacao",
+        "aprovada",
         administrador.id,
       );
     registrarAuditoria(
       banco,
       operacaoId,
       administrador,
-      "Operação de cobrança preparada",
+      "Cobrança preparada sem aprovação adicional",
       null,
-      "aguardando_aprovacao",
+      "aprovada",
       { origem_id: String(fatura.id), origem_versao: fatura.versao },
     );
     return { criada: true, operacao: linhaCompleta(banco, operacaoId) };
   });
 }
 
-export function aprovarOperacao(
-  operacaoId,
-  administrador,
-  confirmacaoAutoaprovacao = false,
-) {
+export async function aprovarOperacao(operacaoId, administrador, senha) {
   if (!/^[0-9a-f-]{36}$/.test(String(operacaoId)))
     falhar("Operação bancária inválida.");
+  if (!temPapelCritico(administrador?.id, "proprietario"))
+    falhar("Somente o Proprietário pode aprovar pagamentos.", 403);
+  await conferirCredencialConfirmacao(administrador, senha);
   return transacaoImediata((banco) => {
     const operacao = banco
       .prepare("SELECT * FROM bancario_operacoes WHERE id=?")
       .get(operacaoId);
     if (!operacao) falhar("Operação bancária não encontrada.", 404);
-    const autoaprovacao = operacao.preparado_por === administrador.id;
-    if (autoaprovacao && !temPapelCritico(administrador.id, "proprietario"))
-      falhar("Quem preparou a operação não pode aprová-la.", 409);
-    if (autoaprovacao && confirmacaoAutoaprovacao !== true)
-      falhar("Confirme explicitamente a autoaprovação desta operação.", 400);
+    if (operacao.tipo !== "pagamento")
+      falhar("Cobranças não exigem aprovação do Proprietário.", 409);
     const aprovacaoExistente = banco
       .prepare(
-        `SELECT aprovador_id FROM bancario_aprovacoes
-         WHERE operacao_id=? AND operacao_versao=?
-         UNION ALL
-         SELECT proprietario_id FROM bancario_autoaprovacoes_proprietario
+        `SELECT proprietario_id FROM bancario_aprovacoes_pagamento_proprietario
          WHERE operacao_id=? AND operacao_versao=?`,
       )
-      .get(operacao.id, operacao.versao, operacao.id, operacao.versao);
+      .get(operacao.id, operacao.versao);
     if (aprovacaoExistente)
       return { alterada: false, operacao: linhaCompleta(banco, operacao.id) };
     if (operacao.estado !== "aguardando_aprovacao")
       falhar("Esta operação não está aguardando aprovação.", 409);
-    if (autoaprovacao) {
-      banco
-        .prepare(
-          `INSERT INTO bancario_autoaprovacoes_proprietario
-           (operacao_id,operacao_versao,snapshot_hash,proprietario_id)
-           VALUES(?,?,?,?)`,
-        )
-        .run(
-          operacao.id,
-          operacao.versao,
-          operacao.snapshot_hash,
-          administrador.id,
-        );
-    } else {
-      banco
-        .prepare(
-          `INSERT INTO bancario_aprovacoes
-           (operacao_id,operacao_versao,snapshot_hash,preparador_id,aprovador_id)
-           VALUES(?,?,?,?,?)`,
-        )
-        .run(
-          operacao.id,
-          operacao.versao,
-          operacao.snapshot_hash,
-          operacao.preparado_por,
-          administrador.id,
-        );
-    }
+    banco
+      .prepare(
+        `INSERT INTO bancario_aprovacoes_pagamento_proprietario
+         (operacao_id,operacao_versao,snapshot_hash,proprietario_id)
+         VALUES(?,?,?,?)`,
+      )
+      .run(
+        operacao.id,
+        operacao.versao,
+        operacao.snapshot_hash,
+        administrador.id,
+      );
     banco
       .prepare(
         `UPDATE bancario_operacoes
@@ -375,10 +356,13 @@ export function aprovarOperacao(
       banco,
       operacao.id,
       administrador,
-      autoaprovacao ? "Autoaprovação pelo Proprietário" : "Operação aprovada",
+      "Pagamento aprovado pelo Proprietário com senha de confirmação",
       "aguardando_aprovacao",
       "aprovada",
-      { snapshot_hash: operacao.snapshot_hash, autoaprovacao },
+      {
+        snapshot_hash: operacao.snapshot_hash,
+        autenticacao: "senha_confirmacao_financeira",
+      },
     );
     return { alterada: true, operacao: linhaCompleta(banco, operacao.id) };
   });
@@ -402,40 +386,20 @@ function conferirOrigemImutavel(banco, operacao) {
 }
 
 function conferirAprovacaoAindaValida(banco, operacao) {
-  const autoaprovacao = banco
+  if (operacao.tipo === "cobranca") return;
+  const aprovacaoDoProprietario = banco
     .prepare(
-      `SELECT 1 FROM bancario_autoaprovacoes_proprietario a
+      `SELECT 1 FROM bancario_aprovacoes_pagamento_proprietario a
        JOIN equipe_papeis_criticos p
          ON p.staff_id=a.proprietario_id AND p.papel='proprietario'
        JOIN staff_users s ON s.id=p.staff_id AND s.access_level=3
        WHERE a.operacao_id=? AND a.operacao_versao=?
-         AND a.snapshot_hash=? AND a.proprietario_id=?`,
+         AND a.snapshot_hash=?`,
     )
-    .get(
-      operacao.id,
-      operacao.versao,
-      operacao.snapshot_hash,
-      operacao.preparado_por,
-    );
-  if (autoaprovacao) return;
-  const aprovacao = banco
-    .prepare(
-      `SELECT 1
-       FROM bancario_aprovacoes a
-       JOIN bancario_papeis_equipe p
-         ON p.staff_id=a.aprovador_id AND p.papel='aprovador_financeiro'
-       WHERE a.operacao_id=? AND a.operacao_versao=?
-         AND a.snapshot_hash=? AND a.preparador_id=?`,
-    )
-    .get(
-      operacao.id,
-      operacao.versao,
-      operacao.snapshot_hash,
-      operacao.preparado_por,
-    );
-  if (!aprovacao)
+    .get(operacao.id, operacao.versao, operacao.snapshot_hash);
+  if (!aprovacaoDoProprietario)
     falhar(
-      "A aprovação perdeu validade porque o aprovador não possui mais a permissão necessária.",
+      "A aprovação perdeu validade porque o Proprietário não possui mais a autorização necessária.",
       409,
     );
 }
@@ -461,6 +425,26 @@ export function enfileirarOperacao(operacaoId, administrador) {
       .get(operacao.id, operacao.versao);
     if (existente)
       return { criada: false, operacao: linhaCompleta(banco, operacao.id) };
+    if (operacao.tipo !== "cobranca")
+      falhar("Este fluxo de fila aceita somente cobranças.", 409);
+    if (operacao.estado === "aguardando_aprovacao") {
+      banco
+        .prepare(
+          `UPDATE bancario_operacoes
+           SET estado='aprovada',atualizado_em=CURRENT_TIMESTAMP
+           WHERE id=? AND tipo='cobranca' AND estado='aguardando_aprovacao'`,
+        )
+        .run(operacao.id);
+      registrarAuditoria(
+        banco,
+        operacao.id,
+        administrador,
+        "Cobrança legada liberada sem aprovação adicional",
+        "aguardando_aprovacao",
+        "aprovada",
+      );
+      operacao.estado = "aprovada";
+    }
     if (operacao.estado !== "aprovada")
       falhar("A operação precisa estar aprovada antes de entrar na fila.", 409);
     conferirOperacaoAntesDoPrimeiroEnvio(banco, operacao);
@@ -492,15 +476,17 @@ export function enfileirarOperacao(operacaoId, administrador) {
   });
 }
 
-export function listarOperacoes() {
+export function listarOperacoes(administradorId, consultaAmpla = false) {
+  if (!administradorId) falhar("Use uma conta nominal da equipe.", 403);
+  const filtro = consultaAmpla ? "" : "WHERE o.preparado_por=?";
   return obterBanco()
     .prepare(
       `SELECT o.id,o.tipo,o.ambiente,o.conta_referencia,o.origem_tipo,
               o.origem_id,o.origem_versao,o.moeda,o.valor_centavos,
               o.vencimento,o.estado,o.versao,o.criado_em,o.atualizado_em,
               p.name AS preparador_nome,
-              COALESCE(a.aprovador_id,auto.proprietario_id) AS aprovador_id,
-              (auto.id IS NOT NULL) AS autoaprovada,
+              COALESCE(pg.proprietario_id,a.aprovador_id,auto.proprietario_id) AS aprovador_id,
+              (pg.id IS NOT NULL OR auto.id IS NOT NULL) AS autoaprovada,
               aprov.name AS aprovador_nome,
               (SELECT COUNT(*) FROM bancario_tentativas t
                WHERE t.operacao_id=o.id) AS total_tentativas
@@ -510,12 +496,23 @@ export function listarOperacoes() {
          ON a.operacao_id=o.id AND a.operacao_versao=o.versao
        LEFT JOIN bancario_autoaprovacoes_proprietario auto
          ON auto.operacao_id=o.id AND auto.operacao_versao=o.versao
-       LEFT JOIN staff_users aprov ON aprov.id=COALESCE(a.aprovador_id,auto.proprietario_id)
+       LEFT JOIN bancario_aprovacoes_pagamento_proprietario pg
+         ON pg.operacao_id=o.id AND pg.operacao_versao=o.versao
+       LEFT JOIN staff_users aprov
+         ON aprov.id=COALESCE(pg.proprietario_id,a.aprovador_id,auto.proprietario_id)
+       ${filtro}
        ORDER BY o.criado_em DESC,o.id DESC`,
     )
-    .all();
+    .all(...(consultaAmpla ? [] : [administradorId]));
 }
 
-export function obterOperacao(operacaoId) {
-  return linhaCompleta(obterBanco(), operacaoId);
+export function obterOperacao(
+  operacaoId,
+  administradorId,
+  consultaAmpla = false,
+) {
+  const operacao = linhaCompleta(obterBanco(), operacaoId);
+  if (!consultaAmpla && operacao.preparado_por !== administradorId)
+    falhar("Operação bancária não encontrada.", 404);
+  return operacao;
 }

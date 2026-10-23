@@ -45,67 +45,32 @@ export function prepararBancario(banco) {
     BEGIN
       SELECT RAISE(ABORT, 'Limite de contas para papel crítico atingido');
     END;
-    CREATE TABLE IF NOT EXISTS bancario_mfa_equipe (
-      staff_id INTEGER PRIMARY KEY REFERENCES staff_users(id) ON DELETE CASCADE,
-      segredo_cifrado TEXT,
-      pendente_cifrado TEXT,
-      pendente_ate INTEGER,
-      pendente_sessao_id INTEGER,
-      pendente_recuperacao_hash TEXT,
-      pendente_recuperacao_id TEXT,
-      ultimo_contador INTEGER NOT NULL DEFAULT -1,
-      ativado_em TEXT,
-      CHECK((segredo_cifrado IS NULL) = (ativado_em IS NULL))
-    );
-    CREATE TABLE IF NOT EXISTS bancario_mfa_recuperacao (
-      staff_id INTEGER NOT NULL REFERENCES staff_users(id) ON DELETE CASCADE,
-      codigo_hash TEXT NOT NULL CHECK(length(codigo_hash)=64),
-      usado_em TEXT,
-      PRIMARY KEY(staff_id,codigo_hash)
-    );
-    CREATE TABLE IF NOT EXISTS bancario_mfa_auditoria (
-      id INTEGER PRIMARY KEY,
-      staff_id INTEGER NOT NULL,
-      evento TEXT NOT NULL CHECK(evento IN
-        ('inicio','substituicao_iniciada','ativacao','substituicao',
-         'confirmacao_totp','recuperacao')),
-      criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE INDEX IF NOT EXISTS bancario_mfa_auditoria_staff
-      ON bancario_mfa_auditoria(staff_id,criado_em DESC);
-
-    CREATE TABLE IF NOT EXISTS bancario_mfa_pedidos_recuperacao (
-      id TEXT PRIMARY KEY,
-      staff_id INTEGER NOT NULL REFERENCES staff_users(id) ON DELETE RESTRICT,
+    CREATE TABLE IF NOT EXISTS bancario_credencial_confirmacao (
+      id INTEGER PRIMARY KEY CHECK(id=1),
+      proprietario_principal_id INTEGER NOT NULL REFERENCES staff_users(id) ON DELETE RESTRICT,
       senha_hash TEXT NOT NULL,
-      exige_guardiao INTEGER NOT NULL CHECK(exige_guardiao IN (0,1)),
-      estado TEXT NOT NULL CHECK(estado IN
-        ('pendente','aprovado','consumido','expirado')),
-      solicitado_em INTEGER NOT NULL,
+      versao INTEGER NOT NULL DEFAULT 1 CHECK(versao>=1),
+      criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      alterado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS bancario_recuperacoes_credencial (
+      id TEXT PRIMARY KEY,
+      proprietario_principal_id INTEGER NOT NULL REFERENCES staff_users(id) ON DELETE RESTRICT,
+      codigo_hash TEXT NOT NULL CHECK(length(codigo_hash)=64),
       expira_em INTEGER NOT NULL,
-      consumido_em INTEGER,
+      usado_em INTEGER,
+      solicitado_em INTEGER NOT NULL,
       CHECK(expira_em>solicitado_em)
     );
-    CREATE UNIQUE INDEX IF NOT EXISTS bancario_mfa_recuperacao_ativa
-      ON bancario_mfa_pedidos_recuperacao(staff_id)
-      WHERE estado IN ('pendente','aprovado');
-    CREATE TABLE IF NOT EXISTS bancario_mfa_aprovacoes_recuperacao (
-      pedido_id TEXT NOT NULL REFERENCES bancario_mfa_pedidos_recuperacao(id)
-        ON DELETE RESTRICT,
-      aprovador_id INTEGER NOT NULL REFERENCES staff_users(id)
-        ON DELETE RESTRICT,
-      papel TEXT NOT NULL CHECK(papel IN ('proprietario','guardiao_recuperacao')),
-      autenticador_id TEXT NOT NULL CHECK(length(autenticador_id)=64),
-      confirmado_em INTEGER NOT NULL,
-      PRIMARY KEY(pedido_id,aprovador_id)
-    );
-    CREATE TABLE IF NOT EXISTS bancario_mfa_auditoria_recuperacao (
+    CREATE UNIQUE INDEX IF NOT EXISTS bancario_recuperacao_credencial_ativa
+      ON bancario_recuperacoes_credencial(proprietario_principal_id)
+      WHERE usado_em IS NULL;
+    CREATE TABLE IF NOT EXISTS bancario_auditoria_credencial (
       id INTEGER PRIMARY KEY,
-      pedido_id TEXT NOT NULL,
-      ator_id INTEGER NOT NULL,
+      ator_id INTEGER NOT NULL REFERENCES staff_users(id) ON DELETE RESTRICT,
       evento TEXT NOT NULL CHECK(evento IN
-        ('solicitado','aprovado','pronto','cadastro_iniciado','concluido','expirado')),
-      criado_em INTEGER NOT NULL
+        ('cadastrada','alterada','recuperacao_solicitada','recuperada')),
+      criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS bancario_papeis_equipe (
@@ -230,6 +195,19 @@ export function prepararBancario(banco) {
     -- Exceção explícita: o Proprietário pode aprovar a própria operação.
     -- A tabela separada preserva o CHECK de segregação das aprovações comuns.
     CREATE TABLE IF NOT EXISTS bancario_autoaprovacoes_proprietario (
+      id INTEGER PRIMARY KEY,
+      operacao_id TEXT NOT NULL REFERENCES bancario_operacoes(id) ON DELETE RESTRICT,
+      operacao_versao INTEGER NOT NULL,
+      snapshot_hash TEXT NOT NULL CHECK(length(snapshot_hash)=64),
+      proprietario_id INTEGER NOT NULL REFERENCES staff_users(id) ON DELETE RESTRICT,
+      criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(operacao_id,operacao_versao)
+    );
+
+    -- Pagamentos representam saída de dinheiro e só podem ser aprovados pelo
+    -- Proprietário após confirmação da senha atual. A evidência registra o
+    -- evento, sem persistir senha ou token de confirmação.
+    CREATE TABLE IF NOT EXISTS bancario_aprovacoes_pagamento_proprietario (
       id INTEGER PRIMARY KEY,
       operacao_id TEXT NOT NULL REFERENCES bancario_operacoes(id) ON DELETE RESTRICT,
       operacao_versao INTEGER NOT NULL,
@@ -365,6 +343,24 @@ export function prepararBancario(banco) {
       SELECT RAISE(ABORT, 'Autoaprovação exige Proprietário e operação própria atual');
     END;
 
+    DROP TRIGGER IF EXISTS bancario_pagamento_aprovacao_exige_proprietario;
+    CREATE TRIGGER bancario_pagamento_aprovacao_exige_proprietario
+    BEFORE INSERT ON bancario_aprovacoes_pagamento_proprietario
+    WHEN NOT EXISTS (
+      SELECT 1 FROM bancario_operacoes o
+      JOIN equipe_papeis_criticos p
+        ON p.staff_id=NEW.proprietario_id AND p.papel='proprietario'
+      JOIN staff_users s ON s.id=p.staff_id AND s.access_level=3
+      WHERE o.id=NEW.operacao_id
+        AND o.tipo='pagamento'
+        AND o.versao=NEW.operacao_versao
+        AND o.snapshot_hash=NEW.snapshot_hash
+        AND o.estado='aguardando_aprovacao'
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'Pagamento exige aprovação atual do Proprietário');
+    END;
+
     DROP TRIGGER IF EXISTS bancario_intencao_exige_aprovacao;
     CREATE TRIGGER bancario_intencao_exige_aprovacao
     BEFORE INSERT ON bancario_intencoes
@@ -372,33 +368,25 @@ export function prepararBancario(banco) {
       EXISTS (
       SELECT 1
       FROM bancario_operacoes o
-      JOIN bancario_aprovacoes a
-        ON a.operacao_id=o.id AND a.operacao_versao=o.versao
-       AND a.snapshot_hash=o.snapshot_hash
       WHERE o.id=NEW.operacao_id
+        AND o.tipo='cobranca'
         AND o.versao=NEW.operacao_versao
         AND o.estado='aprovada'
-        AND (
-          (o.tipo='cobranca' AND NEW.acao IN ('registrar_cobranca','cancelar_cobranca')) OR
-          (o.tipo='pagamento' AND NEW.acao='executar_pagamento')
-        )
+        AND NEW.acao IN ('registrar_cobranca','cancelar_cobranca')
       ) OR EXISTS (
-        SELECT 1
-        FROM bancario_operacoes o
-        JOIN bancario_autoaprovacoes_proprietario a
-          ON a.operacao_id=o.id AND a.operacao_versao=o.versao
-         AND a.snapshot_hash=o.snapshot_hash
-         AND a.proprietario_id=o.preparado_por
-        JOIN equipe_papeis_criticos p
-          ON p.staff_id=a.proprietario_id AND p.papel='proprietario'
-        JOIN staff_users s ON s.id=p.staff_id AND s.access_level=3
-        WHERE o.id=NEW.operacao_id
-          AND o.versao=NEW.operacao_versao
-          AND o.estado='aprovada'
-          AND (
-            (o.tipo='cobranca' AND NEW.acao IN ('registrar_cobranca','cancelar_cobranca')) OR
-            (o.tipo='pagamento' AND NEW.acao='executar_pagamento')
-          )
+      SELECT 1
+      FROM bancario_operacoes o
+      JOIN bancario_aprovacoes_pagamento_proprietario a
+        ON a.operacao_id=o.id AND a.operacao_versao=o.versao
+       AND a.snapshot_hash=o.snapshot_hash
+      JOIN equipe_papeis_criticos p
+        ON p.staff_id=a.proprietario_id AND p.papel='proprietario'
+      JOIN staff_users s ON s.id=p.staff_id AND s.access_level=3
+      WHERE o.id=NEW.operacao_id
+        AND o.tipo='pagamento'
+        AND o.versao=NEW.operacao_versao
+        AND o.estado='aprovada'
+        AND NEW.acao='executar_pagamento'
       )
     )
     BEGIN
@@ -447,14 +435,6 @@ export function prepararBancario(banco) {
       operacao_id,solicitado_por,iniciado_em DESC
     )
   `);
-  const colunasMfa = banco
-    .prepare("PRAGMA table_info(bancario_mfa_equipe)")
-    .all();
-  if (!colunasMfa.some((coluna) => coluna.name === "pendente_recuperacao_id"))
-    banco.exec(
-      "ALTER TABLE bancario_mfa_equipe ADD COLUMN pendente_recuperacao_id TEXT",
-    );
-
   // Não tente "corrigir" identificadores financeiros durante a inicialização.
   // Dados antigos ambíguos exigem conciliação humana antes que a unicidade possa
   // ser imposta com segurança.
