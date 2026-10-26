@@ -1,4 +1,5 @@
 import { modoTemporarioDeHomologacaoCentral } from "../centralFaturas.mjs";
+import { createHash } from "node:crypto";
 
 function motivo(valor) {
   return typeof valor === "string" && valor.trim()
@@ -21,7 +22,7 @@ function documentosDaCaptura(banco, contaId, capturaId) {
   const documentos = banco
     .prepare(
       `SELECT d.id,d.nome,d.classificacao,d.finalidade,d.versao,d.competencia,
-              d.unidade_id,
+              d.unidade_id,d.hash,
               MAX(CASE WHEN a.estado='capturado' THEN 1 ELSE 0 END) AS tem_anexo_capturado
          FROM gmail_capturas_periodo_mensagens m
          JOIN gmail_capturas_periodo c ON c.id=m.captura_id
@@ -53,8 +54,32 @@ export async function prepararLoteCentralDaCaptura({
   capturaId,
   localizar,
   simular,
+  processarDocumental = null,
+  obterPreparacao = null,
+  salvarPreparacao = null,
+  obterAssinaturaFonte = async () => "fonte_central_nao_versionada",
 }) {
   const { captura, documentos } = documentosDaCaptura(banco, contaId, capturaId);
+  const assinaturaFonte = await obterAssinaturaFonte();
+  if (typeof assinaturaFonte !== "string" || !assinaturaFonte.trim())
+    throw new Error("assinatura_da_fonte_central_invalida");
+  const chaveIdempotencia = createHash("sha256")
+    .update(
+      JSON.stringify(
+        {
+          documentos: documentos.map((documento) => [
+            documento.id,
+            documento.versao,
+            documento.hash ?? null,
+          ]),
+          fonteCentral: assinaturaFonte,
+        },
+      ),
+    )
+    .digest("hex");
+  const anterior = obterPreparacao?.({ capturaId });
+  if (anterior?.chave_idempotencia === chaveIdempotencia)
+    return anterior.resultado;
   const elegiveisParaSimulacao = documentos.filter(
     (item) =>
       item.tem_anexo_capturado === 1 &&
@@ -84,13 +109,18 @@ export async function prepararLoteCentralDaCaptura({
   const modosPorId = new Map();
   for (const documento of elegiveisParaSimulacao) {
     const localizado = localizadosPorId.get(documento.id);
-    if (localizado?.situacao !== "segura") continue;
+    // A identidade documental pode ser suficiente para Royer, mesmo quando a
+    // linha financeira ainda não foi localizada. A modalidade continua sendo
+    // o único critério para liberar cálculo de boleto.
+    if (!["segura", "identificada"].includes(localizado?.situacao)) continue;
     const modo = modoTemporarioDeHomologacaoCentral(localizado.usina);
     if (modo) modosPorId.set(documento.id, modo);
   }
   const simulacoesPorId = new Map();
   const financeiros = elegiveisParaSimulacao.filter(
-    (documento) => modosPorId.get(documento.id) === "financeiro",
+    (documento) =>
+      modosPorId.get(documento.id) === "financeiro" &&
+      localizadosPorId.get(documento.id)?.situacao === "segura",
   );
   if (financeiros.length) {
     try {
@@ -108,7 +138,7 @@ export async function prepararLoteCentralDaCaptura({
     }
   }
 
-  const itens = documentos.map((documento) => {
+  let itens = documentos.map((documento) => {
     if (documento.tem_anexo_capturado !== 1)
       return revisar(documento, ["anexo_nao_disponivel_no_lote"]);
     if (!["triagem", "fatura"].includes(documento.classificacao))
@@ -118,9 +148,19 @@ export async function prepararLoteCentralDaCaptura({
     const localizacao = localizadosPorId.get(documento.id);
     if (!localizacao)
       return revisar(documento, ["localizacao_central_sem_resultado"]);
-    if (localizacao.situacao !== "segura")
-      return revisar(documento, [localizacao.motivo ?? "localizacao_central_revisar"], localizacao);
     const modo = modosPorId.get(documento.id);
+    if (localizacao.situacao === "identificada" && modo === "documental")
+      return {
+        ...documento,
+        situacao: "preparado",
+        modo,
+        motivos: [],
+        simulacao: localizacao,
+      };
+    if (localizacao.situacao !== "segura")
+      return revisar(documento, [
+        localizacao.motivoFinanceiro ?? localizacao.motivo ?? "localizacao_central_revisar",
+      ], localizacao);
     if (!modo)
       return revisar(documento, ["modalidade_operacional_nao_confirmada"], localizacao);
     if (modo === "documental")
@@ -144,23 +184,95 @@ export async function prepararLoteCentralDaCaptura({
       simulacao,
     };
   });
+  const documentais = itens
+    .filter(
+      (item) =>
+        ["segura", "identificada", "simulada"].includes(item.simulacao?.situacao) &&
+        item.simulacao?.cliente &&
+        item.simulacao?.usina &&
+        item.simulacao?.ucNova,
+    )
+    .map((item) => item.id);
+  const documentaisPorId = new Map();
+  if (processarDocumental && documentais.length) {
+    for (let inicio = 0; inicio < documentais.length; inicio += 10) {
+      const grupo = documentais.slice(inicio, inicio + 10);
+      try {
+        const resultado = await processarDocumental({
+          documentos: grupo,
+          chaveIdempotencia,
+          sequencia: inicio / 10 + 1,
+        });
+        for (const pdf of resultado?.pdfs ?? [])
+          if (Number.isSafeInteger(pdf?.documento))
+            documentaisPorId.set(pdf.documento, {
+              situacao: "pronto",
+              pdfFinal: pdf.pdf_final,
+              pdfImpressao: pdf.pdf_impressao,
+              nomeFinal: pdf.nomeFinal,
+            });
+        for (const pendencia of resultado?.pendencias ?? [])
+          if (Number.isSafeInteger(pendencia?.documento))
+            documentaisPorId.set(pendencia.documento, {
+              situacao: "revisar",
+              motivo: motivo(pendencia.motivo),
+            });
+      } catch (erro) {
+        for (const documento of grupo)
+          documentaisPorId.set(documento, {
+            situacao: "revisar",
+            motivo: `preparacao_documental_indisponivel:${motivo(erro?.message)}`,
+          });
+      }
+    }
+  }
+  itens = itens.map((item) => ({
+    ...item,
+    documental: documentaisPorId.get(item.id) ?? null,
+  }));
   const quantidade = (predicado) => itens.filter(predicado).length;
-  return {
+  const documentosDocumentaisProntos = quantidade(
+    (item) => item.documental?.situacao === "pronto",
+  );
+  const identificadosDocumentalmente = quantidade((item) =>
+    ["segura", "identificada", "simulada"].includes(item.simulacao?.situacao),
+  );
+  const financeiramenteAptos = quantidade(
+    (item) => item.modo === "financeiro" && item.situacao === "preparado",
+  );
+  const resultado = {
     captura,
+    fonteCentral: assinaturaFonte,
     itens,
     resumo: {
       totalCapturado: captura.capturados,
       documentosNoLote: itens.length,
+      identificadosDocumentalmente,
+      documentosDocumentaisProntos,
+      revisaoDocumental: itens.length - documentosDocumentaisProntos,
+      financeiramenteAptos,
+      revisaoFinanceira: quantidade(
+        (item) => item.modo !== "documental" && item.situacao === "revisar",
+      ),
       elegiveis: quantidade((item) => item.situacao === "preparado"),
       preparados: quantidade((item) => item.situacao === "preparado"),
       revisar: quantidade((item) => item.situacao === "revisar"),
-      processados: 0,
+      processados: documentosDocumentaisProntos,
       falhas: quantidade((item) =>
         item.motivos.some((itemMotivo) =>
           itemMotivo.startsWith("simulacao_central_indisponivel:"),
         ),
       ),
-      pdfsProntosParaImpressao: 0,
+      pdfsProntosParaImpressao: documentosDocumentaisProntos,
     },
   };
+  if (salvarPreparacao)
+    salvarPreparacao({
+      capturaId,
+      chaveIdempotencia,
+      estado:
+        resultado.resumo.pdfsProntosParaImpressao > 0 ? "concluida" : "revisar",
+      resultado,
+    });
+  return resultado;
 }

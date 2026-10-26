@@ -441,6 +441,52 @@ export function criarRepositorioGmail(banco) {
         .map((item) => item.documentoId);
     },
 
+    obterPreparacaoCentralDaCaptura(id) {
+      inteiroPositivo(id, "Captura");
+      const item = banco
+        .prepare(
+          "SELECT * FROM gmail_capturas_periodo_preparacoes_central WHERE captura_id=?",
+        )
+        .get(id);
+      return item ? { ...item, resultado: JSON.parse(item.resultado) } : null;
+    },
+
+    salvarPreparacaoCentralDaCaptura({ capturaId, chaveIdempotencia, estado, resultado }) {
+      inteiroPositivo(capturaId, "Captura");
+      if (!["concluida", "revisar", "falhou"].includes(estado))
+        throw new Error("Estado da preparação Central inválido.");
+      const chave = texto(chaveIdempotencia, "Chave de idempotência", 128);
+      const conteudo = JSON.stringify(resultado);
+      return transacao(banco, () => {
+        const captura = banco
+          .prepare("SELECT id FROM gmail_capturas_periodo WHERE id=?")
+          .get(capturaId);
+        if (!captura) throw new Error("Captura inexistente.");
+        banco
+          .prepare(
+            `INSERT OR IGNORE INTO gmail_capturas_periodo_preparacoes_central_historico
+             (captura_id,chave_idempotencia,estado,resultado,criado_em,atualizado_em)
+             SELECT captura_id,chave_idempotencia,estado,resultado,criado_em,atualizado_em
+               FROM gmail_capturas_periodo_preparacoes_central
+              WHERE captura_id=? AND chave_idempotencia<>?`,
+          )
+          .run(capturaId, chave);
+        banco
+          .prepare(
+            `INSERT INTO gmail_capturas_periodo_preparacoes_central
+             (captura_id,chave_idempotencia,estado,resultado)
+             VALUES (?,?,?,?)
+             ON CONFLICT(captura_id) DO UPDATE SET
+               chave_idempotencia=excluded.chave_idempotencia,
+               estado=excluded.estado,
+               resultado=excluded.resultado,
+               atualizado_em=CURRENT_TIMESTAMP`,
+          )
+          .run(capturaId, chave, estado, conteudo);
+        return this.obterPreparacaoCentralDaCaptura(capturaId);
+      });
+    },
+
     iniciarVarreduraCompleta({
       contaId,
       historyId: marco,

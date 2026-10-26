@@ -1,8 +1,12 @@
 import { createHash, randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { Router } from "express";
 import { obterBanco } from "../bancoDeDados.mjs";
 import {
+  assinaturaDaFonteCentral,
   executarSimulacaoCentral,
+  executarProcessamentoCentralHomologacao,
   gerarPreviaCentralTemporaria,
   localizarDocumentosCentral,
 } from "../centralFaturas.mjs";
@@ -126,6 +130,7 @@ export function criarRotasGmail({
   localizadorCentral = localizarDocumentosCentral,
   geradorPreviaCentral = gerarPreviaCentralTemporaria,
   preparadorLoteCentral = prepararLoteCentralDaCaptura,
+  processadorDocumentalCentral = executarProcessamentoCentralHomologacao,
 } = {}) {
   const rotas = Router();
 
@@ -311,6 +316,9 @@ export function criarRotasGmail({
         return resposta.json({
           captura,
           documentos: captura ? repo.documentosDaCaptura(captura.id) : [],
+          preparacao: captura
+            ? repo.obterPreparacaoCentralDaCaptura(captura.id)?.resultado ?? null
+            : null,
         });
       } catch (erro) {
         return resposta.status(400).json({ erro: String(erro.message) });
@@ -334,6 +342,17 @@ export function criarRotasGmail({
           capturaId,
           localizar: localizadorCentral,
           simular: simuladorCentral,
+          obterAssinaturaFonte: assinaturaDaFonteCentral,
+          obterPreparacao: ({ capturaId: id }) =>
+            criarRepositorioGmail(banco()).obterPreparacaoCentralDaCaptura(id),
+          salvarPreparacao: (preparacao) =>
+            criarRepositorioGmail(banco()).salvarPreparacaoCentralDaCaptura(preparacao),
+          processarDocumental: ({ documentos, chaveIdempotencia, sequencia }) =>
+            processadorDocumentalCentral({
+              processamentoId: `gmail-${capturaId}-${chaveIdempotencia.slice(0, 12)}-${sequencia}`,
+              documentos,
+              modo: "documental",
+            }),
         });
         return resposta.set("Cache-Control", "no-store").json(resultado);
       } catch (erro) {
@@ -346,6 +365,40 @@ export function criarRotasGmail({
         return resposta.status(503).json({
           erro: "Não foi possível preparar o lote com a Central.",
         });
+      }
+    },
+  );
+
+  rotas.get(
+    "/api/admin/gmail/contas/:id/capturas/:capturaId/central/documentos/:documento/:tipo",
+    (requisicao, resposta) => {
+      const contaId = idValido(requisicao.params.id);
+      const capturaId = idValido(requisicao.params.capturaId);
+      const documento = idValido(requisicao.params.documento);
+      const tipo = requisicao.params.tipo;
+      if (!contaId || !capturaId || !documento || !["pdf", "impressao"].includes(tipo))
+        return resposta.status(400).json({ erro: "Artefato inválido." });
+      try {
+        const repo = criarRepositorioGmail(banco());
+        const captura = repo.obterCapturaPeriodo(capturaId);
+        if (captura.conta_id !== contaId)
+          return resposta.status(404).json({ erro: "Captura não encontrada." });
+        const preparacao = repo.obterPreparacaoCentralDaCaptura(capturaId);
+        const item = preparacao?.resultado?.itens?.find((atual) => atual.id === documento);
+        const caminho =
+          tipo === "pdf" ? item?.documental?.pdfFinal : item?.documental?.pdfImpressao;
+        const raiz = resolve("backend", "data", "central-homologacao");
+        if (
+          item?.documental?.situacao !== "pronto" ||
+          typeof caminho !== "string" ||
+          !resolve(caminho).startsWith(raiz + "\\") ||
+          !existsSync(caminho)
+        )
+          return resposta.status(404).json({ erro: "PDF preparado não disponível." });
+        resposta.set({ "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
+        return resposta.download(caminho, item.documental.nomeFinal);
+      } catch {
+        return resposta.status(404).json({ erro: "PDF preparado não disponível." });
       }
     },
   );

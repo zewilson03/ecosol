@@ -84,6 +84,7 @@ type SimulacaoCentral = {
   ucAntiga?: string;
   cliente?: string;
   usina?: string;
+  competencia?: string;
   mesFaturamento?: string;
   planilha?: string;
   aba?: string;
@@ -120,11 +121,21 @@ type ItemPreparacaoCentral = {
   modo: "financeiro" | "documental" | null;
   motivos: string[];
   simulacao?: SimulacaoCentral | null;
+  documental?: {
+    situacao: "pronto" | "revisar";
+    motivo?: string;
+    nomeFinal?: string;
+  } | null;
 };
 type PreparacaoCentralLote = {
   resumo: {
     totalCapturado: number;
     documentosNoLote: number;
+    identificadosDocumentalmente: number;
+    documentosDocumentaisProntos: number;
+    revisaoDocumental: number;
+    financeiramenteAptos: number;
+    revisaoFinanceira: number;
     elegiveis: number;
     preparados: number;
     revisar: number;
@@ -159,8 +170,7 @@ function motivoCurto(motivos: string[]) {
     return "Planilha da usina requer revisão";
   if (motivo.startsWith("modalidade_operacional_nao_confirmada"))
     return "Modalidade operacional não confirmada";
-  if (motivo.startsWith("simulacao_central"))
-    return "Simulação requer revisão";
+  if (motivo.startsWith("simulacao_central")) return "Simulação requer revisão";
   if (motivo.startsWith("anexo_nao_disponivel"))
     return "PDF indisponível nesta captura";
   return "Revisar dados da fatura";
@@ -441,7 +451,10 @@ function PainelGmail() {
                     ativo={!pausada}
                   />
                 )}
-                <TriagemGmail contaId={conta.id} />
+                <details className="gmail-recursos-secundarios">
+                  <summary>Triagem e documentos históricos</summary>
+                  <TriagemGmail contaId={conta.id} />
+                </details>
               </article>
             );
           })}
@@ -575,6 +588,7 @@ function AcompanhamentoGmail({
       const resultado = await consultarServidor<{
         captura: CapturaPeriodo | null;
         documentos: number[];
+        preparacao: PreparacaoCentralLote | null;
       }>(`${base}/${contaId}/periodo/status`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -582,6 +596,7 @@ function AcompanhamentoGmail({
       });
       definirCapturaPeriodo(resultado.captura);
       definirDocumentosPeriodo(resultado.documentos);
+      definirPreparacaoCentral(resultado.preparacao);
     } catch (falha) {
       definirErro((falha as Error).message);
     }
@@ -624,7 +639,11 @@ function AcompanhamentoGmail({
     try {
       const resultado = await consultarServidor<PreparacaoCentralLote>(
         `${base}/${contaId}/capturas/${capturaPeriodo.id}/central/preparar`,
-        { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        },
       );
       definirPreparacaoCentral(resultado);
       definirEtapa("conferir");
@@ -644,6 +663,7 @@ function AcompanhamentoGmail({
         const resultado = await consultarServidor<{
           captura: CapturaPeriodo | null;
           documentos: number[];
+          preparacao: PreparacaoCentralLote | null;
         }>(`${base}/${contaId}/periodo/status`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -652,6 +672,7 @@ function AcompanhamentoGmail({
         if (resultado.captura) {
           definirCapturaPeriodo(resultado.captura);
           definirDocumentosPeriodo(resultado.documentos);
+          definirPreparacaoCentral(resultado.preparacao);
         } else window.setTimeout(consultarStatus, 1000);
       } catch (falha) {
         definirErro((falha as Error).message);
@@ -747,9 +768,20 @@ function AcompanhamentoGmail({
       .filter(Boolean)
       .join(" ")
       .toLocaleLowerCase("pt-BR");
+    const revisaoFinanceira =
+      item.modo !== "documental" && item.situacao === "revisar";
+    const correspondeAoStatus =
+      filtroSituacao === "todos" ||
+      (filtroSituacao === "pdf_pronto" && item.documental?.situacao === "pronto") ||
+      (filtroSituacao === "revisao_documental" &&
+        item.documental?.situacao !== "pronto") ||
+      (filtroSituacao === "apto_financeiramente" &&
+        item.modo === "financeiro" &&
+        item.situacao === "preparado") ||
+      (filtroSituacao === "revisao_financeira" && revisaoFinanceira);
     return (
       (!busca || texto.includes(busca)) &&
-      (filtroSituacao === "todos" || item.situacao === filtroSituacao) &&
+      correspondeAoStatus &&
       (filtroUsina === "todas" || item.simulacao?.usina === filtroUsina)
     );
   });
@@ -769,19 +801,17 @@ function AcompanhamentoGmail({
         </button>
       </div>
       <nav className="gmail-etapas" aria-label="Fluxo de faturamento Gmail">
-        {(["capturar", "preparar", "conferir"] as const).map(
-          (item, indice) => (
-            <button
-              key={item}
-              type="button"
-              className={`gmail-etapa ${etapa === item ? "ativa" : ""}`}
-              onClick={() => definirEtapa(item)}
-            >
-              <span>{indice + 1}</span>
-              {item.toUpperCase()}
-            </button>
-          ),
-        )}
+        {(["capturar", "preparar", "conferir"] as const).map((item, indice) => (
+          <button
+            key={item}
+            type="button"
+            className={`gmail-etapa ${etapa === item ? "ativa" : ""}`}
+            onClick={() => definirEtapa(item)}
+          >
+            <span>{indice + 1}</span>
+            {item.toUpperCase()}
+          </button>
+        ))}
       </nav>
       {consulta.erro && (
         <p className="admin-aviso erro" role="alert">
@@ -796,42 +826,380 @@ function AcompanhamentoGmail({
       <section className="gmail-fluxo-guiado">
         {etapa === "capturar" && (
           <div className="gmail-passo">
-            <div className="gmail-passo-cabecalho"><span>ETAPA 1</span><h5>Capturar</h5></div>
-            <p>Escolha o período de recebimento. O início é inclusivo e o fim exclusivo.</p>
+            <div className="gmail-passo-cabecalho">
+              <span>ETAPA 1</span>
+              <h5>Capturar</h5>
+            </div>
+            <p>
+              Escolha o período de recebimento. O início é inclusivo e o fim
+              exclusivo.
+            </p>
             <div className="admin-campos gmail-campos-periodo">
-              <label>Recebido a partir de<input type="datetime-local" value={periodo.inicio} onChange={(evento) => alterarPeriodo("inicio", evento.target.value)} /></label>
-              <label>Recebido antes de<input type="datetime-local" value={periodo.fim} onChange={(evento) => alterarPeriodo("fim", evento.target.value)} /></label>
+              <label>
+                Recebido a partir de
+                <input
+                  type="datetime-local"
+                  value={periodo.inicio}
+                  onChange={(evento) =>
+                    alterarPeriodo("inicio", evento.target.value)
+                  }
+                />
+              </label>
+              <label>
+                Recebido antes de
+                <input
+                  type="datetime-local"
+                  value={periodo.fim}
+                  onChange={(evento) =>
+                    alterarPeriodo("fim", evento.target.value)
+                  }
+                />
+              </label>
             </div>
             <div className="gmail-fluxo-acoes">
-              <button className="admin-botao secundario" type="button" onClick={aplicarAtalhoDiario} disabled={iniciando || consultandoPeriodo}>Ontem 08:00 → hoje 08:00</button>
-              {previaPeriodo ? <button className="admin-botao" type="button" onClick={capturarPeriodo} disabled={!ativo || iniciando}>Capturar e-mails da prévia</button> : <button className="admin-botao" type="button" onClick={consultarPreviaPeriodo} disabled={!ativo || iniciando || consultandoPeriodo}>{consultandoPeriodo ? "Consultando…" : "Consultar período"}</button>}
+              <button
+                className="admin-botao secundario"
+                type="button"
+                onClick={aplicarAtalhoDiario}
+                disabled={iniciando || consultandoPeriodo}
+              >
+                Ontem 08:00 → hoje 08:00
+              </button>
+              {previaPeriodo ? (
+                <button
+                  className="admin-botao"
+                  type="button"
+                  onClick={capturarPeriodo}
+                  disabled={!ativo || iniciando}
+                >
+                  Capturar e-mails da prévia
+                </button>
+              ) : (
+                <button
+                  className="admin-botao"
+                  type="button"
+                  onClick={consultarPreviaPeriodo}
+                  disabled={!ativo || iniciando || consultandoPeriodo}
+                >
+                  {consultandoPeriodo ? "Consultando…" : "Consultar período"}
+                </button>
+              )}
             </div>
-            {previaPeriodo && <p className="admin-aviso">Prévia: {previaPeriodo.emails} e-mails e {previaPeriodo.anexos} PDFs elegíveis.</p>}
-            {capturaPeriodo && <div className="gmail-resumo-captura"><strong>{capturaPeriodo.estado === "concluida" ? "Captura concluída" : capturaPeriodo.estado === "em_andamento" ? "Captura em andamento" : "Captura com falha"}</strong><span>{periodo.inicio} até {periodo.fim}</span><span>Recebidos {capturaPeriodo.anexos}</span><span>Capturados {capturaPeriodo.capturados}</span><span>Triagem {capturaPeriodo.triagem}</span>{capturaPeriodo.estado === "concluida" && <button className="admin-botao secundario" type="button" onClick={() => definirEtapa("preparar")}>Avançar</button>}</div>}
+            {previaPeriodo && (
+              <p className="admin-aviso">
+                Prévia: {previaPeriodo.emails} e-mails e {previaPeriodo.anexos}{" "}
+                PDFs elegíveis.
+              </p>
+            )}
+            {capturaPeriodo && (
+              <div className="gmail-resumo-captura">
+                <strong>
+                  {capturaPeriodo.estado === "concluida"
+                    ? "Captura concluída"
+                    : capturaPeriodo.estado === "em_andamento"
+                      ? "Captura em andamento"
+                      : "Captura com falha"}
+                </strong>
+                <span>
+                  {periodo.inicio} até {periodo.fim}
+                </span>
+                <span>Recebidos {capturaPeriodo.anexos}</span>
+                <span>Capturados {capturaPeriodo.capturados}</span>
+                <span>Triagem {capturaPeriodo.triagem}</span>
+                {capturaPeriodo.estado === "concluida" && (
+                  <button
+                    className="admin-botao secundario"
+                    type="button"
+                    onClick={() => definirEtapa("preparar")}
+                  >
+                    Avançar
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )}
         {etapa === "preparar" && (
           <div className="gmail-passo">
-            <div className="gmail-passo-cabecalho"><span>ETAPA 2</span><h5>Preparar</h5></div>
-            {capturaPeriodo?.estado === "concluida" ? <><p>Captura selecionada: <strong>{capturaPeriodo.capturados} PDFs</strong>. A preparação não aprova, não imprime e não altera arquivos oficiais.</p><button className="admin-botao" type="button" onClick={prepararLoteCentral} disabled={preparandoCentral}>{preparandoCentral ? "Preparando…" : "Preparar lote"}</button>{preparacaoCentral && <div className="gmail-resumo-captura"><span>Preparados {preparacaoCentral.resumo.preparados}</span><span>REVISAR {preparacaoCentral.resumo.revisar}</span><span>Falhas técnicas {preparacaoCentral.resumo.falhas}</span><button className="admin-botao secundario" type="button" onClick={() => definirEtapa("conferir")}>Conferir resultado</button></div>}</> : <p className="admin-aviso">Conclua ou consulte uma captura na etapa anterior.</p>}
+            <div className="gmail-passo-cabecalho">
+              <span>ETAPA 2</span>
+              <h5>Preparar</h5>
+            </div>
+            {capturaPeriodo?.estado === "concluida" ? (
+              <>
+                <p>
+                  Captura selecionada:{" "}
+                  <strong>{capturaPeriodo.capturados} PDFs</strong>. A
+                  preparação não aprova, não imprime e não altera arquivos
+                  oficiais.
+                </p>
+                <button
+                  className="admin-botao"
+                  type="button"
+                  onClick={prepararLoteCentral}
+                  disabled={preparandoCentral}
+                >
+                  {preparandoCentral ? "Preparando…" : "Preparar lote"}
+                </button>
+                {preparacaoCentral && (
+                  <div className="gmail-resumo-captura">
+                    <span>
+                      Preparados {preparacaoCentral.resumo.preparados}
+                    </span>
+                    <span>REVISAR {preparacaoCentral.resumo.revisar}</span>
+                    <span>
+                      Falhas técnicas {preparacaoCentral.resumo.falhas}
+                    </span>
+                    <button
+                      className="admin-botao secundario"
+                      type="button"
+                      onClick={() => definirEtapa("conferir")}
+                    >
+                      Conferir resultado
+                    </button>
+                  </div>
+                )}
+              </>
+            ) : (
+              <p className="admin-aviso">
+                Conclua ou consulte uma captura na etapa anterior.
+              </p>
+            )}
           </div>
         )}
         {etapa === "conferir" && (
           <div className="gmail-passo">
-            <div className="gmail-passo-cabecalho"><span>ETAPA 3</span><h5>Conferir</h5></div>
-            {!preparacaoCentral ? <p className="admin-aviso">Prepare o lote para disponibilizar a conferência.</p> : <>
-              <div className="gmail-indicadores"><span>Localizados <strong>{preparacaoCentral.resumo.elegiveis}</strong></span><span>Preparados <strong>{preparacaoCentral.resumo.preparados}</strong></span><span>REVISAR <strong>{preparacaoCentral.resumo.revisar}</strong></span><span>Falhas <strong>{preparacaoCentral.resumo.falhas}</strong></span><span>PDFs prontos <strong>{preparacaoCentral.resumo.pdfsProntosParaImpressao}</strong></span></div>
-              <div className="gmail-filtros"><label>Buscar cliente ou UC<input value={buscaPreparacao} onChange={(evento) => { definirBuscaPreparacao(evento.target.value); definirPaginaPreparacao(1); }} placeholder="Nome ou UC" /></label><label>Status<select value={filtroSituacao} onChange={(evento) => { definirFiltroSituacao(evento.target.value); definirPaginaPreparacao(1); }}><option value="todos">Todos</option><option value="preparado">Preparados</option><option value="revisar">Em revisão</option></select></label><label>Usina<select value={filtroUsina} onChange={(evento) => { definirFiltroUsina(evento.target.value); definirPaginaPreparacao(1); }}><option value="todas">Todas</option>{usinasPreparacao.map((usina) => <option key={usina}>{usina}</option>)}</select></label></div>
-              <div className="gmail-tabela"><div className="gmail-tabela-cabecalho"><span>Documento</span><span>Cliente / UC</span><span>Usina / competência</span><span>Boleto</span><span>Status</span><span>Ação</span></div>{itensDaPagina.map((item) => <article className="gmail-linha-preparacao" key={item.id}><span data-label="Documento">{item.nome}</span><span data-label="Cliente / UC">{item.simulacao?.cliente ?? "Não identificado"}<small>UC {item.simulacao?.ucNova ?? item.simulacao?.ucAntiga ?? "não encontrada"}</small></span><span data-label="Usina / competência">{item.simulacao?.usina ?? "Não identificada"}<small>{item.simulacao?.mesFaturamento ?? item.competencia ?? "Competência não encontrada"}</small></span><span data-label="Boleto">{item.modo === "documental" ? "Sem boleto" : item.simulacao?.valorBoleto ? moeda(item.simulacao.valorBoleto) : "—"}</span><span data-label="Status" className={`gmail-status-preparacao ${item.situacao}`}>{item.situacao === "preparado" ? "Preparado" : motivoCurto(item.motivos)}{item.situacao === "revisar" && <details><summary>Detalhe</summary><code>{item.motivos.join(", ")}</code></details>}</span><Link className="admin-botao secundario" to={`/admin/faturas?etapa=conferir&documento=${item.id}`}>Conferir</Link></article>)}</div>
-              {!itensDaPagina.length && <ListaVazia texto="Nenhum documento corresponde aos filtros." />}
-              <div className="gmail-paginacao"><button className="admin-botao secundario" type="button" disabled={pagina <= 1} onClick={() => definirPaginaPreparacao(pagina - 1)}>Anterior</button><span>Página {pagina} de {totalPaginas}</span><button className="admin-botao secundario" type="button" disabled={pagina >= totalPaginas} onClick={() => definirPaginaPreparacao(pagina + 1)}>Próxima</button></div>
-            </>}
+            <div className="gmail-passo-cabecalho">
+              <span>ETAPA 3</span>
+              <h5>Conferir</h5>
+            </div>
+            {!preparacaoCentral ? (
+              <p className="admin-aviso">
+                Prepare o lote para disponibilizar a conferência.
+              </p>
+            ) : (
+              <>
+                <div className="gmail-indicadores">
+                  <span>
+                    Identificados{" "}
+                    <strong>{preparacaoCentral.resumo.identificadosDocumentalmente}</strong>
+                  </span>
+                  <span>
+                    PDFs preparados{" "}
+                    <strong>{preparacaoCentral.resumo.documentosDocumentaisProntos}</strong>
+                  </span>
+                  <span>
+                    Revisão documental <strong>{preparacaoCentral.resumo.revisaoDocumental}</strong>
+                  </span>
+                  <span>
+                    Aptos financeiramente <strong>{preparacaoCentral.resumo.financeiramenteAptos}</strong>
+                  </span>
+                  <span>
+                    Revisão financeira <strong>{preparacaoCentral.resumo.revisaoFinanceira}</strong>
+                  </span>
+                </div>
+                <div className="gmail-filtros">
+                  <label>
+                    Buscar cliente ou UC
+                    <input
+                      value={buscaPreparacao}
+                      onChange={(evento) => {
+                        definirBuscaPreparacao(evento.target.value);
+                        definirPaginaPreparacao(1);
+                      }}
+                      placeholder="Nome ou UC"
+                    />
+                  </label>
+                  <label>
+                    Status
+                    <select
+                      value={filtroSituacao}
+                      onChange={(evento) => {
+                        definirFiltroSituacao(evento.target.value);
+                        definirPaginaPreparacao(1);
+                      }}
+                    >
+                      <option value="todos">Todos</option>
+                      <option value="pdf_pronto">PDFs preparados</option>
+                      <option value="revisao_documental">Revisão documental</option>
+                      <option value="apto_financeiramente">
+                        Aptos financeiramente
+                      </option>
+                      <option value="revisao_financeira">
+                        Revisão financeira
+                      </option>
+                    </select>
+                  </label>
+                  <label>
+                    Usina
+                    <select
+                      value={filtroUsina}
+                      onChange={(evento) => {
+                        definirFiltroUsina(evento.target.value);
+                        definirPaginaPreparacao(1);
+                      }}
+                    >
+                      <option value="todas">Todas</option>
+                      {usinasPreparacao.map((usina) => (
+                        <option key={usina}>{usina}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <div className="gmail-tabela">
+                  <div className="gmail-tabela-cabecalho">
+                    <span>Documento</span>
+                    <span>Cliente / UC</span>
+                    <span>Usina / competência</span>
+                    <span>Boleto</span>
+                    <span>Status</span>
+                    <span>Ação</span>
+                  </div>
+                  {itensDaPagina.map((item) => (
+                    <article className="gmail-linha-preparacao" key={item.id}>
+                      <span data-label="Documento">{item.nome}</span>
+                      <span data-label="Cliente / UC">
+                        {item.simulacao?.cliente ?? "Não identificado"}
+                        <small>
+                          UC{" "}
+                          {item.simulacao?.ucNova ??
+                            item.simulacao?.ucAntiga ??
+                            "não encontrada"}
+                        </small>
+                      </span>
+                      <span data-label="Usina / competência">
+                        {item.simulacao?.usina ?? "Não identificada"}
+                        <small>
+                          {item.simulacao?.mesFaturamento ??
+                            item.simulacao?.competencia ??
+                            item.competencia ??
+                            "Competência não encontrada"}
+                        </small>
+                      </span>
+                      <span data-label="Boleto">
+                        {item.modo === "documental"
+                          ? "Sem boleto"
+                          : item.simulacao?.valorBoleto
+                            ? moeda(item.simulacao.valorBoleto)
+                            : "—"}
+                      </span>
+                      <span
+                        data-label="Status"
+                        className="gmail-status-preparacao"
+                      >
+                        <span className={`gmail-status-documental ${item.documental?.situacao ?? "revisar"}`}>
+                          <small>Documento</small>
+                          {item.documental?.situacao === "pronto"
+                            ? "PDF preparado"
+                            : "Revisar documento"}
+                        </span>
+                        <span
+                          className={`gmail-status-financeiro ${
+                            item.modo === "documental"
+                              ? "documental"
+                              : item.modo === "financeiro" && item.situacao === "preparado"
+                                ? "apto"
+                                : "revisar"
+                          }`}
+                        >
+                          <small>Financeiro</small>
+                          {item.modo === "documental"
+                            ? "Sem boleto"
+                            : item.modo === "financeiro" && item.situacao === "preparado"
+                              ? "Apto para avaliação"
+                              : motivoCurto(item.motivos)}
+                        </span>
+                        {item.documental?.situacao === "revisar" && (
+                          <small className="gmail-motivo-documental">
+                            {motivoCurto([item.documental.motivo ?? ""])}
+                          </small>
+                        )}
+                        {item.situacao === "revisar" && item.modo !== "documental" && (
+                          <details>
+                            <summary>Detalhe</summary>
+                            <code>{item.motivos.join(", ")}</code>
+                          </details>
+                        )}
+                      </span>
+                      <span className="gmail-acoes-preparacao">
+                        {item.documental?.situacao === "pronto" && capturaPeriodo && (
+                          <>
+                            <a
+                              className="admin-botao secundario"
+                              href={`${base}/${contaId}/capturas/${capturaPeriodo.id}/central/documentos/${item.id}/pdf`}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Abrir PDF
+                            </a>
+                            <a
+                              className="admin-botao secundario"
+                              href={`${base}/${contaId}/capturas/${capturaPeriodo.id}/central/documentos/${item.id}/impressao`}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              A4 simulado
+                            </a>
+                          </>
+                        )}
+                        <Link
+                          className="admin-botao secundario"
+                          to={`/admin/faturas?etapa=conferir&documento=${item.id}`}
+                        >
+                          Conferir
+                        </Link>
+                      </span>
+                    </article>
+                  ))}
+                </div>
+                {!itensDaPagina.length && (
+                  <ListaVazia texto="Nenhum documento corresponde aos filtros." />
+                )}
+                <div className="gmail-paginacao">
+                  <button
+                    className="admin-botao secundario"
+                    type="button"
+                    disabled={pagina <= 1}
+                    onClick={() => definirPaginaPreparacao(pagina - 1)}
+                  >
+                    Anterior
+                  </button>
+                  <span>
+                    Página {pagina} de {totalPaginas}
+                  </span>
+                  <button
+                    className="admin-botao secundario"
+                    type="button"
+                    disabled={pagina >= totalPaginas}
+                    onClick={() => definirPaginaPreparacao(pagina + 1)}
+                  >
+                    Próxima
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         )}
       </section>
       <details className="gmail-recursos-secundarios">
         <summary>Histórico, sincronização e opções secundárias</summary>
-        <div className="gmail-conta-acoes"><button className="admin-botao secundario" type="button" onClick={sincronizar} disabled={!ativo || iniciando || progresso?.emAndamento}>{iniciando ? "Iniciando…" : "Sincronizar agora"}</button><button className="admin-botao secundario" type="button" onClick={consultarSituacaoPeriodo}>Consultar situação do período</button></div>
+        <div className="gmail-conta-acoes">
+          <button
+            className="admin-botao secundario"
+            type="button"
+            onClick={sincronizar}
+            disabled={!ativo || iniciando || progresso?.emAndamento}
+          >
+            {iniciando ? "Iniciando…" : "Sincronizar agora"}
+          </button>
+          <button
+            className="admin-botao secundario"
+            type="button"
+            onClick={consultarSituacaoPeriodo}
+          >
+            Consultar situação do período
+          </button>
+        </div>
       </details>
       {progresso && (
         <details className="gmail-legado-recolhido">
@@ -1020,55 +1388,93 @@ function AcompanhamentoGmail({
                 ) : null}
               </p>
             )}
-            {capturaPeriodo?.estado === "concluida" && capturaPeriodo.id > 0 && (
-              <section className="gmail-periodo" aria-label="Preparação Central do lote">
-                <div className="admin-barra">
-                  <h5>Preparação Central</h5>
-                  <button
-                    className="admin-botao"
-                    type="button"
-                    onClick={prepararLoteCentral}
-                    disabled={preparandoCentral}
-                  >
-                    {preparandoCentral ? "Preparando…" : "Preparar lote"}
-                  </button>
-                </div>
-                <p>
-                  Usa exclusivamente os PDFs vinculados a este período. A preparação
-                  é somente leitura e não aprova, imprime ou altera arquivos oficiais.
-                </p>
-                {preparacaoCentral && (
-                  <>
-                    <p role="status">
-                      Capturados: {preparacaoCentral.resumo.totalCapturado}; elegíveis: {preparacaoCentral.resumo.elegiveis}; preparados: {preparacaoCentral.resumo.preparados}; REVISAR: {preparacaoCentral.resumo.revisar}; processados: {preparacaoCentral.resumo.processados}; falhas: {preparacaoCentral.resumo.falhas}; PDFs prontos para impressão: {preparacaoCentral.resumo.pdfsProntosParaImpressao}.
-                    </p>
-                    <div className="gmail-triagem-lote">
-                      {preparacaoCentral.itens.map((item) => (
-                        <article className="gmail-triagem-item" key={item.id}>
-                          <span>
-                            <strong>{item.nome}</strong> · {item.situacao === "preparado" ? `PREPARADO (${item.modo})` : `REVISAR: ${item.motivos.join(", ")}`}
-                            {item.simulacao && (
-                              <>
-                                <br />
-                                UC antiga {item.simulacao.ucAntiga ?? "não encontrada"} · UC {item.simulacao.ucNova ?? "não encontrada"} · {item.simulacao.cliente ?? "cliente não encontrado"} · {item.simulacao.usina ?? "usina não encontrada"} · competência {item.simulacao.mesFaturamento ?? item.competencia ?? "não encontrada"}
-                                <br />
-                                Planilha {item.simulacao.planilha ?? "não encontrada"} · aba {item.simulacao.aba ?? "não encontrada"} · linha {item.simulacao.linha ?? "não encontrada"} · {item.modo === "financeiro" ? item.simulacao.valorBoleto ? `valor simulado R$ ${item.simulacao.valorBoleto}` : "valor não encontrado" : "fluxo documental — sem cálculo de boleto"}
-                              </>
-                            )}
-                          </span>
-                          <Link
-                            className="admin-botao secundario"
-                            to={`/admin/faturas?etapa=conferir&documento=${item.id}`}
-                          >
-                            Ver documento
-                          </Link>
-                        </article>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </section>
-            )}
+            {capturaPeriodo?.estado === "concluida" &&
+              capturaPeriodo.id > 0 && (
+                <section
+                  className="gmail-periodo"
+                  aria-label="Preparação Central do lote"
+                >
+                  <div className="admin-barra">
+                    <h5>Preparação Central</h5>
+                    <button
+                      className="admin-botao"
+                      type="button"
+                      onClick={prepararLoteCentral}
+                      disabled={preparandoCentral}
+                    >
+                      {preparandoCentral ? "Preparando…" : "Preparar lote"}
+                    </button>
+                  </div>
+                  <p>
+                    Usa exclusivamente os PDFs vinculados a este período. A
+                    preparação é somente leitura e não aprova, imprime ou altera
+                    arquivos oficiais.
+                  </p>
+                  {preparacaoCentral && (
+                    <>
+                      <p role="status">
+                        Capturados: {preparacaoCentral.resumo.totalCapturado};
+                        elegíveis: {preparacaoCentral.resumo.elegiveis};
+                        preparados: {preparacaoCentral.resumo.preparados};
+                        REVISAR: {preparacaoCentral.resumo.revisar};
+                        processados: {preparacaoCentral.resumo.processados};
+                        falhas: {preparacaoCentral.resumo.falhas}; PDFs prontos
+                        para impressão:{" "}
+                        {preparacaoCentral.resumo.pdfsProntosParaImpressao}.
+                      </p>
+                      <div className="gmail-triagem-lote">
+                        {preparacaoCentral.itens.map((item) => (
+                          <article className="gmail-triagem-item" key={item.id}>
+                            <span>
+                              <strong>{item.nome}</strong> ·{" "}
+                              {item.situacao === "preparado"
+                                ? `PREPARADO (${item.modo})`
+                                : `REVISAR: ${item.motivos.join(", ")}`}
+                              {item.simulacao && (
+                                <>
+                                  <br />
+                                  UC antiga{" "}
+                                  {item.simulacao.ucAntiga ??
+                                    "não encontrada"}{" "}
+                                  · UC{" "}
+                                  {item.simulacao.ucNova ?? "não encontrada"} ·{" "}
+                                  {item.simulacao.cliente ??
+                                    "cliente não encontrado"}{" "}
+                                  ·{" "}
+                                  {item.simulacao.usina ??
+                                    "usina não encontrada"}{" "}
+                                  · competência{" "}
+                                  {item.simulacao.mesFaturamento ??
+                                    item.competencia ??
+                                    "não encontrada"}
+                                  <br />
+                                  Planilha{" "}
+                                  {item.simulacao.planilha ??
+                                    "não encontrada"}{" "}
+                                  · aba {item.simulacao.aba ?? "não encontrada"}{" "}
+                                  · linha{" "}
+                                  {item.simulacao.linha ?? "não encontrada"} ·{" "}
+                                  {item.modo === "financeiro"
+                                    ? item.simulacao.valorBoleto
+                                      ? `valor simulado R$ ${item.simulacao.valorBoleto}`
+                                      : "valor não encontrado"
+                                    : "fluxo documental — sem cálculo de boleto"}
+                                </>
+                              )}
+                            </span>
+                            <Link
+                              className="admin-botao secundario"
+                              to={`/admin/faturas?etapa=conferir&documento=${item.id}`}
+                            >
+                              Ver documento
+                            </Link>
+                          </article>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </section>
+              )}
           </section>
           {pendencias.dados?.mensagens.length ||
           pendencias.dados?.anexos.length ? (
@@ -1358,131 +1764,137 @@ function TriagemGmail({ contaId }: { contaId: number }) {
       ?.quantidade ?? 0;
   return (
     <section className="gmail-triagem">
-      {idsConferencia ? <section
-        className="gmail-periodo"
-        aria-label="Conferência do lote selecionado"
-      >
-        <div className="admin-barra">
-          <h4>Lote Gmail selecionado</h4>
-          <button
-            className="admin-botao secundario"
-            type="button"
-            onClick={conferencia.atualizar}
-          >
-            Atualizar prévia
-          </button>
-          <button
-            className="admin-botao secundario"
-            type="button"
-            disabled={simulandoCentral}
-            onClick={carregarSimulacaoCentral}
-          >
-            {simulandoCentral ? "Simulando…" : "Simular valores da Central"}
-          </button>
-        </div>
-        <p>
-          Prévia somente leitura dos documentos vinculados ao período. A
-          simulação usa o motor da Central sem gravar planilhas, PDFs ou
-          cobranças. Ela não é aprovação financeira.
-        </p>
-        {conferencia.erro && (
-          <p className="admin-aviso erro" role="alert">
-            {conferencia.erro}
+      {idsConferencia ? (
+        <section
+          className="gmail-periodo"
+          aria-label="Conferência do lote selecionado"
+        >
+          <div className="admin-barra">
+            <h4>Lote Gmail selecionado</h4>
+            <button
+              className="admin-botao secundario"
+              type="button"
+              onClick={conferencia.atualizar}
+            >
+              Atualizar prévia
+            </button>
+            <button
+              className="admin-botao secundario"
+              type="button"
+              disabled={simulandoCentral}
+              onClick={carregarSimulacaoCentral}
+            >
+              {simulandoCentral ? "Simulando…" : "Simular valores da Central"}
+            </button>
+          </div>
+          <p>
+            Prévia somente leitura dos documentos vinculados ao período. A
+            simulação usa o motor da Central sem gravar planilhas, PDFs ou
+            cobranças. Ela não é aprovação financeira.
           </p>
-        )}
-        {conferencia.dados && (
-          <>
-            <p>
-              {
-                conferencia.dados.itens.filter(
-                  (item) => item.situacao === "vinculo_seguro",
-                ).length
-              }{" "}
-              com vínculo seguro ·{" "}
-              {
-                conferencia.dados.itens.filter(
-                  (item) => item.situacao === "revisar",
-                ).length
-              }{" "}
-              exigem revisão.
+          {conferencia.erro && (
+            <p className="admin-aviso erro" role="alert">
+              {conferencia.erro}
             </p>
-            {conferencia.dados.itens.map((item) => (
-              <div className="gmail-triagem-item" key={item.id}>
-                <span>
-                  <strong>{item.nome}</strong> · UC {item.uc ?? "não extraída"}{" "}
-                  · {item.competencia ?? "sem competência"} ·{" "}
-                  {item.cliente ?? "SEM CLIENTE"} · {item.usina ?? "SEM USINA"}
-                  <br />
-                  Gmail: {item.messageId} · registrado em {item.recebidoEm} UTC
-                  <br />
-                  Nome cadastral proposto:{" "}
-                  {item.nomeProposto ??
-                    "não proposto — revise o vínculo"} ·{" "}
-                  {item.situacao === "vinculo_seguro"
-                    ? "Vínculo seguro"
-                    : "REVISAR"}
-                  {simulacoes[item.id] && (
-                    <>
-                      <br />
-                      Simulação Central: cliente{" "}
-                      {item.cliente ?? "não encontrado"}
-                      {" · "}UC{" "}
-                      {simulacoes[item.id].ucNova ??
-                        item.uc ??
-                        "não encontrada"}
-                      {" · "}usina {item.usina ?? "não encontrada"}
-                      {" · "}competência {item.competencia ?? "não encontrada"}
-                      {" · "}consumo{" "}
-                      {simulacoes[item.id].dadosFatura?.energia ??
-                        "não encontrado"}{" "}
-                      kWh
-                      {" · "}tarifa{" "}
-                      {moeda(simulacoes[item.id].dadosFatura?.tarifa)}
-                      {" · "}desconto{" "}
-                      {simulacoes[item.id].descontoContratual ??
-                        "não encontrado"}
-                      {" · "}valor simulado{" "}
-                      {moeda(simulacoes[item.id].valorBoleto)}
-                      <br />
-                      {simulacoes[item.id].situacao === "simulada"
-                        ? "Simulação válida — aguarda encaminhamento e aprovação humana em Faturas."
-                        : `REVISAR: ${simulacoes[item.id].motivos?.join(", ") || simulacoes[item.id].motivo || "motivo não informado"}`}
-                    </>
-                  )}
-                </span>
-                <a
-                  className="admin-botao secundario"
-                  href={`${base}/${contaId}/triagem/${item.id}/pdf`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  Abrir PDF
-                </a>
-                {item.previaCentralDisponivel ? (
+          )}
+          {conferencia.dados && (
+            <>
+              <p>
+                {
+                  conferencia.dados.itens.filter(
+                    (item) => item.situacao === "vinculo_seguro",
+                  ).length
+                }{" "}
+                com vínculo seguro ·{" "}
+                {
+                  conferencia.dados.itens.filter(
+                    (item) => item.situacao === "revisar",
+                  ).length
+                }{" "}
+                exigem revisão.
+              </p>
+              {conferencia.dados.itens.map((item) => (
+                <div className="gmail-triagem-item" key={item.id}>
+                  <span>
+                    <strong>{item.nome}</strong> · UC{" "}
+                    {item.uc ?? "não extraída"} ·{" "}
+                    {item.competencia ?? "sem competência"} ·{" "}
+                    {item.cliente ?? "SEM CLIENTE"} ·{" "}
+                    {item.usina ?? "SEM USINA"}
+                    <br />
+                    Gmail: {item.messageId} · registrado em {item.recebidoEm}{" "}
+                    UTC
+                    <br />
+                    Nome cadastral proposto:{" "}
+                    {item.nomeProposto ??
+                      "não proposto — revise o vínculo"} ·{" "}
+                    {item.situacao === "vinculo_seguro"
+                      ? "Vínculo seguro"
+                      : "REVISAR"}
+                    {simulacoes[item.id] && (
+                      <>
+                        <br />
+                        Simulação Central: cliente{" "}
+                        {item.cliente ?? "não encontrado"}
+                        {" · "}UC{" "}
+                        {simulacoes[item.id].ucNova ??
+                          item.uc ??
+                          "não encontrada"}
+                        {" · "}usina {item.usina ?? "não encontrada"}
+                        {" · "}competência{" "}
+                        {item.competencia ?? "não encontrada"}
+                        {" · "}consumo{" "}
+                        {simulacoes[item.id].dadosFatura?.energia ??
+                          "não encontrado"}{" "}
+                        kWh
+                        {" · "}tarifa{" "}
+                        {moeda(simulacoes[item.id].dadosFatura?.tarifa)}
+                        {" · "}desconto{" "}
+                        {simulacoes[item.id].descontoContratual ??
+                          "não encontrado"}
+                        {" · "}valor simulado{" "}
+                        {moeda(simulacoes[item.id].valorBoleto)}
+                        <br />
+                        {simulacoes[item.id].situacao === "simulada"
+                          ? "Simulação válida — aguarda encaminhamento e aprovação humana em Faturas."
+                          : `REVISAR: ${simulacoes[item.id].motivos?.join(", ") || simulacoes[item.id].motivo || "motivo não informado"}`}
+                      </>
+                    )}
+                  </span>
                   <a
                     className="admin-botao secundario"
-                    href={`${base}/${contaId}/triagem/${item.id}/previa-central`}
+                    href={`${base}/${contaId}/triagem/${item.id}/pdf`}
                     target="_blank"
                     rel="noopener noreferrer"
                   >
-                    Abrir prévia Central
+                    Abrir PDF
                   </a>
-                ) : null}
-                {simulacoes[item.id]?.situacao === "simulada" ? (
-                  <button
-                    className="admin-botao secundario"
-                    type="button"
-                    disabled={ocupado}
-                    onClick={() => encaminharSimulado(item)}
-                  >
-                    Encaminhar para Faturas
-                  </button>
-                ) : null}
-              </div>
-            ))}
-          </>
-        )}
-      </section> : null}
+                  {item.previaCentralDisponivel ? (
+                    <a
+                      className="admin-botao secundario"
+                      href={`${base}/${contaId}/triagem/${item.id}/previa-central`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Abrir prévia Central
+                    </a>
+                  ) : null}
+                  {simulacoes[item.id]?.situacao === "simulada" ? (
+                    <button
+                      className="admin-botao secundario"
+                      type="button"
+                      disabled={ocupado}
+                      onClick={() => encaminharSimulado(item)}
+                    >
+                      Encaminhar para Faturas
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+            </>
+          )}
+        </section>
+      ) : null}
       <div className="admin-barra">
         <h4>Triagem de PDFs</h4>
         <button
