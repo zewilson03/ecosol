@@ -29,6 +29,36 @@ type Recebimento = {
   dados: Record<string, string> | null;
   memoria: Memoria | null;
 };
+type SimulacaoCentral = {
+  documento: number;
+  situacao: "simulada" | "revisar";
+  motivos: string[];
+  ucAntiga?: string;
+  ucNova?: string;
+  mesFaturamento?: string;
+  cliente?: string;
+  usina?: string;
+  planilha?: string;
+  aba?: string;
+  linha?: number;
+  celula?: string;
+  dadosFatura?: {
+    energia?: string;
+    tarifa?: string;
+    equatorial?: string;
+    juros?: string;
+    multa?: string;
+    gdii?: string;
+  };
+  descontoContratual?: string;
+  formula?: string;
+  valorBoleto?: string;
+};
+type ProcessamentoCentral = {
+  id: string;
+  estado: "em_andamento" | "concluido" | "revisar" | "falhou";
+  resultado?: { pdfs?: { pdf_final: string }[] } | null;
+};
 const base = "/api/admin/faturamento/documentos";
 const aprovada = "Aprovada — aguardando emissão";
 const normalizarBuscaCliente = (valor: string) =>
@@ -101,6 +131,11 @@ export default function PreparacaoFaturas() {
   const [ocupado, setOcupado] = useState(false);
   const [erro, setErro] = useState("");
   const [mensagem, setMensagem] = useState("");
+  const [simulacaoCentral, setSimulacaoCentral] =
+    useState<SimulacaoCentral | null>(null);
+  const [simulandoCentral, setSimulandoCentral] = useState(false);
+  const [processamentoCentral, setProcessamentoCentral] =
+    useState<ProcessamentoCentral | null>(null);
   const [busca, setBusca] = useState("");
   const [filtro, setFiltro] = useState("");
   const [renomeando, setRenomeando] = useState<{
@@ -206,6 +241,8 @@ export default function PreparacaoFaturas() {
     );
     setSugestoesAbertas(false);
     setSugestaoAtiva(0);
+    setSimulacaoCentral(null);
+    setProcessamentoCentral(null);
     setAlterado(false);
   }
   async function abrir(numero: number) {
@@ -484,6 +521,63 @@ export default function PreparacaoFaturas() {
         setErro(
           `${falhas.length} fatura(s) não foram reanalisadas (IDs ${falhas.join(", ")}). Atualize a fila e tente novamente.`,
         );
+    } finally {
+      setOcupado(false);
+    }
+  }
+  async function consultarSimulacaoCentral() {
+    if (!selecionado) return;
+    setOcupado(true);
+    setSimulandoCentral(true);
+    setErro("");
+    setMensagem("");
+    try {
+      const resultado = await consultarServidor<SimulacaoCentral>(
+        `${base}/${selecionado.id}/simulacao-central`,
+      );
+      setSimulacaoCentral(resultado);
+      setMensagem(
+        resultado.situacao === "simulada"
+          ? "Simulação da Central carregada. Ela ainda exige conferência e aprovação humana."
+          : "A Central encontrou pendências: revise os motivos antes de calcular.",
+      );
+    } catch (e) {
+      setSimulacaoCentral(null);
+      setErro((e as Error).message);
+    } finally {
+      setSimulandoCentral(false);
+      setOcupado(false);
+    }
+  }
+  async function processarCentralEmHomologacao() {
+    if (!selecionado || !simulacaoCentral) return;
+    if (
+      !window.confirm(
+        "Confirmar processamento em HOMOLOGAÇÃO? Serão criadas apenas cópias locais da planilha e dos PDFs; nenhum arquivo oficial será alterado ou impresso.",
+      )
+    )
+      return;
+    setOcupado(true);
+    setErro("");
+    try {
+      const resultado = await consultarServidor<ProcessamentoCentral>(
+        `${base}/${selecionado.id}/processamento-central/homologar`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            versao: selecionado.versao,
+            confirmar: true,
+            confirmacao: "PROCESSAR EM HOMOLOGAÇÃO",
+          }),
+        },
+      );
+      setProcessamentoCentral(resultado);
+      setMensagem(
+        "Homologação Central concluída com cópias locais auditáveis.",
+      );
+    } catch (e) {
+      setErro((e as Error).message);
     } finally {
       setOcupado(false);
     }
@@ -1206,6 +1300,140 @@ export default function PreparacaoFaturas() {
                 </details>
               )}
               <div className="faturamento-conferencia">
+                <section className="faturamento-grupo faturamento-grupo--ecosol">
+                  <div className="faturamento-grupo-titulo">
+                    <span>◌</span>
+                    <div>
+                      <small>SIMULAÇÃO SOMENTE LEITURA</small>
+                      <h3>Referência da Central de Faturas</h3>
+                      <p>
+                        Identificação, condições comerciais e valor calculados
+                        pelo motor original; não aprova cadastro ou cobrança.
+                      </p>
+                    </div>
+                  </div>
+                  {nivel >= 2 ? (
+                    <button
+                      type="button"
+                      className="admin-botao secundario"
+                      disabled={ocupado || simulandoCentral}
+                      onClick={consultarSimulacaoCentral}
+                    >
+                      {simulandoCentral
+                        ? "Consultando Central…"
+                        : "Consultar simulação Central"}
+                    </button>
+                  ) : (
+                    <small>
+                      Solicite a um administrador de nível 2 a consulta.
+                    </small>
+                  )}
+                  {simulacaoCentral && (
+                    <div
+                      className={`admin-aviso ${simulacaoCentral.situacao === "revisar" ? "erro" : "sucesso"}`}
+                      role="status"
+                    >
+                      <strong>
+                        {simulacaoCentral.situacao === "simulada"
+                          ? "Simulação disponível para conferência"
+                          : "REVISAR antes de qualquer cálculo"}
+                      </strong>
+                      <p>
+                        UC antiga:{" "}
+                        {simulacaoCentral.ucAntiga ?? "não encontrada"}
+                        {" · "}UC atual:{" "}
+                        {simulacaoCentral.ucNova ?? "não encontrada"}
+                        {" · "}Cliente:{" "}
+                        {simulacaoCentral.cliente ?? "não encontrado"}
+                        {" · "}Usina:{" "}
+                        {simulacaoCentral.usina ?? "não encontrada"}
+                        {" · "}mês pelo vencimento:{" "}
+                        {simulacaoCentral.mesFaturamento ?? "não encontrado"}.
+                      </p>
+                      <p>
+                        Fonte: {simulacaoCentral.planilha ?? "não encontrada"}
+                        {" · "}aba {simulacaoCentral.aba ?? "—"}
+                        {" · "}linha {simulacaoCentral.linha ?? "—"}
+                        {" · "}célula {simulacaoCentral.celula ?? "—"}.
+                      </p>
+                      {simulacaoCentral.situacao === "simulada" ? (
+                        <>
+                          <p>
+                            PDF: {simulacaoCentral.dadosFatura?.energia ?? "—"}{" "}
+                            kWh
+                            {" · "}tarifa R${" "}
+                            {simulacaoCentral.dadosFatura?.tarifa ?? "—"}
+                            {" · "}Equatorial R${" "}
+                            {simulacaoCentral.dadosFatura?.equatorial ?? "—"}
+                            {" · "}desconto{" "}
+                            {simulacaoCentral.descontoContratual ?? "—"}%{" · "}
+                            boleto R$ {simulacaoCentral.valorBoleto ?? "—"}.
+                          </p>
+                          <a
+                            className="admin-botao secundario"
+                            href={`${base}/${selecionado.id}/previa-central`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            Abrir prévia Central
+                          </a>
+                          {nivel >= 3 && selecionado.status === aprovada && (
+                            <button
+                              type="button"
+                              className="admin-botao secundario"
+                              disabled={ocupado}
+                              onClick={processarCentralEmHomologacao}
+                            >
+                              Processar Central em homologação
+                            </button>
+                          )}
+                          {processamentoCentral && (
+                            <p>
+                              Homologação: {processamentoCentral.estado}.
+                              {processamentoCentral.estado === "concluido" && (
+                                <>
+                                  {" "}
+                                  <a
+                                    href={`/api/admin/faturamento/processamentos-central/${processamentoCentral.id}/artefatos/pdf`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    Abrir PDF final de homologação
+                                  </a>
+                                  {" · "}
+                                  <a
+                                    href={`/api/admin/faturamento/processamentos-central/${processamentoCentral.id}/artefatos/impressao`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    Abrir A4 para impressão simulada
+                                  </a>
+                                </>
+                              )}
+                            </p>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <p>
+                            PDF: {simulacaoCentral.dadosFatura?.energia ?? "—"}{" "}
+                            kWh
+                            {" · "}tarifa R${" "}
+                            {simulacaoCentral.dadosFatura?.tarifa ?? "—"}
+                            {" · "}Equatorial R${" "}
+                            {simulacaoCentral.dadosFatura?.equatorial ?? "—"}.
+                          </p>
+                          <p>
+                            Motivos:{" "}
+                            {simulacaoCentral.motivos.join(", ") ||
+                              "não informado"}
+                            .
+                          </p>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </section>
                 <section
                   id="conferencia-cadastro"
                   className={`faturamento-grupo faturamento-grupo--cadastro ${sugestoesAbertas && termoCliente ? "sugestoes-abertas" : ""}`}

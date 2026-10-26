@@ -1,6 +1,14 @@
 import express, { Router } from "express";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { obterBanco } from "../bancoDeDados.mjs";
+import {
+  executarSimulacaoCentral,
+  executarProcessamentoCentralHomologacao,
+  gerarPreviaCentralTemporaria,
+  modoTemporarioDeHomologacaoCentral,
+} from "../centralFaturas.mjs";
 import { exigirNivel } from "../permissoesDaEquipe.mjs";
 import { apenasDigitos, cpfValidoParaCadastro } from "../validacaoDeCpf.mjs";
 import { validarContatoCliente } from "../validacaoDeContato.mjs";
@@ -9,6 +17,12 @@ import { identificarUsinaPorGeracao } from "./identificadoresUsinas.mjs";
 import { receberPdf } from "./receberPdf.mjs";
 import { listarLotes } from "./lotes.mjs";
 import { reanalisarFatura } from "./reanalisar.mjs";
+import { simularDocumentoCentral } from "./simulacaoCentral.mjs";
+import {
+  concluirProcessamentoCentral,
+  iniciarProcessamentoCentral,
+  processamentoCentralSeguro,
+} from "./processamentoCentral.mjs";
 import { registrarHistorico, registrarRecebimentoPdf } from "./registros.mjs";
 import { rotasPlanilhas } from "./rotasPlanilhas.mjs";
 import { rotasVinculosUsinas } from "./rotasVinculosUsinas.mjs";
@@ -130,6 +144,36 @@ function transacao(fn) {
     banco.exec("ROLLBACK");
     throw erro;
   }
+}
+function modoProcessamentoCentral(d) {
+  const uc = String(d.dados?.uc ?? "").replace(/\D/g, "");
+  const perfil = obterBanco()
+    .prepare(
+      `SELECT p.modo,p.usina_id,s.nome AS usina
+       FROM faturamento_unidades u
+       LEFT JOIN usinas_processamento_central p ON p.usina_id=u.usina_id
+       JOIN usinas s ON s.id=u.usina_id
+       WHERE u.uc=? OR u.id=(SELECT unidade_id FROM faturamento_unidades_aliases WHERE uc=?)
+       LIMIT 1`,
+    )
+    .get(uc, uc);
+  if (perfil?.modo) return perfil;
+  const modoTemporario = modoTemporarioDeHomologacaoCentral(perfil?.usina);
+  if (modoTemporario)
+    return {
+      modo: modoTemporario,
+      usina_id: perfil.usina_id,
+      usina: perfil.usina,
+    };
+  if (!perfil)
+    falhar(
+      "Defina o perfil operacional da usina para o processamento Central.",
+      409,
+    );
+  falhar(
+    "A modalidade operacional da usina não está confirmada para o processamento Central.",
+    409,
+  );
 }
 function listarUnidades() {
   const banco = obterBanco();
@@ -1126,6 +1170,227 @@ router.get("/recebimentos", (_req, res) => {
 router.get("/documentos/:id", (req, res) => {
   res.json(documentoCompleto(req.params.id));
 });
+router.get(
+  "/documentos/:id/simulacao-central",
+  exigirNivel(2),
+  async (req, res) => {
+    try {
+      const simulacao = await simularDocumentoCentral({
+        banco: obterBanco(),
+        documentoId: id(req.params.id),
+        simular: executarSimulacaoCentral,
+      });
+      res.set("Cache-Control", "no-store").json(simulacao);
+    } catch (erro) {
+      if (erro.message === "documento_gmail_indisponivel")
+        return res.status(404).json({
+          erro: "A simulação Central está disponível somente para uma fatura Gmail capturada.",
+        });
+      return res.status(503).json({
+        erro: "Não foi possível concluir a simulação da Central. Tente novamente.",
+      });
+    }
+  },
+);
+router.get(
+  "/documentos/:id/previa-central",
+  exigirNivel(2),
+  async (req, res) => {
+    let previa;
+    try {
+      const simulacao = await simularDocumentoCentral({
+        banco: obterBanco(),
+        documentoId: id(req.params.id),
+        simular: executarSimulacaoCentral,
+      });
+      if (simulacao.situacao !== "simulada")
+        return res.status(409).json({
+          erro: "A simulação da Central exige revisão antes de gerar a prévia.",
+        });
+      previa = await gerarPreviaCentralTemporaria({
+        documento: simulacao.documento,
+        simulacao,
+      });
+      res.set({
+        "Cache-Control": "no-store",
+        "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(previa.nome)}`,
+        "Content-Type": "application/pdf",
+        "X-Content-Type-Options": "nosniff",
+      });
+      return res.sendFile(previa.arquivo, async (erro) => {
+        await previa.limpar();
+        if (erro && !res.headersSent)
+          res.status(500).json({ erro: "Falha ao abrir a prévia." });
+      });
+    } catch (erro) {
+      await previa?.limpar();
+      if (erro.message === "documento_gmail_indisponivel")
+        return res.status(404).json({ erro: "Prévia Central indisponível." });
+      return res.status(503).json({
+        erro: "Não foi possível gerar a prévia atual da Central.",
+      });
+    }
+  },
+);
+router.get(
+  "/documentos/:id/processamento-central",
+  exigirNivel(2),
+  (req, res) => {
+    const registro = obterBanco()
+      .prepare(
+        `SELECT * FROM faturamento_processamentos_central
+       WHERE documento_id=? ORDER BY criado_em DESC LIMIT 1`,
+      )
+      .get(id(req.params.id));
+    res.json(processamentoCentralSeguro(registro));
+  },
+);
+
+router.post(
+  "/documentos/:id/processamento-central/homologar",
+  exigirNivel(3),
+  async (req, res, next) => {
+    let iniciado;
+    try {
+      const numero = id(req.params.id);
+      const d = documento(numero);
+      if (
+        req.body?.confirmar !== true ||
+        req.body?.confirmacao !== "PROCESSAR EM HOMOLOGAÇÃO"
+      )
+        falhar("Confirme explicitamente o processamento em homologação.");
+      const perfil = modoProcessamentoCentral(d);
+      if (perfil.modo === "financeiro" && (d.status !== APROVADA || !d.memoria))
+        falhar(
+          "A aprovação humana da cobrança é obrigatória antes do processamento Central.",
+          409,
+        );
+      if (d.versao !== Number(req.body?.versao))
+        falhar(
+          "A fatura foi alterada; confira e aprove novamente antes de processar.",
+          409,
+        );
+      const simulacao =
+        perfil.modo === "financeiro"
+          ? await simularDocumentoCentral({
+              banco: obterBanco(),
+              documentoId: numero,
+              simular: executarSimulacaoCentral,
+            })
+          : null;
+      if (simulacao?.situacao !== "simulada")
+        falhar(
+          "REVISAR: a Central encontrou divergências; a planilha não será processada.",
+          409,
+        );
+      d.modoProcessamento = perfil.modo;
+      iniciado = iniciarProcessamentoCentral({
+        banco: obterBanco(),
+        documento: d,
+        administrador: req.administrador,
+        modo: perfil.modo,
+      });
+      if (!iniciado.criado)
+        return res.status(409).json({
+          erro: "Já existe um processamento Central para esta versão da fatura.",
+          processamento: processamentoCentralSeguro(iniciado.existente),
+        });
+      historico(
+        req,
+        "Processamento Central em homologação autorizado",
+        {
+          processamento_id: iniciado.id,
+          versao: d.versao,
+          modo: perfil.modo,
+          origem_simulacao: simulacao && {
+            planilha: simulacao.planilha,
+            aba: simulacao.aba,
+            linha: simulacao.linha,
+          },
+        },
+        d.id,
+        d.unidade_id,
+      );
+      const resultado = await executarProcessamentoCentralHomologacao({
+        processamentoId: iniciado.id,
+        documentos: [numero],
+        modo: perfil.modo,
+      });
+      const registro = concluirProcessamentoCentral({
+        banco: obterBanco(),
+        id: iniciado.id,
+        estado: resultado.situacao === "concluido" ? "concluido" : "revisar",
+        resultado,
+      });
+      historico(
+        req,
+        "Processamento Central em homologação concluído",
+        {
+          processamento_id: iniciado.id,
+          estado: registro.estado,
+          planilha_preenchida: resultado.planilhaPreenchida ?? null,
+          pdfs: resultado.pdfs?.map((pdf) => pdf.pdf_final) ?? [],
+        },
+        d.id,
+        d.unidade_id,
+      );
+      return res.status(201).json(processamentoCentralSeguro(registro));
+    } catch (erro) {
+      if (iniciado?.criado) {
+        const registro = concluirProcessamentoCentral({
+          banco: obterBanco(),
+          id: iniciado.id,
+          estado: "falhou",
+          resultado: { erro: erro.message },
+        });
+        historico(req, "Processamento Central em homologação falhou", {
+          processamento_id: iniciado.id,
+          erro: erro.message,
+        });
+        return res.status(502).json({
+          erro: "O processamento Central não foi concluído; nenhum arquivo oficial foi alterado.",
+          processamento: processamentoCentralSeguro(registro),
+        });
+      }
+      return next(erro);
+    }
+  },
+);
+router.get(
+  "/processamentos-central/:id/artefatos/:tipo",
+  exigirNivel(2),
+  (req, res) => {
+    const registro = processamentoCentralSeguro(
+      obterBanco()
+        .prepare("SELECT * FROM faturamento_processamentos_central WHERE id=?")
+        .get(req.params.id),
+    );
+    if (!registro || registro.estado !== "concluido")
+      return res
+        .status(404)
+        .json({ erro: "Artefato de homologação não disponível." });
+    const resultado = registro.resultado;
+    const indice = Number(req.query.indice ?? 0);
+    const tipos = {
+      planilha: resultado.planilhaPreenchida,
+      log: resultado.log,
+      pdf: resultado.pdfs?.[indice]?.pdf_final,
+      impressao: resultado.pdfs?.[indice]?.pdf_impressao,
+    };
+    const arquivo = tipos[req.params.tipo];
+    const raiz = resolve("backend", "data", "central-homologacao", registro.id);
+    if (
+      typeof arquivo !== "string" ||
+      !resolve(arquivo).startsWith(raiz + "\\") ||
+      !existsSync(arquivo)
+    )
+      return res
+        .status(404)
+        .json({ erro: "Artefato de homologação não encontrado." });
+    res.set("Cache-Control", "no-store");
+    return res.download(arquivo);
+  },
+);
 router.get("/pagamentos", (_req, res) => {
   const itens = obterBanco()
     .prepare(

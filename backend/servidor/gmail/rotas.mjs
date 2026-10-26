@@ -1,13 +1,11 @@
 import { createHash, randomBytes } from "node:crypto";
-import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Router } from "express";
 import { obterBanco } from "../bancoDeDados.mjs";
+import {
+  executarSimulacaoCentral,
+  gerarPreviaCentralTemporaria,
+  localizarDocumentosCentral,
+} from "../centralFaturas.mjs";
 import { sessaoAtual } from "../autenticacao.mjs";
 import { identificarAdministrador } from "../permissoesDaEquipe.mjs";
 import { chaveDeCriptografia, cifrarRefreshToken } from "./credenciais.mjs";
@@ -26,6 +24,7 @@ import {
   listarTriagemGmail,
   obterPdfTriagemGmail,
 } from "./triagem.mjs";
+import { prepararLoteCentralDaCaptura } from "./loteCentral.mjs";
 
 function configuracaoDoAmbiente() {
   return {
@@ -78,114 +77,6 @@ function mesDoVencimento(vencimento, competencia) {
   return competenciaValida ? meses[Number(competenciaValida[2]) - 1] : "FAT";
 }
 
-const pastaDoProjeto = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "../../..",
-);
-const executarArquivo = promisify(execFile);
-const documentosDaSimulacaoCentral = new Set([685, 686, 689, 690, 698]);
-const codigoFonteCentralPadrao =
-  "C:\\Users\\User\\Desktop\\00 - Central de Faturas Ecosol\\_SUPORTE_ORGANIZACAO\\ARQUIVOS_RETIRADOS_DA_RAIZ_20260917\\CODIGO_FONTE_V146";
-const planilhasAtualizadasPadrao =
-  "G:\\.shortcut-targets-by-id\\1WBX1jPldTDgAie6u0FujV9L6xWIjRtdx\\01 - Usinas Goiás\\00 - Planilhas Atualizadas";
-
-function ultimoJsonDaSaida(saida) {
-  for (const linha of String(saida ?? "")
-    .split(/\r?\n/)
-    .reverse()) {
-    if (!linha.trim()) continue;
-    try {
-      return JSON.parse(linha);
-    } catch {
-      // O motor Python pode emitir avisos antes do resultado estruturado.
-    }
-  }
-  throw new Error("simulacao_central_sem_resultado");
-}
-
-async function executarSimulacaoCentral({ documentos }) {
-  const codigoFonte =
-    process.env.ECOSOL_CENTRAL_CODIGO_FONTE ?? codigoFonteCentralPadrao;
-  const planilhas =
-    process.env.ECOSOL_PLANILHAS_ATUALIZADAS ?? planilhasAtualizadasPadrao;
-  const { stdout } = await executarArquivo(
-    process.env.ECOSOL_PYTHON ?? "python",
-    [
-      join(pastaDoProjeto, "backend", "scripts", "previaNomeadorCentral.py"),
-      "--simular",
-      "--banco",
-      join(pastaDoProjeto, "backend", "data", "ecosol.db"),
-      "--documentos",
-      documentos.join(","),
-      "--motor",
-      join(codigoFonte, "nomeador_engine.py"),
-      "--atualizador",
-      join(codigoFonte, "atualizador_engine.py"),
-      "--pasta-vendas",
-      planilhas,
-    ],
-    { windowsHide: true, timeout: 120_000, maxBuffer: 2 * 1024 * 1024 },
-  );
-  const resultado = ultimoJsonDaSaida(stdout);
-  if (!Array.isArray(resultado?.resultados))
-    throw new Error("simulacao_central_invalida");
-  return resultado;
-}
-
-async function gerarPreviaCentralTemporaria({ documento, simulacao }) {
-  const codigoFonte =
-    process.env.ECOSOL_CENTRAL_CODIGO_FONTE ?? codigoFonteCentralPadrao;
-  const planilhas =
-    process.env.ECOSOL_PLANILHAS_ATUALIZADAS ?? planilhasAtualizadasPadrao;
-  const pastaTemporaria = await mkdtemp(
-    join(tmpdir(), "ecosol-previa-central-"),
-  );
-  const destino = join(pastaTemporaria, `documento-${documento}.pdf`);
-  const limpar = () => rm(pastaTemporaria, { recursive: true, force: true });
-  try {
-    const { stdout } = await executarArquivo(
-      process.env.ECOSOL_PYTHON ?? "python",
-      [
-        join(pastaDoProjeto, "backend", "scripts", "previaNomeadorCentral.py"),
-        "--banco",
-        join(pastaDoProjeto, "backend", "data", "ecosol.db"),
-        "--documento",
-        String(documento),
-        "--motor",
-        join(codigoFonte, "nomeador_engine.py"),
-        "--atualizador",
-        join(codigoFonte, "atualizador_engine.py"),
-        "--pasta-vendas",
-        planilhas,
-        "--saida",
-        destino,
-        "--uc-antiga",
-        simulacao.ucAntiga,
-        "--cliente",
-        simulacao.cliente,
-        "--usina",
-        simulacao.usina,
-      ],
-      { windowsHide: true, timeout: 120_000, maxBuffer: 2 * 1024 * 1024 },
-    );
-    const resultado = ultimoJsonDaSaida(stdout);
-    const arquivo = resolve(resultado?.saida ?? "");
-    const nome = resultado?.nomeFinal;
-    if (
-      !resultado?.boleto?.valorCalculadoCentral ||
-      resultado.boleto.valorCalculadoCentral !== simulacao.valorBoleto ||
-      typeof nome !== "string" ||
-      nome !== basename(arquivo) ||
-      !arquivo.startsWith(resolve(pastaTemporaria) + "\\") ||
-      !existsSync(arquivo)
-    )
-      throw new Error("previa_central_diverge_da_simulacao");
-    return { arquivo, nome, limpar };
-  } catch (erro) {
-    await limpar();
-    throw erro;
-  }
-}
 function irParaPainel(resposta, resultado) {
   resposta.set("Cache-Control", "no-store");
   resposta.set("Referrer-Policy", "no-referrer");
@@ -232,8 +123,9 @@ export function criarRotasGmail({
   agora = Date.now,
   sincronizador = criarSincronizadorGmail(),
   simuladorCentral = executarSimulacaoCentral,
+  localizadorCentral = localizarDocumentosCentral,
   geradorPreviaCentral = gerarPreviaCentralTemporaria,
-  documentosCentral = documentosDaSimulacaoCentral,
+  preparadorLoteCentral = prepararLoteCentralDaCaptura,
 } = {}) {
   const rotas = Router();
 
@@ -264,7 +156,7 @@ export function criarRotasGmail({
     if (destino !== "fatura") return;
     const ids = itens
       .map((item) => idValido(item?.id ?? item))
-      .filter((id) => id && documentosCentral.has(id));
+      .filter(Boolean);
     if (!ids.length) return;
     const resultados = await simularDocumentosDaConta(contaId, ids);
     if (resultados.some((item) => item.situacao !== "simulada"))
@@ -389,6 +281,10 @@ export function criarRotasGmail({
       } catch (erro) {
         return resposta.status(400).json({ erro: String(erro.message) });
       }
+      if (sincronizador.emAndamento(contaId))
+        return resposta.status(409).json({
+          erro: "Já há uma captura em andamento para esta conta.",
+        });
       void sincronizador
         .capturarPeriodo(contaId, requisicao.body?.periodo)
         .catch(() => {
@@ -406,14 +302,50 @@ export function criarRotasGmail({
         return resposta.status(400).json({ erro: "Conta inválida." });
       try {
         const periodo = validarPeriodoRecebimento(requisicao.body?.periodo);
-        const captura = criarRepositorioGmail(banco()).obterCapturaPorPeriodo({
+        const repo = criarRepositorioGmail(banco());
+        const captura = repo.obterCapturaPorPeriodo({
           contaId,
           inicio: periodo.inicioLocal,
           fim: periodo.fimLocal,
         });
-        return resposta.json({ captura });
+        return resposta.json({
+          captura,
+          documentos: captura ? repo.documentosDaCaptura(captura.id) : [],
+        });
       } catch (erro) {
         return resposta.status(400).json({ erro: String(erro.message) });
+      }
+    },
+  );
+
+  // A preparação deriva exclusivamente dos anexos vinculados à captura
+  // persistida. Não consulta o Gmail e não grava planilhas, PDFs ou cobranças.
+  rotas.post(
+    "/api/admin/gmail/contas/:id/capturas/:capturaId/central/preparar",
+    async (requisicao, resposta) => {
+      const contaId = idValido(requisicao.params.id);
+      const capturaId = idValido(requisicao.params.capturaId);
+      if (!contaId || !capturaId)
+        return resposta.status(400).json({ erro: "Captura inválida." });
+      try {
+        const resultado = await preparadorLoteCentral({
+          banco: banco(),
+          contaId,
+          capturaId,
+          localizar: localizadorCentral,
+          simular: simuladorCentral,
+        });
+        return resposta.set("Cache-Control", "no-store").json(resultado);
+      } catch (erro) {
+        if (erro.message === "captura_periodo_indisponivel")
+          return resposta.status(404).json({ erro: "Captura não encontrada." });
+        if (erro.message === "captura_periodo_nao_concluida")
+          return resposta.status(409).json({
+            erro: "A captura precisa estar concluída antes da preparação.",
+          });
+        return resposta.status(503).json({
+          erro: "Não foi possível preparar o lote com a Central.",
+        });
       }
     },
   );
@@ -648,9 +580,9 @@ export function criarRotasGmail({
       if (
         !contaId ||
         !ids.length ||
-        ids.length > documentosCentral.size ||
+        ids.length > 50 ||
         new Set(ids).size !== ids.length ||
-        ids.some((id) => !documentosCentral.has(id))
+        !ids.length
       )
         return resposta
           .status(400)
@@ -676,7 +608,7 @@ export function criarRotasGmail({
     async (requisicao, resposta) => {
       const contaId = idValido(requisicao.params.id);
       const documentoId = idValido(requisicao.params.documentoId);
-      if (!contaId || !documentosCentral.has(documentoId))
+      if (!contaId || !documentoId)
         return resposta.status(404).json({ erro: "Prévia indisponível." });
       const existe = banco()
         .prepare(

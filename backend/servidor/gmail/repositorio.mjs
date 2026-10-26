@@ -226,13 +226,39 @@ export function criarRepositorioGmail(banco) {
           WHERE conta_id=? AND inicio_local=? AND fim_local=?`,
           )
           .get(contaId, inicio, fim);
-        if (existente) return { ...existente, existente: true };
+        if (existente) {
+          if (existente.estado === "concluida")
+            return { ...existente, existente: true, concluida: true };
+          if (
+            existente.estado === "falha" &&
+            existente.proxima_tentativa_em !== null &&
+            existente.proxima_tentativa_em > agora
+          )
+            return { ...existente, existente: true, aguardar: true };
+          if (existente.estado === "falha")
+            banco
+              .prepare(
+                `UPDATE gmail_capturas_periodo
+                   SET estado='em_andamento', iniciado_em=?, concluido_em=NULL,
+                       erro_codigo=NULL, proxima_tentativa_em=NULL,
+                       tentativas=tentativas+1
+                 WHERE id=?`,
+              )
+              .run(agora, existente.id);
+          return {
+            ...banco
+              .prepare("SELECT * FROM gmail_capturas_periodo WHERE id=?")
+              .get(existente.id),
+            existente: true,
+            retomada: true,
+          };
+        }
         const id = Number(
           banco
             .prepare(
               `INSERT INTO gmail_capturas_periodo
-          (conta_id,inicio_local,fim_local,fuso,estado,iniciado_em)
-          VALUES (?,?,?,'America/Sao_Paulo','em_andamento',?)`,
+          (conta_id,inicio_local,fim_local,fuso,estado,tentativas,iniciado_em)
+          VALUES (?,?,?,'America/Sao_Paulo','em_andamento',1,?)`,
             )
             .run(contaId, inicio, fim, agora).lastInsertRowid,
         );
@@ -262,6 +288,73 @@ export function criarRepositorioGmail(banco) {
         .run(emails, anexos, id);
     },
 
+    registrarMensagensDaCaptura({ capturaId, mensagens }) {
+      inteiroPositivo(capturaId, "Captura");
+      if (!Array.isArray(mensagens)) throw new Error("Mensagens inválidas.");
+      return transacao(banco, () => {
+        const inserir = banco.prepare(
+          `INSERT INTO gmail_capturas_periodo_mensagens
+             (captura_id,message_id,anexos_esperados) VALUES (?,?,?)
+           ON CONFLICT(captura_id,message_id) DO UPDATE SET
+             anexos_esperados=excluded.anexos_esperados`,
+        );
+        for (const mensagem of mensagens) {
+          const messageId = texto(mensagem?.id, "Message ID", 512);
+          const anexos = mensagem?.anexos;
+          if (!Number.isSafeInteger(anexos) || anexos < 0)
+            throw new Error("Quantidade de anexos inválida.");
+          inserir.run(capturaId, messageId, anexos);
+        }
+      });
+    },
+
+    mensagensDaCaptura(id) {
+      inteiroPositivo(id, "Captura");
+      return banco
+        .prepare(
+          `SELECT message_id id,anexos_esperados anexos
+             FROM gmail_capturas_periodo_mensagens
+            WHERE captura_id=? ORDER BY message_id`,
+        )
+        .all(id)
+        .map((item) => ({ ...item }));
+    },
+
+    contagensDaCaptura(id) {
+      inteiroPositivo(id, "Captura");
+      const total = banco
+        .prepare(
+          `SELECT COUNT(*) quantidade FROM gmail_capturas_periodo_mensagens
+            WHERE captura_id=?`,
+        )
+        .get(id).quantidade;
+      const anexos = banco
+        .prepare(
+          `SELECT COALESCE(SUM(anexos_esperados),0) quantidade
+             FROM gmail_capturas_periodo_mensagens WHERE captura_id=?`,
+        )
+        .get(id).quantidade;
+      const estados = banco
+        .prepare(
+          `SELECT a.estado,COUNT(*) quantidade
+             FROM gmail_capturas_periodo_mensagens m
+             JOIN gmail_anexos a ON a.message_id=m.message_id
+             JOIN gmail_capturas_periodo c ON c.id=m.captura_id AND c.conta_id=a.conta_id
+            WHERE m.captura_id=? GROUP BY a.estado`,
+        )
+        .all(id);
+      const quantidade = (estado) =>
+        estados.find((item) => item.estado === estado)?.quantidade ?? 0;
+      return {
+        emails: total,
+        anexos,
+        capturados: quantidade("capturado"),
+        duplicados: quantidade("duplicado"),
+        triagem: quantidade("pendente_manual"),
+        falhas: quantidade("falha_temporaria"),
+      };
+    },
+
     concluirCapturaPeriodo({
       id,
       estado,
@@ -270,6 +363,7 @@ export function criarRepositorioGmail(banco) {
       triagem,
       falhas,
       erroCodigo = null,
+      proximaTentativaEm = null,
       agora = Date.now(),
     }) {
       inteiroPositivo(id, "Captura");
@@ -283,7 +377,7 @@ export function criarRepositorioGmail(banco) {
         throw new Error("Resultado de captura inválido.");
       banco
         .prepare(
-          `UPDATE gmail_capturas_periodo SET estado=?,capturados=?,duplicados=?,triagem=?,falhas=?,erro_codigo=?,concluido_em=?
+          `UPDATE gmail_capturas_periodo SET estado=?,capturados=?,duplicados=?,triagem=?,falhas=?,erro_codigo=?,proxima_tentativa_em=?,concluido_em=?
         WHERE id=? AND estado='em_andamento'`,
         )
         .run(
@@ -293,6 +387,7 @@ export function criarRepositorioGmail(banco) {
           triagem,
           falhas,
           erroCodigo,
+          proximaTentativaEm,
           agora,
           id,
         );
@@ -320,7 +415,30 @@ export function criarRepositorioGmail(banco) {
         WHERE conta_id=? AND inicio_local=? AND fim_local=?`,
         )
         .get(contaId, inicio, fim);
-      return item ? { ...item } : null;
+      if (!item) return null;
+      const vinculadas = banco
+        .prepare(
+          "SELECT COUNT(*) quantidade FROM gmail_capturas_periodo_mensagens WHERE captura_id=?",
+        )
+        .get(item.id).quantidade;
+      return vinculadas
+        ? { ...item, ...this.contagensDaCaptura(item.id) }
+        : { ...item };
+    },
+
+    documentosDaCaptura(id) {
+      inteiroPositivo(id, "Captura");
+      return banco
+        .prepare(
+          `SELECT DISTINCT a.documento_id documentoId
+             FROM gmail_capturas_periodo_mensagens m
+             JOIN gmail_capturas_periodo c ON c.id=m.captura_id
+             JOIN gmail_anexos a ON a.conta_id=c.conta_id AND a.message_id=m.message_id
+            WHERE m.captura_id=? AND a.documento_id IS NOT NULL
+            ORDER BY a.documento_id`,
+        )
+        .all(id)
+        .map((item) => item.documentoId);
     },
 
     iniciarVarreduraCompleta({
