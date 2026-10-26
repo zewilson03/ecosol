@@ -473,6 +473,8 @@ async function aceite() {
           "gmail_auditoria",
           "gmail_capturas_periodo",
           "gmail_capturas_periodo_mensagens",
+          "gmail_capturas_periodo_preparacoes_central",
+          "gmail_capturas_periodo_preparacoes_central_historico",
           "gmail_contas",
           "gmail_credenciais",
           "gmail_mensagens",
