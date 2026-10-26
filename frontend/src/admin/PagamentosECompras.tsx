@@ -2,6 +2,7 @@ import { FormEvent, useMemo, useState } from "react";
 import type { Sessao } from "../dadosDaAplicacao";
 import {
   alterarDados,
+  consultarServidor,
   executarComSenhaFinanceira,
   formatarData,
   formatarDinheiro,
@@ -46,6 +47,25 @@ type Item = {
   quantidade: string;
   valor_unitario: string;
 };
+type Extrato = {
+  saldos: {
+    atual: string;
+    anterior: string;
+    bloqueado: string;
+    limite: string;
+    bloqueio_judicial: string;
+  };
+  transacoes: Array<{
+    id: string;
+    tipo: string;
+    valor: string;
+    data: string;
+    descricao: string;
+    numero_documento: string | null;
+    documento_mascarado: string | null;
+    informacao_complementar: string | null;
+  }>;
+};
 
 const vazio: Item = {
   produto_id: "",
@@ -68,7 +88,9 @@ export default function PagamentosECompras() {
   const proprietario =
     sessao.dados?.perfil === "equipe" &&
     sessao.dados.administrador.proprietario === true;
-  const [aba, definirAba] = useState<"pagamentos" | "catalogo">("pagamentos");
+  const [aba, definirAba] = useState<"pagamentos" | "catalogo" | "extrato">(
+    "pagamentos",
+  );
   const [origem, definirOrigem] = useState("energia");
   const [itens, definirItens] = useState<Item[]>([{ ...vazio }]);
   const [mensagem, definirMensagem] = useState("");
@@ -127,16 +149,25 @@ export default function PagamentosECompras() {
       />
       <nav className="admin-abas" aria-label="Pagamentos e compras">
         <button
-          className={aba === "pagamentos" ? "ativo" : ""}
+          className={aba === "pagamentos" ? "selecionada" : ""}
+          aria-pressed={aba === "pagamentos"}
           onClick={() => definirAba("pagamentos")}
         >
           Pagamentos
         </button>
         <button
-          className={aba === "catalogo" ? "ativo" : ""}
+          className={aba === "catalogo" ? "selecionada" : ""}
+          aria-pressed={aba === "catalogo"}
           onClick={() => definirAba("catalogo")}
         >
           Catálogo de produtos
+        </button>
+        <button
+          className={aba === "extrato" ? "selecionada" : ""}
+          aria-pressed={aba === "extrato"}
+          onClick={() => definirAba("extrato")}
+        >
+          Extrato bancário
         </button>
       </nav>
       {mensagem && (
@@ -152,6 +183,8 @@ export default function PagamentosECompras() {
       <EstadoDaConsulta {...consulta} repetir={consulta.atualizar} />
       {aba === "catalogo" ? (
         <Catalogo dados={dados} ocupado={ocupado} executar={executar} />
+      ) : aba === "extrato" ? (
+        <ExtratoBancario />
       ) : (
         <>
           <div className="admin-resumos">
@@ -396,6 +429,162 @@ export default function PagamentosECompras() {
         </>
       )}
     </>
+  );
+}
+
+function dinheiroDecimal(valor: string) {
+  const negativo = valor.startsWith("-");
+  const [inteiro, decimal = "00"] = valor.replace("-", "").split(".");
+  return `${negativo ? "-" : ""}R$ ${BigInt(inteiro).toLocaleString("pt-BR")},${decimal}`;
+}
+
+function ExtratoBancario() {
+  const hoje = new Date();
+  const [mes, definirMes] = useState(hoje.getMonth() + 1);
+  const [ano, definirAno] = useState(hoje.getFullYear());
+  const [extrato, definirExtrato] = useState<Extrato | null>(null);
+  const [carregando, definirCarregando] = useState(false);
+  const [erro, definirErro] = useState("");
+
+  async function consultar(evento: FormEvent<HTMLFormElement>) {
+    evento.preventDefault();
+    const campos = new FormData(evento.currentTarget);
+    const parametros = new URLSearchParams({
+      mes: String(mes),
+      ano: String(ano),
+    });
+    const inicio = String(campos.get("dia_inicial") ?? "");
+    const fim = String(campos.get("dia_final") ?? "");
+    if (inicio || fim) {
+      parametros.set("dia_inicial", inicio);
+      parametros.set("dia_final", fim);
+    }
+    definirCarregando(true);
+    definirErro("");
+    definirExtrato(null);
+    try {
+      definirExtrato(
+        await consultarServidor<Extrato>(
+          `/api/admin/financeiro/extrato?${parametros}`,
+        ),
+      );
+    } catch (falha) {
+      definirErro((falha as Error).message);
+    } finally {
+      definirCarregando(false);
+    }
+  }
+
+  return (
+    <section className="admin-cartao">
+      <div className="admin-barra">
+        <div>
+          <span className="admin-legenda">CONTA CORRENTE SICOOB</span>
+          <h2>Extrato para conferência</h2>
+          <p>
+            Consulta somente leitura. Nenhum lançamento bancário é alterado.
+          </p>
+        </div>
+      </div>
+      <form className="admin-formulario" onSubmit={consultar}>
+        <div className="admin-campos">
+          <label>
+            Mês
+            <input
+              type="number"
+              min="1"
+              max="12"
+              value={mes}
+              onChange={(evento) => definirMes(Number(evento.target.value))}
+              required
+            />
+          </label>
+          <label>
+            Ano
+            <input
+              type="number"
+              min="2000"
+              max="2200"
+              value={ano}
+              onChange={(evento) => definirAno(Number(evento.target.value))}
+              required
+            />
+          </label>
+          <label>
+            Dia inicial (opcional)
+            <input name="dia_inicial" type="number" min="1" max="31" />
+          </label>
+          <label>
+            Dia final (opcional)
+            <input name="dia_final" type="number" min="1" max="31" />
+          </label>
+        </div>
+        <button className="admin-botao" disabled={carregando}>
+          {carregando ? "Consultando…" : "Consultar extrato"}
+        </button>
+      </form>
+      {erro && (
+        <p className="admin-aviso erro" role="alert">
+          {erro}
+        </p>
+      )}
+      {extrato && (
+        <>
+          <div className="admin-resumos">
+            <article className="solar">
+              <span>Saldo atual</span>
+              <strong>{dinheiroDecimal(extrato.saldos.atual)}</strong>
+            </article>
+            <article>
+              <span>Saldo anterior</span>
+              <strong>{dinheiroDecimal(extrato.saldos.anterior)}</strong>
+            </article>
+            <article>
+              <span>Saldo bloqueado</span>
+              <strong>{dinheiroDecimal(extrato.saldos.bloqueado)}</strong>
+            </article>
+          </div>
+          {!extrato.transacoes.length ? (
+            <ListaVazia texto="Nenhuma transação encontrada nesse período." />
+          ) : (
+            <div className="admin-tabela">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Data</th>
+                    <th>Lançamento</th>
+                    <th>Documento</th>
+                    <th>Tipo</th>
+                    <th>Valor</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {extrato.transacoes.map((item) => (
+                    <tr key={item.id}>
+                      <td>{item.data}</td>
+                      <td>
+                        <strong>{item.descricao}</strong>
+                        {item.informacao_complementar && (
+                          <small>{item.informacao_complementar}</small>
+                        )}
+                      </td>
+                      <td>
+                        {item.numero_documento || "—"}
+                        {item.documento_mascarado && (
+                          <small>{item.documento_mascarado}</small>
+                        )}
+                      </td>
+                      <td>{item.tipo}</td>
+                      <td>{dinheiroDecimal(item.valor)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </section>
   );
 }
 

@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -15,6 +15,11 @@ const { obterConfiguracaoSicoob } =
   await import("../servidor/bancario/configuracaoSicoob.mjs");
 const { criarContratoCobrancaSicoob } =
   await import("../servidor/bancario/contratoCobrancaSicoob.mjs");
+const {
+  avaliarHistoricoPilotoSicoob,
+  criarIdempotenciaLegadaPilotoSicoob,
+  criarIdempotenciaPilotoSicoob,
+} = await import("../servidor/bancario/idempotenciaPilotoSicoob.mjs");
 
 const confirmacaoExigida = "EMITIR-UM-BOLETO-REAL";
 
@@ -93,38 +98,41 @@ const entradaPath = resolve(
 const entrada = JSON.parse(readFileSync(entradaPath, "utf8"));
 if (!cpfValido(entrada?.cliente?.documento))
   falhar("O CPF do pagador não passou na validação dos dígitos verificadores.");
-const idempotencia = createHash("sha256")
-  .update(
-    JSON.stringify({
-      versao: 1,
-      ambiente: "producao",
-      contrato_api: "cobranca-v3-numero-cliente-contrato-sisbr",
-      entrada,
-    }),
-  )
-  .digest("hex");
-const registroPath = resolve(`backend/data/pilotos/${idempotencia}.json`);
-const anterior = existsSync(registroPath)
-  ? JSON.parse(readFileSync(registroPath, "utf8"))
-  : null;
-
-if (anterior) {
-  console.log(
-    JSON.stringify({
-      executada: false,
-      motivo: "PILOTO_JA_REGISTRADO_LOCALMENTE",
-      estado: anterior.estado,
-      codigo: anterior.codigo ?? null,
-    }),
-  );
-  process.exit(anterior.estado === "registrada" ? 0 : 2);
-}
-
 const variaveis = variaveisDeProducao();
 const configuracao = obterConfiguracaoSicoob({
   variaveis,
   exigirCompleta: true,
 });
+const idempotencia = criarIdempotenciaPilotoSicoob({ entrada, configuracao });
+const idempotenciaLegada = criarIdempotenciaLegadaPilotoSicoob(entrada);
+const registroPath = resolve(`backend/data/pilotos/${idempotencia}.json`);
+const registroLegadoPath = resolve(
+  `backend/data/pilotos/${idempotenciaLegada}.json`,
+);
+const registroAtual = existsSync(registroPath)
+  ? JSON.parse(readFileSync(registroPath, "utf8"))
+  : null;
+const registroLegado =
+  idempotenciaLegada !== idempotencia && existsSync(registroLegadoPath)
+    ? JSON.parse(readFileSync(registroLegadoPath, "utf8"))
+    : null;
+const historico = avaliarHistoricoPilotoSicoob({
+  registroAtual,
+  registroLegado,
+});
+
+if (!historico.permitida) {
+  console.log(
+    JSON.stringify({
+      executada: false,
+      motivo: historico.motivo,
+      estado: historico.estado,
+      codigo: historico.codigo,
+    }),
+  );
+  process.exit(historico.estado === "registrada" ? 0 : 2);
+}
+
 const integracao = criarIntegracaoSicoob({ variaveis });
 const snapshot = Object.freeze({
   versao: 1,
@@ -153,6 +161,7 @@ if (process.argv.includes("--validar")) {
       valida: true,
       ambiente: "producao",
       idempotencia: idempotencia.slice(0, 12),
+      migra_rejeicao_legada: historico.migraRejeicaoLegada,
     }),
   );
   process.exit(0);
@@ -162,8 +171,12 @@ if (argumento("confirmar") !== confirmacaoExigida)
   falhar(`Confirmação ausente. Use --confirmar=${confirmacaoExigida}.`);
 
 gravarAtomico(registroPath, {
-  versao: 1,
+  versao: 2,
+  identidade_versao: 2,
   idempotencia,
+  migrada_de_rejeicao: historico.migraRejeicaoLegada
+    ? idempotenciaLegada
+    : null,
   estado: "envio_iniciado",
   criado_em: new Date().toISOString(),
 });
@@ -176,8 +189,12 @@ try {
     tentativa: 1,
   });
   const final = {
-    versao: 1,
+    versao: 2,
+    identidade_versao: 2,
     idempotencia,
+    migrada_de_rejeicao: historico.migraRejeicaoLegada
+      ? idempotenciaLegada
+      : null,
     estado:
       resultado.categoria === "rejeitada"
         ? "rejeitada"
@@ -223,8 +240,12 @@ try {
   );
 } catch (erro) {
   gravarAtomico(registroPath, {
-    versao: 1,
+    versao: 2,
+    identidade_versao: 2,
     idempotencia,
+    migrada_de_rejeicao: historico.migraRejeicaoLegada
+      ? idempotenciaLegada
+      : null,
     estado: "resultado_desconhecido",
     codigo: erro?.codigo ?? "SICOOB_FALHA_NAO_CLASSIFICADA",
     criado_em: new Date().toISOString(),

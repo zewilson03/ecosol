@@ -13,8 +13,10 @@ process.env.SICOOB_CONTA_REFERENCIA = "conta-teste";
 const { resumoCriptografico, protegerSenha } =
   await import("../servidor/autenticacao.mjs");
 const { obterBanco } = await import("../servidor/bancoDeDados.mjs");
+const { obterApuracaoDeDividas } =
+  await import("../servidor/financeiro/dividas.mjs");
 const { prepararBancario } = await import("../servidor/bancario/esquema.mjs");
-const { hashCanonico, jsonCanonico } =
+const { criarOperacaoDeCobranca, hashCanonico, jsonCanonico } =
   await import("../servidor/bancario/operacoes.mjs");
 const { rotasAdministrativas } =
   await import("../servidor/rotasAdministrativas.mjs");
@@ -79,13 +81,13 @@ const unidadeId = Number(
     ).lastInsertRowid,
 );
 
-function criarFatura(sufixo, totalCentavos = 12345) {
+function criarFatura(sufixo, totalCentavos = 12345, vencimento = "2026-11-20") {
   const pdf = Buffer.from(`%PDF-1.4 teste ${sufixo}`);
   const hash = createHash("sha256").update(pdf).digest("hex");
   const memoria = {
     regra: "ecosol-v1",
     total_centavos: totalCentavos,
-    vencimento_ecosol: "2026-11-20",
+    vencimento_ecosol: vencimento,
     unidade: { id: unidadeId, uc: "123456789" },
   };
   return Number(
@@ -109,6 +111,41 @@ function criarFatura(sufixo, totalCentavos = 12345) {
         `2026-${sufixo}`,
       ).lastInsertRowid,
   );
+}
+
+function criarCobrancaRegistradaVencida(sufixo, valorCentavos, vencimento) {
+  const snapshot = {
+    versao: 1,
+    tipo: "cobranca",
+    cliente: { id: clienteId, nome: "Cliente teste" },
+    unidade: { id: unidadeId, uc: "123456789", competencia: "2026-09" },
+    cobranca: {
+      valor_centavos: valorCentavos,
+      moeda: "BRL",
+      vencimento,
+    },
+  };
+  const id = randomUUID();
+  banco
+    .prepare(
+      `INSERT INTO bancario_operacoes
+       (id,tipo,ambiente,conta_referencia,origem_tipo,origem_id,origem_versao,
+        idempotencia,valor_centavos,vencimento,snapshot,snapshot_hash,
+        provedor_id,estado,preparado_por)
+       VALUES(?,'cobranca','homologacao','conta-teste','manual',?,1,?,?,?,?,?,?,'registrada',?)`,
+    )
+    .run(
+      id,
+      `cobranca-vencida-${sufixo}`,
+      hashCanonico({ tipo: "cobranca-vencida", sufixo }),
+      valorCentavos,
+      vencimento,
+      jsonCanonico(snapshot),
+      hashCanonico(snapshot),
+      `nosso-numero-${sufixo}`,
+      colaborador.id,
+    );
+  return id;
 }
 
 function criarPagamento(preparadoPor, sufixo) {
@@ -203,6 +240,102 @@ try {
   assert.equal(repetida.status, 200);
   assert.equal((await repetida.json()).operacao.id, cobranca.operacao.id);
 
+  const operacaoVencidaId = criarCobrancaRegistradaVencida(
+    "encargo",
+    10_000,
+    "2026-10-01",
+  );
+  const proximaFaturaId = criarFatura("12", 20_000, "2026-12-20");
+  const comEncargos = criarOperacaoDeCobranca(
+    proximaFaturaId,
+    { id: colaborador.id, nome: "colaborador" },
+    "2026-11-02",
+  );
+  assert.equal(comEncargos.criada, true);
+  assert.equal(comEncargos.operacao.valor_centavos, 20_455);
+  assert.equal(
+    comEncargos.operacao.snapshot.cobranca.valor_base_centavos,
+    20_000,
+  );
+  assert.equal(
+    comEncargos.operacao.snapshot.cobranca.encargos_atraso_centavos,
+    455,
+  );
+  assert.deepEqual(
+    {
+      origem:
+        comEncargos.operacao.snapshot.encargos_atraso.itens[0]
+          .operacao_origem_id,
+      dias: comEncargos.operacao.snapshot.encargos_atraso.itens[0].dias_atraso,
+      diasJuros:
+        comEncargos.operacao.snapshot.encargos_atraso.itens[0].dias_juros,
+      multa:
+        comEncargos.operacao.snapshot.encargos_atraso.itens[0].multa_centavos,
+      juros:
+        comEncargos.operacao.snapshot.encargos_atraso.itens[0].juros_centavos,
+    },
+    {
+      origem: operacaoVencidaId,
+      dias: 32,
+      diasJuros: 31,
+      multa: 300,
+      juros: 155,
+    },
+  );
+  const repetidaComEncargos = criarOperacaoDeCobranca(
+    proximaFaturaId,
+    { id: colaborador.id, nome: "colaborador" },
+    "2026-11-02",
+  );
+  assert.equal(repetidaComEncargos.criada, false);
+  assert.equal(repetidaComEncargos.operacao.id, comEncargos.operacao.id);
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT COUNT(*) AS n FROM bancario_encargos_atraso WHERE operacao_origem_id=? AND estado='aplicado'",
+      )
+      .get(operacaoVencidaId).n,
+    1,
+  );
+
+  banco
+    .prepare("UPDATE bancario_operacoes SET estado='envio_pendente' WHERE id=?")
+    .run(comEncargos.operacao.id);
+  banco
+    .prepare("UPDATE bancario_operacoes SET estado='rejeitada' WHERE id=?")
+    .run(comEncargos.operacao.id);
+  const faturaSubstitutaId = criarFatura("01", 30_000, "2027-01-20");
+  const substituta = criarOperacaoDeCobranca(
+    faturaSubstitutaId,
+    { id: colaborador.id, nome: "colaborador" },
+    "2026-11-02",
+  );
+  assert.equal(substituta.operacao.valor_centavos, 30_455);
+  assert.deepEqual(
+    banco
+      .prepare(
+        `SELECT estado,COUNT(*) AS n FROM bancario_encargos_atraso
+         WHERE operacao_origem_id=? GROUP BY estado ORDER BY estado`,
+      )
+      .all(operacaoVencidaId)
+      .map((item) => ({ ...item })),
+    [
+      { estado: "aplicado", n: 1 },
+      { estado: "liberado", n: 1 },
+    ],
+  );
+  const dividaSemDuplicarEncargo = obterApuracaoDeDividas(
+    banco,
+    { uc: "123456789" },
+    "2026-11-02",
+  ).dividas[0];
+  assert.equal(dividaSemDuplicarEncargo.principal_centavos, 10_000);
+  assert.equal(dividaSemDuplicarEncargo.encargos_centavos, 0);
+  assert.equal(
+    dividaSemDuplicarEncargo.cobrancas[0].encargos_transferidos_centavos,
+    455,
+  );
+
   const aprovacaoDesnecessaria = await chamar(
     `/api/admin/bancario/operacoes/${cobranca.operacao.id}/aprovar`,
     proprietario,
@@ -225,7 +358,7 @@ try {
 
   const lista = await chamar("/api/admin/bancario/operacoes", colaborador);
   assert.equal(lista.status, 200);
-  assert.equal((await lista.json()).length, 1);
+  assert.equal((await lista.json()).length, 4);
 
   const pagamentoId = criarPagamento(colaborador.id, "a");
   assert.equal(
