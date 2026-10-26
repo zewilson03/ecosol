@@ -131,8 +131,59 @@ try {
     }).estado,
     "concluida",
   );
+  const retomavel = repo.iniciarCapturaPeriodo({
+    contaId: conta.id,
+    inicio: "2026-10-22T00:00",
+    fim: "2026-10-24T00:00",
+    agora: Date.UTC(2026, 9, 24, 3),
+  });
+  repo.registrarMensagensDaCaptura({
+    capturaId: retomavel.id,
+    mensagens: [
+      { id: "mensagem-estavel", anexos: 1 },
+      { id: "mensagem-sem-pdf", anexos: 0 },
+    ],
+  });
+  assert.deepEqual(repo.contagensDaCaptura(retomavel.id), {
+    emails: 2,
+    anexos: 1,
+    capturados: 0,
+    duplicados: 0,
+    triagem: 0,
+    falhas: 0,
+  });
+  repo.concluirCapturaPeriodo({
+    id: retomavel.id,
+    estado: "falha",
+    capturados: 0,
+    duplicados: 0,
+    triagem: 0,
+    falhas: 1,
+    erroCodigo: "google_limite",
+    proximaTentativaEm: Date.UTC(2026, 9, 24, 3, 5),
+    agora: Date.UTC(2026, 9, 24, 3),
+  });
+  assert.equal(
+    repo.iniciarCapturaPeriodo({
+      contaId: conta.id,
+      inicio: "2026-10-22T00:00",
+      fim: "2026-10-24T00:00",
+      agora: Date.UTC(2026, 9, 24, 3, 1),
+    }).aguardar,
+    true,
+  );
+  const retomada = repo.iniciarCapturaPeriodo({
+    contaId: conta.id,
+    inicio: "2026-10-22T00:00",
+    fim: "2026-10-24T00:00",
+    agora: Date.UTC(2026, 9, 24, 3, 5),
+  });
+  assert.equal(retomada.retomada, true);
+  assert.equal(retomada.estado, "em_andamento");
+  assert.equal(retomada.tentativas, 2);
+  assert.equal(repo.documentosDaCaptura(retomavel.id).length, 0);
   console.log(
-    "Gmail por período: fuso, bordas, validação e descoberta idempotente OK.",
+    "Gmail por período: fuso, bordas, retomada, deduplicação e limite OK.",
   );
 } finally {
   db.close();

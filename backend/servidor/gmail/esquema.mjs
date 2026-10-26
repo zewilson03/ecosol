@@ -138,6 +138,8 @@ export function prepararGmail(banco) {
         duplicados INTEGER NOT NULL DEFAULT 0,
         triagem INTEGER NOT NULL DEFAULT 0,
         falhas INTEGER NOT NULL DEFAULT 0,
+        tentativas INTEGER NOT NULL DEFAULT 0,
+        proxima_tentativa_em INTEGER,
         iniciado_em INTEGER NOT NULL,
         concluido_em INTEGER,
         erro_codigo TEXT,
@@ -145,6 +147,17 @@ export function prepararGmail(banco) {
       );
       CREATE INDEX IF NOT EXISTS gmail_capturas_periodo_conta
         ON gmail_capturas_periodo(conta_id,id DESC);
+
+      -- A seleção consultada precisa sobreviver a interrupções. Sem este
+      -- vínculo não é possível atribuir um anexo já existente a um período.
+      CREATE TABLE IF NOT EXISTS gmail_capturas_periodo_mensagens (
+        captura_id INTEGER NOT NULL REFERENCES gmail_capturas_periodo(id) ON DELETE RESTRICT,
+        message_id TEXT NOT NULL CHECK(length(message_id) BETWEEN 1 AND 512),
+        anexos_esperados INTEGER NOT NULL CHECK(anexos_esperados >= 0),
+        PRIMARY KEY(captura_id,message_id)
+      );
+      CREATE INDEX IF NOT EXISTS gmail_capturas_periodo_mensagens_message
+        ON gmail_capturas_periodo_mensagens(message_id,captura_id);
 
       CREATE INDEX IF NOT EXISTS gmail_mensagens_reservas
         ON gmail_mensagens(conta_id, tentativas, id)
@@ -180,6 +193,20 @@ export function prepararGmail(banco) {
     if (!colunas.has("ultimo_erro_codigo"))
       banco.exec(
         "ALTER TABLE gmail_sincronizacoes ADD COLUMN ultimo_erro_codigo TEXT",
+      );
+    const colunasCapturas = new Set(
+      banco
+        .prepare("PRAGMA table_info(gmail_capturas_periodo)")
+        .all()
+        .map((c) => c.name),
+    );
+    if (!colunasCapturas.has("tentativas"))
+      banco.exec(
+        "ALTER TABLE gmail_capturas_periodo ADD COLUMN tentativas INTEGER NOT NULL DEFAULT 0",
+      );
+    if (!colunasCapturas.has("proxima_tentativa_em"))
+      banco.exec(
+        "ALTER TABLE gmail_capturas_periodo ADD COLUMN proxima_tentativa_em INTEGER",
       );
     banco.exec("COMMIT");
   } catch (erro) {
