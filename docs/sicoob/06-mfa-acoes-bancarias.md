@@ -18,6 +18,8 @@ O Proprietário 1 solicita a recuperação em sua própria sessão autenticada. 
 
 Em desenvolvimento, a mensagem é gravada em `dev_mail`. Em produção, o envio usa as configurações SMTP (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` e `SMTP_FROM`). Para usar Gmail, deve-se configurar uma conta Gmail dedicada com senha de aplicativo no SMTP; a conexão atual de leitura de faturas não possui permissão de envio e não é reutilizada.
 
+Antes de liberar pagamentos, valide somente a conexão, autenticação e TLS com `npm.cmd run verificar:smtp`. Para também entregar uma mensagem de diagnóstico sem senha ou código, use `npm.cmd run verificar:smtp -- --destino=email@empresa.com --confirmar-envio=TESTE-SMTP`. O comando nunca exibe a senha SMTP. Se a entrega da recuperação falhar, o código temporário é invalidado; a solicitação continua registrada na auditoria, sem guardar o código.
+
 Solicitação e validação têm limitação de tentativas. A senha temporária e a senha permanente não aparecem na auditoria. A auditoria registra somente os eventos de cadastro, alteração, solicitação e conclusão da recuperação.
 
 ## Outras ações sensíveis

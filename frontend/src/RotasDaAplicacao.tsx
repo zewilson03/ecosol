@@ -5,6 +5,7 @@ import DetalheDaUsina from "./admin/DetalheDaUsina";
 import Faturas from "./admin/Faturas";
 import Clientes from "./admin/Clientes";
 import Financeiro from "./admin/Financeiro";
+import PagamentosECompras from "./admin/PagamentosECompras";
 import Gmail from "./admin/Gmail";
 import Bancario from "./admin/Bancario";
 import EstruturaDoSite from "./EstruturaDoSite";
@@ -34,6 +35,7 @@ export default function RotasDaAplicacao() {
           />
           <Route path="clientes" element={<Clientes />} />
           <Route path="financeiro" element={<Financeiro />} />
+          <Route path="pagamentos" element={<PagamentosECompras />} />
           <Route path="bancario" element={<Bancario />} />
           <Route path="gmail" element={<Gmail />} />
           <Route path="*" element={<Navigate to="/admin/usinas" replace />} />

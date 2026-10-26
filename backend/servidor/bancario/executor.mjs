@@ -482,6 +482,44 @@ export function criarExecutorBancario({
   };
 }
 
+export function criarAgendadorExecutorBancario({
+  executor,
+  intervaloMs = 5_000,
+  agendar = setInterval,
+  cancelar = clearInterval,
+}) {
+  let execucaoAtual;
+  let intervalo;
+  let encerrando = false;
+
+  const executar = () => {
+    if (encerrando || execucaoAtual) return;
+    execucaoAtual = executor
+      .processarUma()
+      .catch(() => {
+        // A falha categorizada fica na tentativa; não registrar payloads bancários.
+      })
+      .finally(() => {
+        execucaoAtual = undefined;
+      });
+  };
+
+  function iniciar() {
+    executar();
+    intervalo = agendar(executar, intervaloMs);
+    intervalo?.unref?.();
+  }
+
+  async function parar() {
+    if (encerrando) return;
+    encerrando = true;
+    if (intervalo !== undefined) cancelar(intervalo);
+    await execucaoAtual;
+  }
+
+  return { iniciar, parar };
+}
+
 export function iniciarExecutorBancarioSeConfigurado() {
   const modo = String(process.env.BANCARIO_EXECUTOR_MODO ?? "desligado")
     .trim()
@@ -499,12 +537,7 @@ export function iniciarExecutorBancarioSeConfigurado() {
     banco,
     adaptador: criarAdaptadorSicoobSimulado({ banco }),
   });
-  const executar = () => {
-    void executor.processarUma().catch(() => {
-      // A falha categorizada fica na tentativa; não registrar payloads bancários.
-    });
-  };
-  executar();
-  setInterval(executar, 5_000).unref();
-  return executor;
+  const agendador = criarAgendadorExecutorBancario({ executor });
+  agendador.iniciar();
+  return agendador;
 }

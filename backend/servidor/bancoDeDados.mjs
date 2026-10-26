@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { prepararFaturamento } from "./faturamento/esquema.mjs";
 import { prepararGmail } from "./gmail/esquema.mjs";
 import { prepararBancario } from "./bancario/esquema.mjs";
+import { prepararPagamentosECompras } from "./financeiro/pagamentos.mjs";
 
 let banco;
 
@@ -178,6 +179,7 @@ export function obterBanco() {
     prepararFaturamento(banco);
     prepararGmail(banco);
     prepararBancario(banco);
+    prepararPagamentosECompras(banco);
     return banco;
   } catch (erro) {
     const conexaoIncompleta = banco;
@@ -189,4 +191,22 @@ export function obterBanco() {
     }
     throw erro;
   }
+}
+
+export function fecharBanco() {
+  if (!banco) return;
+  const conexao = banco;
+  banco = undefined;
+  let falha;
+  try {
+    conexao.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  } catch (erro) {
+    falha = erro;
+  }
+  try {
+    conexao.close();
+  } catch (erro) {
+    falha ??= erro;
+  }
+  if (falha) throw falha;
 }

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { createServer } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
@@ -388,11 +389,22 @@ function rastrear(processo) {
 async function aceite() {
   const pasta = mkdtempSync(join(tmpdir(), "ecosol-gmail-aceite-"));
   const caminhoBanco = join(pasta, "ecosol.db");
+  const porta = await new Promise((resolver, rejeitar) => {
+    const servidor = createServer();
+    servidor.once("error", rejeitar);
+    servidor.listen(0, "127.0.0.1", () => {
+      const endereco = servidor.address();
+      servidor.close((erro) =>
+        erro ? rejeitar(erro) : resolver(endereco.port),
+      );
+    });
+  });
   const ambiente = {
     ...process.env,
     ECOSOL_DATA_DIR: pasta,
     NODE_ENV: "production",
-    PORT: "0",
+    PORT: String(porta),
+    APP_URL: `https://ecosol-aceite.invalid:${porta}`,
   };
   const processosAtivos = new Set();
   const registrarProcesso = (processo) => {

@@ -25,6 +25,9 @@ Permitir que um administrador da integração consulte novamente uma cobrança p
 - a resposta atrasada do processo que perdeu a posse é ignorada;
 - indisponibilidade gera tentativa falha auditável sem alterar o estado financeiro;
 - identificador divergente gera `CONCILIACAO_PROVEDOR_DIVERGENTE` e não altera a cobrança.
+- valor pago inferior ou superior ao valor esperado permanece inconclusivo e exige revisão;
+- estorno observado não rebaixa automaticamente uma cobrança liquidada;
+- repetir a consulta de uma liquidação confirmada preserva um único estado financeiro, mantendo o histórico de consultas.
 
 ## Segurança e privacidade
 

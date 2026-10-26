@@ -34,6 +34,60 @@ type Historico = {
   dados_novos: string;
 };
 type DadosFinanceiros = { contas: Conta[]; historico: Historico[] };
+type StatusRecebivel = "a_receber" | "vencido" | "pago" | "divergente";
+type Recebivel = {
+  id: string;
+  documento_id: number | null;
+  cliente: string;
+  uc: string;
+  competencia: string;
+  valor_centavos: number;
+  vencimento: string | null;
+  status: StatusRecebivel;
+  atualizado_em: string;
+};
+type VisaoDeRecebiveis = {
+  hoje: string;
+  totais: Record<
+    StatusRecebivel,
+    { quantidade: number; valor_centavos: number }
+  >;
+  recebiveis: Recebivel[];
+};
+type Divida = {
+  uc: string;
+  cliente: string;
+  principal_centavos: number;
+  encargos_centavos: number;
+  total_centavos: number;
+  alerta: boolean;
+  cobrancas: Array<{
+    operacao_id: string;
+    competencia: string;
+    vencimento: string;
+    principal_centavos: number;
+    encargos_centavos: number;
+    total_centavos: number;
+  }>;
+};
+type ApuracaoDeDividas = {
+  data_referencia: string;
+  limite_alerta_centavos: number;
+  totais: {
+    unidades: number;
+    alertas: number;
+    valor_centavos: number;
+    cobrancas_sem_uc: number;
+  };
+  dividas: Divida[];
+};
+
+const nomesDosStatus: Record<StatusRecebivel, string> = {
+  a_receber: "A receber",
+  vencido: "Vencido",
+  pago: "Pago",
+  divergente: "Conferir",
+};
 
 export default function Financeiro() {
   const administrador = usarAdministrador();
@@ -203,6 +257,8 @@ function PainelFinanceiro({ podeEditar }: { podeEditar: boolean }) {
           <span className="admin-status">Acesso de consulta</span>
         )}
       </CabecalhoDoModulo>
+      <RecebiveisConciliados />
+      <DividasPorUc />
       <div className="admin-resumos">
         <article>
           <span>Contas pendentes</span>
@@ -382,6 +438,295 @@ function PainelFinanceiro({ podeEditar }: { podeEditar: boolean }) {
         ))}
       </details>
     </>
+  );
+}
+
+function DividasPorUc() {
+  const [uc, definirUc] = useState("");
+  const [ucAplicada, definirUcAplicada] = useState("");
+  const parametros = new URLSearchParams();
+  if (ucAplicada) parametros.set("uc", ucAplicada);
+  const consulta = usarConsulta<ApuracaoDeDividas>(
+    `/api/admin/financeiro/dividas${parametros.size ? `?${parametros}` : ""}`,
+  );
+
+  return (
+    <section className="admin-cartao financeiro-dividas">
+      <div className="admin-barra">
+        <div>
+          <h2>Dívidas vencidas por UC</h2>
+          <small>
+            Somente cobranças registradas no banco e ainda não liquidadas.
+            {consulta.dados?.data_referencia
+              ? ` Referência: ${formatarData(consulta.dados.data_referencia)}.`
+              : ""}
+          </small>
+        </div>
+        <form
+          className="financeiro-busca-uc"
+          onSubmit={(evento) => {
+            evento.preventDefault();
+            definirUcAplicada(uc);
+          }}
+        >
+          <input
+            aria-label="Filtrar dívidas por UC"
+            inputMode="numeric"
+            placeholder="Filtrar por UC"
+            value={uc}
+            onChange={(evento) => definirUc(evento.target.value)}
+          />
+          <button className="admin-botao secundario">Buscar</button>
+        </form>
+      </div>
+      <EstadoDaConsulta {...consulta} repetir={consulta.atualizar} />
+      {consulta.dados && (
+        <>
+          <div className="admin-resumos financeiro-resumos-recebiveis">
+            <article>
+              <span>Total vencido</span>
+              <strong>
+                {formatarDinheiro(consulta.dados.totais.valor_centavos)}
+              </strong>
+              <small>{consulta.dados.totais.unidades} UC(s)</small>
+            </article>
+            <article
+              className={consulta.dados.totais.alertas ? "solar" : undefined}
+            >
+              <span>Acima do limite</span>
+              <strong>{consulta.dados.totais.alertas}</strong>
+              <small>
+                Limite:{" "}
+                {formatarDinheiro(consulta.dados.limite_alerta_centavos)}
+              </small>
+            </article>
+          </div>
+          {consulta.dados.totais.cobrancas_sem_uc > 0 && (
+            <p className="admin-aviso erro" role="alert">
+              {consulta.dados.totais.cobrancas_sem_uc} cobrança(s) vencida(s)
+              precisam de UC para entrar na apuração.
+            </p>
+          )}
+          {consulta.dados.dividas.length === 0 ? (
+            <ListaVazia texto="Nenhuma dívida vencida corresponde à UC informada." />
+          ) : (
+            <div className="admin-tabela">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Cliente e UC</th>
+                    <th>Cobranças</th>
+                    <th>Principal</th>
+                    <th>Encargos</th>
+                    <th>Total</th>
+                    <th>Situação</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {consulta.dados.dividas.map((divida) => (
+                    <tr key={divida.uc}>
+                      <td>
+                        <strong>{divida.cliente}</strong>
+                        <small>UC {divida.uc}</small>
+                      </td>
+                      <td>
+                        <details className="financeiro-composicao-divida">
+                          <summary>{divida.cobrancas.length} item(ns)</summary>
+                          <ul>
+                            {divida.cobrancas.map((cobranca) => (
+                              <li key={cobranca.operacao_id}>
+                                {cobranca.competencia || "Sem competência"} ·{" "}
+                                {cobranca.vencimento
+                                  ? formatarData(cobranca.vencimento)
+                                  : "Sem vencimento"}{" "}
+                                · {formatarDinheiro(cobranca.total_centavos)}
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      </td>
+                      <td>{formatarDinheiro(divida.principal_centavos)}</td>
+                      <td>{formatarDinheiro(divida.encargos_centavos)}</td>
+                      <td>
+                        <strong>
+                          {formatarDinheiro(divida.total_centavos)}
+                        </strong>
+                      </td>
+                      <td>
+                        <span
+                          className={`admin-status ${divida.alerta ? "financeiro-vencido" : "financeiro-a_receber"}`}
+                        >
+                          {divida.alerta ? "Alerta interno" : "Em atraso"}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function RecebiveisConciliados() {
+  const [filtros, definirFiltros] = useState({
+    uc: "",
+    status: "",
+    inicio: "",
+    fim: "",
+  });
+  const [aplicados, definirAplicados] = useState(filtros);
+  const parametros = new URLSearchParams();
+  Object.entries(aplicados).forEach(([chave, valor]) => {
+    if (valor) parametros.set(chave, valor);
+  });
+  const consulta = usarConsulta<VisaoDeRecebiveis>(
+    `/api/admin/financeiro/recebiveis${parametros.size ? `?${parametros}` : ""}`,
+  );
+  const totais = consulta.dados?.totais;
+  const recebiveis = consulta.dados?.recebiveis ?? [];
+
+  function aplicar(evento: FormEvent<HTMLFormElement>) {
+    evento.preventDefault();
+    definirAplicados({ ...filtros });
+  }
+
+  return (
+    <section className="admin-cartao financeiro-recebiveis">
+      <div className="admin-barra">
+        <div>
+          <h2>Recebíveis conciliados</h2>
+          <small>
+            Valores derivados das cobranças bancárias, sem edição manual.
+          </small>
+        </div>
+        <button
+          className="admin-botao secundario"
+          onClick={consulta.atualizar}
+          disabled={consulta.carregando}
+        >
+          Atualizar
+        </button>
+      </div>
+      <form className="admin-campos financeiro-filtros" onSubmit={aplicar}>
+        <label>
+          UC
+          <input
+            inputMode="numeric"
+            value={filtros.uc}
+            onChange={(evento) =>
+              definirFiltros({ ...filtros, uc: evento.target.value })
+            }
+            placeholder="Número da UC"
+          />
+        </label>
+        <label>
+          Status
+          <select
+            value={filtros.status}
+            onChange={(evento) =>
+              definirFiltros({ ...filtros, status: evento.target.value })
+            }
+          >
+            <option value="">Todos</option>
+            <option value="a_receber">A receber</option>
+            <option value="vencido">Vencido</option>
+            <option value="pago">Pago</option>
+            <option value="divergente">Conferir</option>
+          </select>
+        </label>
+        <label>
+          Vencimento inicial
+          <input
+            type="date"
+            value={filtros.inicio}
+            onChange={(evento) =>
+              definirFiltros({ ...filtros, inicio: evento.target.value })
+            }
+          />
+        </label>
+        <label>
+          Vencimento final
+          <input
+            type="date"
+            value={filtros.fim}
+            onChange={(evento) =>
+              definirFiltros({ ...filtros, fim: evento.target.value })
+            }
+          />
+        </label>
+        <button className="admin-botao">Aplicar filtros</button>
+      </form>
+      <EstadoDaConsulta {...consulta} repetir={consulta.atualizar} />
+      {totais && (
+        <div className="admin-resumos financeiro-resumos-recebiveis">
+          {(["a_receber", "vencido", "pago", "divergente"] as const).map(
+            (status) => (
+              <article
+                key={status}
+                className={status === "vencido" ? "solar" : undefined}
+              >
+                <span>{nomesDosStatus[status]}</span>
+                <strong>
+                  {formatarDinheiro(totais[status].valor_centavos)}
+                </strong>
+                <small>{totais[status].quantidade} cobrança(s)</small>
+              </article>
+            ),
+          )}
+        </div>
+      )}
+      {!consulta.carregando && !consulta.erro && recebiveis.length === 0 ? (
+        <ListaVazia texto="Nenhuma cobrança corresponde aos filtros informados." />
+      ) : (
+        recebiveis.length > 0 && (
+          <div className="admin-tabela">
+            <table>
+              <thead>
+                <tr>
+                  <th>Cliente e UC</th>
+                  <th>Competência</th>
+                  <th>Vencimento</th>
+                  <th>Valor</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recebiveis.map((recebivel) => (
+                  <tr key={recebivel.id}>
+                    <td>
+                      <strong>{recebivel.cliente}</strong>
+                      <small>
+                        {recebivel.uc
+                          ? `UC ${recebivel.uc}`
+                          : "UC não informada"}
+                      </small>
+                    </td>
+                    <td>{recebivel.competencia || "—"}</td>
+                    <td>
+                      {recebivel.vencimento
+                        ? formatarData(recebivel.vencimento)
+                        : "—"}
+                    </td>
+                    <td>{formatarDinheiro(recebivel.valor_centavos)}</td>
+                    <td>
+                      <span
+                        className={`admin-status financeiro-${recebivel.status}`}
+                      >
+                        {nomesDosStatus[recebivel.status]}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
+    </section>
   );
 }
 

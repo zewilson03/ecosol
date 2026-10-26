@@ -11,6 +11,20 @@ import { rotasOperacoesBancarias } from "./bancario/rotasOperacoes.mjs";
 import { exportarClientes } from "./exportacaoClientes.mjs";
 import { exportarUsinas } from "./exportacaoUsinas.mjs";
 import { rotasImportacaoDadosClientes } from "./importacaoDadosClientes.mjs";
+import {
+  ErroDeFiltroDeRecebiveis,
+  obterVisaoDeRecebiveis,
+} from "./financeiro/recebiveis.mjs";
+import { obterApuracaoDeDividas } from "./financeiro/dividas.mjs";
+import {
+  aprovarSolicitacao,
+  baixarPagamentoExterno,
+  criarProduto,
+  criarSolicitacaoPagamento,
+  criarTipoProduto,
+  enviarParaAprovacao,
+  listarPagamentosECompras,
+} from "./financeiro/pagamentos.mjs";
 
 export const rotasAdministrativas = Router();
 const exigirAdministrador = exigirNivel(1);
@@ -257,6 +271,149 @@ rotasAdministrativas.delete(
     } catch (erro) {
       banco.exec("ROLLBACK");
       throw erro;
+    }
+  },
+);
+
+rotasAdministrativas.get(
+  "/api/admin/financeiro/dividas",
+  exigirNivel(2),
+  (requisicao, resposta, proximo) => {
+    try {
+      resposta.json(obterApuracaoDeDividas(obterBanco(), requisicao.query));
+    } catch (erro) {
+      if (erro instanceof ErroDeFiltroDeRecebiveis)
+        return resposta.status(400).json({ erro: erro.message });
+      proximo(erro);
+    }
+  },
+);
+
+rotasAdministrativas.get(
+  "/api/admin/financeiro/recebiveis",
+  exigirNivel(2),
+  (requisicao, resposta, proximo) => {
+    try {
+      resposta.json(obterVisaoDeRecebiveis(obterBanco(), requisicao.query));
+    } catch (erro) {
+      if (erro instanceof ErroDeFiltroDeRecebiveis)
+        return resposta.status(400).json({ erro: erro.message });
+      proximo(erro);
+    }
+  },
+);
+
+rotasAdministrativas.get(
+  "/api/admin/financeiro/pagamentos",
+  exigirNivel(2),
+  (_requisicao, resposta) => resposta.json(listarPagamentosECompras()),
+);
+
+rotasAdministrativas.post(
+  "/api/admin/financeiro/tipos-produto",
+  exigirNivel(3),
+  (requisicao, resposta, proximo) => {
+    try {
+      resposta
+        .status(201)
+        .json(criarTipoProduto(requisicao.body, requisicao.administrador));
+    } catch (erro) {
+      if (!erro.status) return proximo(erro);
+      resposta.status(erro.status).json({ erro: erro.message });
+    }
+  },
+);
+
+rotasAdministrativas.post(
+  "/api/admin/financeiro/produtos",
+  exigirNivel(3),
+  (requisicao, resposta, proximo) => {
+    try {
+      resposta
+        .status(201)
+        .json(criarProduto(requisicao.body, requisicao.administrador));
+    } catch (erro) {
+      if (!erro.status) return proximo(erro);
+      resposta.status(erro.status).json({ erro: erro.message });
+    }
+  },
+);
+
+rotasAdministrativas.post(
+  "/api/admin/financeiro/solicitacoes",
+  exigirNivel(2),
+  (requisicao, resposta, proximo) => {
+    try {
+      resposta
+        .status(201)
+        .json(
+          criarSolicitacaoPagamento(requisicao.body, requisicao.administrador),
+        );
+    } catch (erro) {
+      if (!erro.status) return proximo(erro);
+      resposta.status(erro.status).json({ erro: erro.message });
+    }
+  },
+);
+
+rotasAdministrativas.post(
+  "/api/admin/financeiro/solicitacoes/:id/enviar",
+  exigirNivel(2),
+  (requisicao, resposta, proximo) => {
+    try {
+      resposta.json(
+        enviarParaAprovacao(
+          Number(requisicao.params.id),
+          requisicao.administrador,
+        ),
+      );
+    } catch (erro) {
+      if (!erro.status) return proximo(erro);
+      resposta.status(erro.status).json({ erro: erro.message });
+    }
+  },
+);
+
+rotasAdministrativas.post(
+  "/api/admin/financeiro/solicitacoes/:id/aprovar",
+  exigirNivel(1),
+  async (requisicao, resposta, proximo) => {
+    try {
+      resposta.json(
+        await aprovarSolicitacao(
+          Number(requisicao.params.id),
+          requisicao.administrador,
+          requisicao.body?.senha,
+        ),
+      );
+    } catch (erro) {
+      if (!erro.status) return proximo(erro);
+      resposta.status(erro.status).json({
+        erro: erro.message,
+        ...(erro.codigo ? { codigo: erro.codigo } : {}),
+      });
+    }
+  },
+);
+
+rotasAdministrativas.post(
+  "/api/admin/financeiro/solicitacoes/:id/baixar",
+  exigirNivel(1),
+  async (requisicao, resposta, proximo) => {
+    try {
+      resposta.json(
+        await baixarPagamentoExterno(
+          Number(requisicao.params.id),
+          requisicao.body,
+          requisicao.administrador,
+        ),
+      );
+    } catch (erro) {
+      if (!erro.status) return proximo(erro);
+      resposta.status(erro.status).json({
+        erro: erro.message,
+        ...(erro.codigo ? { codigo: erro.codigo } : {}),
+      });
     }
   },
 );

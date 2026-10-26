@@ -1,5 +1,4 @@
 import { randomInt, randomUUID } from "node:crypto";
-import nodemailer from "nodemailer";
 import {
   limitarTentativas,
   protegerSenha,
@@ -7,10 +6,11 @@ import {
   senhaConfere,
 } from "../autenticacao.mjs";
 import { obterBanco } from "../bancoDeDados.mjs";
+import { criarTransporteSmtpSeguro } from "../email/smtpSeguro.mjs";
 import { temPapelCritico } from "./permissoes.mjs";
 
 const validadeRecuperacaoMs = 15 * 60_000;
-let transporte;
+let smtp;
 
 function falha(mensagem, status = 400) {
   const erro = new Error(mensagem);
@@ -59,18 +59,10 @@ function exigirPrincipal(administrador) {
   return principal;
 }
 
-function obterTransporte() {
-  if (transporte) return transporte;
-  const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD } = process.env;
-  if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASSWORD)
-    falha("O envio de e-mail ainda não está configurado.", 503);
-  transporte = nodemailer.createTransport({
-    host: SMTP_HOST,
-    port: Number(SMTP_PORT),
-    secure: Number(SMTP_PORT) === 465,
-    auth: { user: SMTP_USER, pass: SMTP_PASSWORD },
-  });
-  return transporte;
+function obterSmtp() {
+  if (smtp) return smtp;
+  smtp = criarTransporteSmtpSeguro();
+  return smtp;
 }
 
 async function enviarCodigo(email, codigo) {
@@ -82,10 +74,9 @@ async function enviarCodigo(email, codigo) {
       .run(email, assunto, `codigo-temporario:${codigo}`);
     return;
   }
-  if (!process.env.SMTP_FROM)
-    falha("O remetente de e-mail não está configurado.", 503);
-  await obterTransporte().sendMail({
-    from: process.env.SMTP_FROM,
+  const { configuracao, transporte } = obterSmtp();
+  await transporte.sendMail({
+    from: configuracao.remetente,
     to: email,
     subject: assunto,
     text: texto,
@@ -175,7 +166,10 @@ export async function conferirCredencialConfirmacao(administrador, senha) {
   obterBanco().prepare("DELETE FROM login_attempts WHERE key=?").run(chave);
 }
 
-export async function solicitarRecuperacaoCredencial(administrador) {
+export async function solicitarRecuperacaoCredencial(
+  administrador,
+  { enviar = enviarCodigo } = {},
+) {
   const principal = exigirPrincipal(administrador);
   const chave = `bancario-recuperar-confirmacao:${principal.id}`;
   if (limitarTentativas(chave, 3))
@@ -213,7 +207,23 @@ export async function solicitarRecuperacaoCredencial(administrador) {
     banco.exec("ROLLBACK");
     throw erro;
   }
-  await enviarCodigo(principal.email, codigo);
+  try {
+    await enviar(principal.email, codigo);
+  } catch (erro) {
+    banco.exec("BEGIN IMMEDIATE");
+    try {
+      banco
+        .prepare(
+          "UPDATE bancario_recuperacoes_credencial SET usado_em=? WHERE proprietario_principal_id=? AND usado_em IS NULL",
+        )
+        .run(Date.now(), principal.id);
+      banco.exec("COMMIT");
+    } catch (erroPersistencia) {
+      banco.exec("ROLLBACK");
+      throw erroPersistencia;
+    }
+    throw erro;
+  }
   return { sucesso: true };
 }
 

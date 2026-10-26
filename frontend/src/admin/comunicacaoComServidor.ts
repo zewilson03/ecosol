@@ -164,14 +164,22 @@ export async function consultarServidorBancario<T>(
 export async function aprovarPagamentoComSenhaDoProprietario<T>(
   endereco: string,
 ): Promise<T> {
+  return executarComSenhaFinanceira<T>(endereco, {}, "Aprovar pagamento");
+}
+
+export async function executarComSenhaFinanceira<T>(
+  endereco: string,
+  dados: Record<string, unknown>,
+  titulo: string,
+): Promise<T> {
   const senha = await pedirSenha(
-    "Aprovar pagamento",
+    titulo,
     "Digite a senha de confirmação financeira cadastrada pelo Proprietário 1.",
   );
   return consultarServidor<T>(endereco, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ senha }),
+    body: JSON.stringify({ ...dados, senha }),
   });
 }
 

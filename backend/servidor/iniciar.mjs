@@ -3,7 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import { build as compilarInterface } from "vite";
-import { obterBanco } from "./bancoDeDados.mjs";
+import { fecharBanco, obterBanco } from "./bancoDeDados.mjs";
 import { rotas } from "./rotasDaAplicacao.mjs";
 import { rotasAdministrativas } from "./rotasAdministrativas.mjs";
 import { rotasFaturamento } from "./faturamento/rotas.mjs";
@@ -12,6 +12,10 @@ import { criarRepositorioGmail } from "./gmail/repositorio.mjs";
 import { protecaoHttp, tratarErroHttp } from "./segurancaHttp.mjs";
 import { iniciarExecutorBancarioSeConfigurado } from "./bancario/executor.mjs";
 import { obterConfiguracaoRede } from "./configuracaoRede.mjs";
+import { rotasSaude } from "./saude.mjs";
+import { criarAgendadorGmail } from "./gmail/agendador.mjs";
+import { criarEncerramentoOrdenado } from "./encerramento.mjs";
+import { marcarAplicacaoEmEncerramento } from "./estadoOperacional.mjs";
 
 const pastaDoBackend = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const pastaDoProjeto = resolve(pastaDoBackend, "..");
@@ -30,12 +34,13 @@ aplicacao.use(
 );
 aplicacao.use(express.json({ limit: "20kb" }));
 
+aplicacao.use(rotasSaude);
 aplicacao.use(rotas);
 aplicacao.use(rotasAdministrativas);
 aplicacao.use(rotasFaturamento);
 aplicacao.use(rotasGmail);
 obterBanco();
-iniciarExecutorBancarioSeConfigurado();
+const executorBancario = iniciarExecutorBancarioSeConfigurado();
 
 if (process.env.NODE_ENV !== "production") {
   // Recompila automaticamente a interface quando o código é salvo no VS Code.
@@ -54,19 +59,21 @@ aplicacao.get("/{*caminho}", (_requisicao, resposta) => {
 
 aplicacao.use(tratarErroHttp);
 
-aplicacao.listen(porta, host, () => {
+const servidor = aplicacao.listen(porta, host, () => {
   console.log(`Ecosol disponível em ${appUrl}`);
 });
 
-function consultarGmail() {
-  for (const conta of criarRepositorioGmail(obterBanco()).listarContas()) {
-    if (conta.status_autorizacao !== "conectada" || conta.pausada) continue;
-    if (sincronizadorGmail.emAndamento(conta.id)) continue;
-    void sincronizadorGmail.sincronizar(conta.id).catch(() => {
-      // A falha categorizada fica no progresso; nunca registrar tokens ou e-mails.
-    });
-  }
-}
+const agendadorGmail = criarAgendadorGmail({
+  listarContas: () => criarRepositorioGmail(obterBanco()).listarContas(),
+  sincronizador: sincronizadorGmail,
+});
+agendadorGmail.iniciar();
 
-consultarGmail();
-setInterval(consultarGmail, 5 * 60_000).unref();
+const encerrar = criarEncerramentoOrdenado({
+  servidor,
+  tarefas: [agendadorGmail, executorBancario],
+  fecharPersistencia: fecharBanco,
+  marcarIndisponivel: marcarAplicacaoEmEncerramento,
+});
+process.once("SIGTERM", () => void encerrar("SIGTERM"));
+process.once("SIGINT", () => void encerrar("SIGINT"));

@@ -61,6 +61,23 @@ await assert.rejects(
   concluirRecuperacaoCredencial(principal, codigo, "Outra senha 2028"),
   /inválida ou expirada/,
 );
+
+await assert.rejects(
+  solicitarRecuperacaoCredencial(principal, {
+    enviar: async () => {
+      throw new Error("falha simulada do SMTP");
+    },
+  }),
+  /falha simulada do SMTP/,
+);
+assert.equal(
+  banco
+    .prepare(
+      "SELECT COUNT(*) AS total FROM bancario_recuperacoes_credencial WHERE usado_em IS NULL",
+    )
+    .get().total,
+  0,
+);
 assert.equal(
   banco
     .prepare(
