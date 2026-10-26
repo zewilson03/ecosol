@@ -1,4 +1,5 @@
 import { obterVisaoDeRecebiveis } from "./recebiveis.mjs";
+import { calcularEncargosAtraso } from "./encargosAtraso.mjs";
 
 export const LIMITE_PADRAO_ALERTA_DIVIDA_CENTAVOS = 1_000_000;
 
@@ -37,6 +38,24 @@ export function obterApuracaoDeDividas(
       semUc.push(recebivel.id);
       continue;
     }
+    const encargosCalculados = calcularEncargosAtraso({
+      principal_centavos: recebivel.valor_centavos,
+      vencimento: recebivel.vencimento,
+      data_referencia: visao.hoje,
+    });
+    const encargosTransferidos = Number(
+      recebivel.encargos_transferidos_centavos ?? 0,
+    );
+    if (!Number.isSafeInteger(encargosTransferidos) || encargosTransferidos < 0)
+      throw new Error("O total de encargos transferidos é inválido.");
+    const encargos = encargosTransferidos
+      ? {
+          ...encargosCalculados,
+          multa_centavos: 0,
+          juros_centavos: 0,
+          total_centavos: 0,
+        }
+      : encargosCalculados;
     const atual = porUc.get(recebivel.uc) ?? {
       uc: recebivel.uc,
       cliente: recebivel.cliente,
@@ -46,7 +65,8 @@ export function obterApuracaoDeDividas(
       cobrancas: [],
     };
     atual.principal_centavos += recebivel.valor_centavos;
-    atual.total_centavos += recebivel.valor_centavos;
+    atual.encargos_centavos += encargos.total_centavos;
+    atual.total_centavos += recebivel.valor_centavos + encargos.total_centavos;
     if (!Number.isSafeInteger(atual.total_centavos))
       throw new Error("A dívida acumulada excedeu o limite seguro de cálculo.");
     atual.cobrancas.push({
@@ -55,8 +75,13 @@ export function obterApuracaoDeDividas(
       competencia: recebivel.competencia,
       vencimento: recebivel.vencimento,
       principal_centavos: recebivel.valor_centavos,
-      encargos_centavos: 0,
-      total_centavos: recebivel.valor_centavos,
+      dias_atraso: encargos.dias_atraso,
+      dias_juros: encargos.dias_juros,
+      encargos_transferidos_centavos: encargosTransferidos,
+      multa_centavos: encargos.multa_centavos,
+      juros_centavos: encargos.juros_centavos,
+      encargos_centavos: encargos.total_centavos,
+      total_centavos: recebivel.valor_centavos + encargos.total_centavos,
     });
     porUc.set(recebivel.uc, atual);
   }

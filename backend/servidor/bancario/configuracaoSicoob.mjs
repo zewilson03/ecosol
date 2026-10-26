@@ -93,6 +93,13 @@ export function obterConfiguracaoSicoob({
     pfxPath: lerTexto(variaveis, `${prefixo}MTLS_PFX_PATH`),
     pfxSenha: lerTexto(variaveis, `${prefixo}MTLS_PFX_PASSPHRASE`),
     contratoVersao: lerTexto(variaveis, `${prefixo}CONTRATO_VERSAO`),
+    contaCorrente: Object.freeze({
+      apiBaseUrl: lerTexto(variaveis, `${prefixo}CONTA_CORRENTE_API_BASE_URL`),
+      numeroContaCorrente: inteiroOpcional(
+        variaveis,
+        `${prefixo}CONTA_CORRENTE_NUMERO_CONTA`,
+      ),
+    }),
     cobranca: Object.freeze({
       numeroCliente: inteiroOpcional(
         variaveis,
@@ -136,10 +143,34 @@ export function obterConfiguracaoSicoob({
     `${prefixo}OAUTH_TOKEN_URL`,
     { ambiente, nodeEnv },
   );
+  const contaCorrenteUrl = validarUrl(
+    configuracao.contaCorrente.apiBaseUrl,
+    `${prefixo}CONTA_CORRENTE_API_BASE_URL`,
+    { ambiente, nodeEnv },
+  );
   if (apiUrl && apiUrl.search)
     falhar(`${prefixo}API_BASE_URL não pode conter parâmetros de consulta.`);
   if (tokenUrl && tokenUrl.search)
     falhar(`${prefixo}OAUTH_TOKEN_URL não pode conter parâmetros de consulta.`);
+  if (contaCorrenteUrl && contaCorrenteUrl.search)
+    falhar(
+      `${prefixo}CONTA_CORRENTE_API_BASE_URL não pode conter parâmetros de consulta.`,
+    );
+  if (
+    Boolean(configuracao.contaCorrente.apiBaseUrl) !==
+    Boolean(configuracao.contaCorrente.numeroContaCorrente)
+  )
+    falhar(
+      `A API de Conta Corrente exige ${prefixo}CONTA_CORRENTE_API_BASE_URL e ` +
+        `${prefixo}CONTA_CORRENTE_NUMERO_CONTA em conjunto.`,
+    );
+  if (
+    configuracao.contaCorrente.apiBaseUrl &&
+    !configuracao.oauthScope.split(/\s+/).includes("cco_consulta")
+  )
+    falhar(
+      `${prefixo}OAUTH_SCOPE deve incluir cco_consulta para consultar o extrato.`,
+    );
 
   if (ambiente === "producao") {
     if (nodeEnv !== "production")
@@ -184,5 +215,9 @@ export function resumirConfiguracaoSicoob(configuracao) {
       (configuracao.certificadoPath && configuracao.chavePrivadaPath),
     ),
     contrato_versao: configuracao.contratoVersao || null,
+    conta_corrente_configurada: Boolean(
+      configuracao.contaCorrente?.apiBaseUrl &&
+      configuracao.contaCorrente?.numeroContaCorrente,
+    ),
   };
 }

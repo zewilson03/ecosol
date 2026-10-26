@@ -16,6 +16,7 @@ import {
   obterVisaoDeRecebiveis,
 } from "./financeiro/recebiveis.mjs";
 import { obterApuracaoDeDividas } from "./financeiro/dividas.mjs";
+import { consultarExtratoBancario } from "./financeiro/extratoBancario.mjs";
 import {
   aprovarSolicitacao,
   baixarPagamentoExterno,
@@ -307,6 +308,39 @@ rotasAdministrativas.get(
   "/api/admin/financeiro/pagamentos",
   exigirNivel(2),
   (_requisicao, resposta) => resposta.json(listarPagamentosECompras()),
+);
+
+rotasAdministrativas.get(
+  "/api/admin/financeiro/extrato",
+  exigirNivel(2),
+  async (requisicao, resposta) => {
+    try {
+      resposta.json(await consultarExtratoBancario(requisicao.query));
+    } catch (erro) {
+      const codigo = erro?.codigo || "SICOOB_EXTRATO_INDISPONIVEL";
+      const entradaInvalida =
+        codigo.startsWith("SICOOB_EXTRATO_") &&
+        (codigo.endsWith("_INVALIDO") || codigo.endsWith("_INCOMPLETO"));
+      const configuracaoInvalida =
+        codigo === "SICOOB_CONFIGURACAO_INVALIDA" ||
+        codigo === "SICOOB_CONTA_CORRENTE_NAO_CONFIGURADA";
+      if (erro?.retryAfterMs)
+        resposta.set(
+          "Retry-After",
+          String(Math.ceil(erro.retryAfterMs / 1000)),
+        );
+      resposta
+        .status(entradaInvalida ? 400 : configuracaoInvalida ? 503 : 502)
+        .json({
+          erro: configuracaoInvalida
+            ? "A consulta de extrato bancário ainda não está configurada."
+            : entradaInvalida
+              ? "Informe um período válido para consultar o extrato."
+              : "Não foi possível consultar o extrato no Sicoob.",
+          codigo,
+        });
+    }
+  },
 );
 
 rotasAdministrativas.post(

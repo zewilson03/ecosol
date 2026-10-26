@@ -136,6 +136,34 @@ export function prepararBancario(banco) {
     CREATE INDEX IF NOT EXISTS bancario_operacoes_origem
       ON bancario_operacoes(origem_tipo, origem_id, origem_versao);
 
+    CREATE TABLE IF NOT EXISTS bancario_encargos_atraso (
+      id TEXT PRIMARY KEY,
+      operacao_origem_id TEXT NOT NULL REFERENCES bancario_operacoes(id) ON DELETE RESTRICT,
+      operacao_destino_id TEXT NOT NULL REFERENCES bancario_operacoes(id) ON DELETE RESTRICT,
+      unidade_id INTEGER NOT NULL,
+      data_referencia TEXT NOT NULL,
+      dias_atraso INTEGER NOT NULL CHECK(dias_atraso>1),
+      dias_juros INTEGER NOT NULL CHECK(dias_juros=dias_atraso-1),
+      principal_centavos INTEGER NOT NULL CHECK(principal_centavos>0),
+      multa_centavos INTEGER NOT NULL CHECK(multa_centavos>=0),
+      juros_centavos INTEGER NOT NULL CHECK(juros_centavos>=0),
+      total_centavos INTEGER NOT NULL CHECK(total_centavos>=0),
+      regra TEXT NOT NULL CHECK(regra='ecosol-encargos-atraso-v1'),
+      estado TEXT NOT NULL DEFAULT 'aplicado'
+        CHECK(estado IN ('aplicado','liberado')),
+      criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      liberado_em TEXT,
+      CHECK(operacao_origem_id<>operacao_destino_id),
+      CHECK(total_centavos=multa_centavos+juros_centavos),
+      CHECK((estado='aplicado' AND liberado_em IS NULL) OR
+            (estado='liberado' AND liberado_em IS NOT NULL))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS bancario_encargo_origem_ativo
+      ON bancario_encargos_atraso(operacao_origem_id)
+      WHERE estado='aplicado';
+    CREATE INDEX IF NOT EXISTS bancario_encargos_destino
+      ON bancario_encargos_atraso(operacao_destino_id,estado);
+
     CREATE TABLE IF NOT EXISTS bancario_artefatos_cobranca (
       operacao_id TEXT PRIMARY KEY REFERENCES bancario_operacoes(id) ON DELETE RESTRICT,
       nosso_numero TEXT NOT NULL CHECK(length(trim(nosso_numero))>0),

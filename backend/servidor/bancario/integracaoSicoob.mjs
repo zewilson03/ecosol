@@ -14,6 +14,7 @@ import {
 import { contratoOAuthSicoob } from "./contratoOAuthSicoob.mjs";
 import { FalhaHttpSicoob } from "./clienteHttpSeguro.mjs";
 import { criarContratoCobrancaSicoob } from "./contratoCobrancaSicoob.mjs";
+import { criarContaCorrenteSicoob } from "./contaCorrenteSicoob.mjs";
 
 /**
  * Compõe a integração sem definir nenhum campo ou endpoint do provedor. Os
@@ -59,6 +60,14 @@ export function criarIntegracaoSicoob({
     permitirHttpLocal,
     timeoutMs,
   });
+  const clienteContaCorrente = configuracao.contaCorrente.apiBaseUrl
+    ? criarClienteHttpSeguro({
+        baseUrl: configuracao.contaCorrente.apiBaseUrl,
+        agente,
+        permitirHttpLocal,
+        timeoutMs,
+      })
+    : null;
   const carregador = criarCarregadorTokenOAuth({
     clienteHttp: clienteToken,
     contratoOAuth: {
@@ -89,6 +98,14 @@ export function criarIntegracaoSicoob({
     gerenciadorOAuth: oauth,
     contrato: contratoCobrancaEfetivo,
   });
+  const contaCorrente = clienteContaCorrente
+    ? criarContaCorrenteSicoob({
+        clienteHttp: clienteContaCorrente,
+        gerenciadorOAuth: oauth,
+        clientId: configuracao.clientId,
+        numeroContaCorrente: configuracao.contaCorrente.numeroContaCorrente,
+      })
+    : null;
   const diagnostico = Object.freeze({
     async consultarSaude() {
       const token = await oauth.obter();
@@ -117,6 +134,7 @@ export function criarIntegracaoSicoob({
     adaptador,
     oauth,
     diagnostico,
+    contaCorrente,
     configuracao: resumirConfiguracaoSicoob(configuracao),
   });
 }

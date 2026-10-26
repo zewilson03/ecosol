@@ -77,11 +77,16 @@ export function obterVisaoDeRecebiveis(
   const filtros = validarFiltrosRecebiveis(consulta);
   const linhas = banco
     .prepare(
-      `SELECT id,origem_id,valor_centavos,vencimento,estado,provedor_id,
-              snapshot,atualizado_em
-       FROM bancario_operacoes
-       WHERE tipo='cobranca'
-       ORDER BY vencimento DESC, atualizado_em DESC, id DESC`,
+      `SELECT o.id,o.origem_id,o.valor_centavos,o.vencimento,o.estado,
+              o.provedor_id,o.snapshot,o.atualizado_em,
+              COALESCE((
+                SELECT SUM(e.total_centavos)
+                FROM bancario_encargos_atraso e
+                WHERE e.operacao_origem_id=o.id AND e.estado='aplicado'
+              ),0) AS encargos_transferidos_centavos
+       FROM bancario_operacoes o
+       WHERE o.tipo='cobranca'
+       ORDER BY o.vencimento DESC,o.atualizado_em DESC,o.id DESC`,
     )
     .all();
 
@@ -99,6 +104,9 @@ export function obterVisaoDeRecebiveis(
         uc: identidade.uc,
         competencia: identidade.competencia,
         valor_centavos: operacao.valor_centavos,
+        encargos_transferidos_centavos: Number(
+          operacao.encargos_transferidos_centavos ?? 0,
+        ),
         vencimento: operacao.vencimento,
         status: classificarRecebivel(operacao, hoje),
         atualizado_em: operacao.atualizado_em,

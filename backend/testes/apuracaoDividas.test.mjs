@@ -73,15 +73,21 @@ const banco = {
 const resultado = obterApuracaoDeDividas(banco, {}, "2026-10-26", 1_000_000);
 assert.equal(resultado.dividas.length, 2);
 assert.equal(resultado.dividas[0].uc, "100");
-assert.equal(resultado.dividas[0].total_centavos, 1_000_001);
+assert.equal(resultado.dividas[0].principal_centavos, 1_000_001);
+assert.equal(resultado.dividas[0].encargos_centavos, 41_800);
+assert.equal(resultado.dividas[0].total_centavos, 1_041_801);
 assert.equal(resultado.dividas[0].alerta, true);
 assert.equal(resultado.dividas[0].cobrancas.length, 2);
-assert.equal(resultado.dividas[1].total_centavos, 1_000_000);
-assert.equal(resultado.dividas[1].alerta, false);
+assert.equal(resultado.dividas[0].cobrancas[0].multa_centavos, 18_000);
+assert.equal(resultado.dividas[0].cobrancas[0].juros_centavos, 7_200);
+assert.equal(resultado.dividas[1].principal_centavos, 1_000_000);
+assert.equal(resultado.dividas[1].encargos_centavos, 41_000);
+assert.equal(resultado.dividas[1].total_centavos, 1_041_000);
+assert.equal(resultado.dividas[1].alerta, true);
 assert.deepEqual(resultado.totais, {
   unidades: 2,
-  alertas: 1,
-  valor_centavos: 2_000_001,
+  alertas: 2,
+  valor_centavos: 2_082_801,
   cobrancas_sem_uc: 1,
 });
 assert.doesNotMatch(JSON.stringify(resultado), /12345678901|snapshot/i);
