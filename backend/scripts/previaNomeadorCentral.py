@@ -13,14 +13,24 @@ import json
 import os
 import shutil
 import sqlite3
+import sys
 import stat
 import sys
 import tempfile
 from functools import lru_cache
 from pathlib import Path
 
+import pandas as pd
 import pdfplumber
 from pypdf import PdfReader, PdfWriter
+
+_FONTES_IDENTIFICACAO_CENTRAL = {}
+
+# A ponte Node interpreta o JSON estruturado como UTF-8. Em consoles Windows
+# configurados em cp1252, nomes de clientes acentuados corrompiam os caminhos
+# temporários e faziam a camada de segurança rejeitar um PDF válido.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 
 def argumentos():
@@ -32,6 +42,11 @@ def argumentos():
     parser.add_argument("--atualizador", required=True)
     parser.add_argument("--planilha-venda")
     parser.add_argument("--pasta-vendas")
+    # Fontes somente leitura do fluxo de identificação da Central. Elas não
+    # substituem o cadastro do José: servem para recuperar, com as mesmas
+    # regras da Central, a UC histórica e o contexto comercial da fatura.
+    parser.add_argument("--planilha-carteira")
+    parser.add_argument("--cache-medidores")
     parser.add_argument("--somente-localizar", action="store_true")
     parser.add_argument("--simular", action="store_true")
     parser.add_argument("--processar-isolado", action="store_true")
@@ -105,7 +120,7 @@ def ler_pdf_do_gmail(caminho_banco: str, documento: int) -> tuple[bytes, str, di
     return bytes(registro[0]), str(registro[1] or "fatura.pdf"), dados
 
 
-def ler_contexto_gmail(caminho_banco: str, documento: int) -> dict:
+def ler_contexto_gmail(caminho_banco: str, documento: int, uc_evidencia: str = "", uc_chave: str = "") -> dict:
     """Le somente o contexto cadastral que ja sustenta a triagem Gmail."""
     caminho = Path(caminho_banco).resolve()
     conexao = sqlite3.connect(f"file:{caminho.as_posix()}?mode=ro", uri=True)
@@ -116,19 +131,24 @@ def ler_contexto_gmail(caminho_banco: str, documento: int) -> dict:
                       COALESCE(c.name,o.nome,p.nome),s.nome
                    FROM faturamento_documentos d
                    LEFT JOIN faturamento_unidades u
-                     ON u.uc=json_extract(d.dados,'$.uc')
+                     ON u.uc=COALESCE(NULLIF(?,''),json_extract(d.dados,'$.uc'))
+                     OR ltrim(u.uc,'0')=NULLIF(?, '')
                      OR u.id=(SELECT unidade_id FROM faturamento_unidades_aliases
-                              WHERE uc=json_extract(d.dados,'$.uc'))
+                              WHERE uc=COALESCE(NULLIF(?,''),json_extract(d.dados,'$.uc'))
+                                 OR ltrim(uc,'0')=NULLIF(?, ''))
                    LEFT JOIN customers c ON c.id=u.cliente_id
                    LEFT JOIN faturamento_clientes_operacionais o ON o.id=u.cliente_operacional_id
                    LEFT JOIN faturamento_clientes_provisorios p ON p.id=u.cliente_provisorio_id
                    LEFT JOIN usinas s ON s.id=u.usina_id
                   WHERE d.id=? AND d.classificacao IN ('triagem','fatura')
                     AND d.finalidade='cobranca' AND d.excluido_em IS NULL""",
-            (documento,),
-        ).fetchone()
+            (uc_evidencia, uc_chave, uc_evidencia, uc_chave, documento),
+        ).fetchall()
         if not registro:
             raise RuntimeError("documento_gmail_indisponivel")
+        if len(registro) > 1:
+            raise RuntimeError(f"vinculo_cadastral_ambiguo:{len(registro)}")
+        registro = registro[0]
         dados = json.loads(registro[2] or "{}")
         aliases = []
         if registro[3]:
@@ -144,6 +164,170 @@ def ler_contexto_gmail(caminho_banco: str, documento: int) -> dict:
         "documento": registro[0], "nome": registro[1], "dados": dados,
         "unidadeId": registro[3], "ucNova": registro[4], "cliente": registro[5],
         "usina": registro[6], "ucsAntigas": aliases,
+    }
+
+
+def identificar_pdf_gmail_pela_central(app, pdf_original: bytes) -> dict:
+    """Delega à Central a UC e o mês presentes no PDF Gmail, sem gravá-lo."""
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as rascunho:
+        rascunho.write(pdf_original)
+        caminho_rascunho = Path(rascunho.name)
+    try:
+        with pdfplumber.open(caminho_rascunho) as pdf:
+            texto_bruto = "\n".join(pagina.extract_text() or "" for pagina in pdf.pages)
+        return {
+            "ucNova": app.limpar_numero(app.extrair_uc_nova(texto_bruto)),
+            "medidor": app.limpar_numero(app.extrair_medidor(texto_bruto)),
+            "mes": app.extrair_mes_vencimento(texto_bruto),
+        }
+    finally:
+        caminho_rascunho.unlink(missing_ok=True)
+
+
+def validar_uc_pdf_com_metadado(app, contexto: dict, uc_pdf: str):
+    uc_metadado = app.limpar_numero(contexto["dados"].get("uc"))
+    if uc_metadado and app.chave_uc(uc_metadado) != app.chave_uc(uc_pdf):
+        raise RuntimeError("uc_pdf_diverge_do_metadado_gmail")
+
+
+def carregar_fontes_de_identificacao_central(args, app):
+    """Monta os índices com as funções de UC da Central, sem gravar fontes.
+
+    ``processar_tudo()`` cria esses mesmos mapas antes de processar cada PDF.
+    O adaptador precisa apenas da parte consultiva: lê a planilha oficial e o
+    cache JSON já existente. Não chama ``carregar_ou_montar_cache_medidores``
+    porque esse método pode consolidar ou reconstruir o cache da Central.
+    """
+    if not args.planilha_carteira or not args.cache_medidores:
+        return None
+    planilha = Path(args.planilha_carteira)
+    cache = Path(args.cache_medidores)
+    if not planilha.is_file() or not cache.is_file():
+        return None
+    chave_fontes = (str(planilha.resolve()), str(cache.resolve()))
+    if chave_fontes in _FONTES_IDENTIFICACAO_CENTRAL:
+        return _FONTES_IDENTIFICACAO_CENTRAL[chave_fontes]
+
+    # A Central configurada usa SQLite. Seu leitor inicializa o esquema para
+    # compatibilidade, então a chamada ocorre sobre uma cópia temporária local
+    # do índice. Para o formato legado JSON, o leitor original já é só leitura.
+    app.versao_cache_medidores = 1
+    if cache.suffix.lower() in {".db", ".sqlite", ".sqlite3"}:
+        pasta_temporaria = Path(__file__).resolve().parents[1] / "data"
+        with tempfile.TemporaryDirectory(
+            prefix="ecosol-indice-medidores-", dir=pasta_temporaria,
+        ) as pasta:
+            copia_cache = Path(pasta) / cache.name
+            shutil.copy2(cache, copia_cache)
+            indice_medidores = app._carregar_cache_medidores_sqlite(str(copia_cache))
+    else:
+        indice_medidores = app._carregar_cache_medidores_de_arquivo(str(cache))
+    if not indice_medidores:
+        return None
+
+    xls = pd.ExcelFile(planilha)
+    aba = "Consulta" if "Consulta" in xls.sheet_names else xls.sheet_names[0]
+    df = pd.read_excel(planilha, sheet_name=aba, dtype=str)
+    df.columns = df.columns.str.strip().str.upper()
+    col_uc_antiga = next(
+        (c for c in df.columns if c in [
+            "UC ANTIGA", "UC", "NÂº UC", "NÂ° UC", "UNIDADE CONSUMIDORA", "NUMERO UC",
+        ]),
+        None,
+    )
+    col_uc_nova = next(
+        (c for c in df.columns if c in [
+            "UC NOVA", "NOVO NÂº DA UC", "NOVO NÂ° DA UC", "NOVA UC", "NOVO NUMERO UC",
+        ]),
+        None,
+    )
+    col_usina = next((c for c in df.columns if c in ["USINA", "PLANTA"]), None)
+    col_cliente = next((c for c in df.columns if c == "CLIENTE"), None)
+    if not col_cliente and len(df.columns) >= 3:
+        col_cliente = df.columns[2]
+    if not col_usina and len(df.columns) >= 4:
+        col_usina = df.columns[3]
+    if (not col_uc_antiga and not col_uc_nova) or not col_cliente:
+        return None
+
+    mapa_uc_antiga, mapa_uc_nova = {}, {}
+    # Mesmo preenchimento de mapas e mesma resolução de duplicidade da
+    # Central; o índice de transferidos está vazio na configuração oficial
+    # atual, portanto não introduz uma fonte alternativa no José.
+    for _, linha in df.iterrows():
+        uc_antiga = app.limpar_numero(linha.get(col_uc_antiga, "")) if col_uc_antiga else ""
+        uc_nova = app.limpar_numero(linha.get(col_uc_nova, "")) if col_uc_nova else ""
+        cliente = str(linha.get(col_cliente, "CLIENTE")).strip()
+        if not cliente:
+            continue
+        info = {
+            "uc_antiga": uc_antiga,
+            "uc_nova": uc_nova,
+            "usina": str(linha.get(col_usina, "GERAL")).strip().upper() if col_usina else "GERAL",
+            "cliente": cliente,
+        }
+        for chave in (uc_antiga, app.chave_uc(uc_antiga)):
+            app.atualizar_mapa_uc(mapa_uc_antiga, chave, info, tipo_uc="uc_antiga")
+        for chave in (uc_nova, app.chave_uc(uc_nova)):
+            app.atualizar_mapa_uc(mapa_uc_nova, chave, info, tipo_uc="uc_nova")
+    fontes = {
+        "indiceMedidores": indice_medidores,
+        "mapaUcAntiga": mapa_uc_antiga,
+        "mapaUcNova": mapa_uc_nova,
+    }
+    _FONTES_IDENTIFICACAO_CENTRAL[chave_fontes] = fontes
+    return fontes
+
+
+def resolver_contexto_pelas_fontes_da_central(args, app, identificado_pdf: dict) -> dict | None:
+    """Reproduz a cadeia consultiva da Central: medidor, UC antiga e UC nova.
+
+    Não preenche o cadastro do José nem atualiza o cache quando encontra uma
+    equivalência. Qualquer ambiguidade da planilha continua sendo bloqueio.
+    """
+    fontes = carregar_fontes_de_identificacao_central(args, app)
+    if not fontes:
+        return None
+    # Impede o fallback original de iniciar uma indexação em background no
+    # acervo da Central quando o cache não contém o medidor.
+    app.pasta_faturas_antigas = ""
+    registro, origem_uc_antiga = app.buscar_medidor_em_antigos(
+        identificado_pdf.get("medidor", ""), fontes["indiceMedidores"],
+    )
+    uc_antiga = app.limpar_numero(registro.get("uc_antiga", "")) if registro else ""
+    info = app.obter_info_por_uc(uc_antiga, fontes["mapaUcAntiga"]) if uc_antiga else None
+    origem_info = "planilha_uc_antiga" if info else ""
+    if not info:
+        info = app.obter_info_por_uc(identificado_pdf.get("ucNova", ""), fontes["mapaUcNova"])
+        origem_info = "planilha_uc_nova" if info else ""
+    if not info or app.info_tem_conflito_uc(info):
+        return None
+    return {
+        "unidadeId": None,
+        "ucNova": app.limpar_numero(identificado_pdf.get("ucNova", "")),
+        "ucsAntigas": [uc_antiga] if uc_antiga else [app.limpar_numero(info.get("uc_antiga", ""))],
+        "cliente": info.get("cliente") or None,
+        "usina": info.get("usina") or None,
+        "origemIdentificacao": "central",
+        "origemUcAntiga": origem_uc_antiga,
+        "origemInfo": origem_info,
+    }
+
+
+def resolver_contexto_integrado(args, app, contexto: dict, identificado_pdf: dict) -> dict:
+    """Prefere vínculo inequívoco do José; usa a fonte original como fallback."""
+    if contexto["unidadeId"] and contexto["ucNova"] and contexto["cliente"] and contexto["usina"]:
+        contexto["origemIdentificacao"] = "jose"
+        return contexto
+    central = resolver_contexto_pelas_fontes_da_central(args, app, identificado_pdf)
+    if not central or not central["ucNova"] or not central["cliente"] or not central["usina"]:
+        return contexto
+    return {
+        **contexto,
+        **central,
+        # O JSON do Gmail preserva a competência da captura; a Central fornece
+        # a identidade, não substitui esse metadado.
+        "dados": contexto["dados"],
     }
 
 
@@ -413,29 +597,21 @@ def simular_documento(args, app, atualizador, documento: int):
     temporaria = None
     workbook = None
     try:
-        contexto = ler_contexto_gmail(args.banco, documento)
-        if not contexto["unidadeId"] or not contexto["ucNova"] or not contexto["usina"]:
+        pdf_original, _, _ = ler_pdf_do_gmail(args.banco, documento)
+        identificado_pdf = identificar_pdf_gmail_pela_central(app, pdf_original)
+        uc_pdf = identificado_pdf["ucNova"]
+        mes = identificado_pdf["mes"]
+        if not uc_pdf or not mes:
+            raise RuntimeError("campos_obrigatorios_nao_extraidos_pela_central")
+        contexto = ler_contexto_gmail(
+            args.banco, documento, uc_pdf, app.chave_uc(uc_pdf),
+        )
+        validar_uc_pdf_com_metadado(app, contexto, uc_pdf)
+        contexto = resolver_contexto_integrado(args, app, contexto, identificado_pdf)
+        if not contexto["ucNova"] or not contexto["cliente"] or not contexto["usina"]:
             raise RuntimeError("vinculo_cadastral_incompleto")
         if not contexto["ucsAntigas"]:
             raise RuntimeError("uc_antiga_nao_referenciada")
-        pdf_original, _, _ = ler_pdf_do_gmail(args.banco, documento)
-
-        # Primeiro se usa somente a UC extraída pelo nomeador original. A linha
-        # é então localizada de forma única entre as UCs históricas cadastradas.
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as rascunho:
-            rascunho.write(pdf_original)
-            caminho_rascunho = Path(rascunho.name)
-        try:
-            with pdfplumber.open(caminho_rascunho) as pdf:
-                texto_bruto = "\n".join(pagina.extract_text() or "" for pagina in pdf.pages)
-            uc_pdf = app.limpar_numero(app.extrair_uc_nova(texto_bruto))
-            mes = app.extrair_mes_vencimento(texto_bruto)
-        finally:
-            caminho_rascunho.unlink(missing_ok=True)
-        if not uc_pdf or not mes:
-            raise RuntimeError("campos_obrigatorios_nao_extraidos_pela_central")
-        if uc_pdf != contexto["ucNova"]:
-            raise RuntimeError("uc_pdf_diverge_do_vinculo_cadastral")
 
         localizacao = localizar_linha_planilha(
             args, atualizador, contexto["dados"], uc_pdf, contexto["ucsAntigas"],
@@ -557,26 +733,73 @@ def valor_boleto_da_simulacao(simulacao, atualizador):
 
 
 def localizar_documentos(args):
+    app = carregar_motor(args.motor)
     atualizador = carregar_modulo("atualizador_central", args.atualizador)
     documentos = [int(valor) for valor in str(args.documentos or args.documento).split(",") if valor.strip()]
     resultados = []
     for documento in documentos:
+        contexto = None
+        uc_pdf = None
         try:
-            contexto = ler_contexto_gmail(args.banco, documento)
-            if not contexto["unidadeId"] or not contexto["ucNova"] or not contexto["usina"]:
+            pdf_original, _, _ = ler_pdf_do_gmail(args.banco, documento)
+            identificado_pdf = identificar_pdf_gmail_pela_central(app, pdf_original)
+            uc_pdf = identificado_pdf["ucNova"]
+            if not uc_pdf:
+                raise RuntimeError("campos_obrigatorios_nao_extraidos_pela_central")
+            contexto = ler_contexto_gmail(
+                args.banco, documento, uc_pdf, app.chave_uc(uc_pdf),
+            )
+            validar_uc_pdf_com_metadado(app, contexto, uc_pdf)
+            contexto = resolver_contexto_integrado(args, app, contexto, identificado_pdf)
+            if not contexto["ucNova"] or not contexto["cliente"] or not contexto["usina"]:
                 raise RuntimeError("vinculo_cadastral_incompleto")
             if not contexto["ucsAntigas"]:
                 raise RuntimeError("uc_antiga_nao_referenciada")
-            localizacao = localizar_linha_planilha(
-                args, atualizador, contexto["dados"], contexto["ucNova"],
-                contexto["ucsAntigas"], contexto["usina"],
-            )
+            base = {
+                "documento": documento, "ucNova": contexto["ucNova"],
+                "ucPdf": uc_pdf,
+                "cliente": contexto["cliente"], "usina": contexto["usina"],
+                "competencia": contexto["dados"].get("competencia") or None,
+                "origemIdentificacao": contexto.get("origemIdentificacao"),
+                "origemUcAntiga": contexto.get("origemUcAntiga"),
+                "origemInfo": contexto.get("origemInfo"),
+                "mesFaturamento": identificado_pdf.get("mes") or None,
+            }
+            try:
+                localizacao = localizar_linha_planilha(
+                    args, atualizador, contexto["dados"], contexto["ucNova"],
+                    contexto["ucsAntigas"], contexto["usina"], identificado_pdf["mes"],
+                )
+            except Exception as erro_financeiro:
+                # A Central ainda pode nomear, carimbar e preparar o PDF para
+                # impressão quando não há planilha/linha financeira. O erro
+                # fica explícito, mas não apaga a identificação documental.
+                resultados.append({
+                    **base,
+                    "situacao": "identificada",
+                    "motivoFinanceiro": str(erro_financeiro),
+                })
+                continue
             resultados.append({
-                "documento": documento, "situacao": "segura", "ucNova": contexto["ucNova"],
-                "usina": contexto["usina"], **{chave: valor for chave, valor in localizacao.items() if chave != "classica"},
+                **base,
+                "situacao": "segura",
+                **{chave: valor for chave, valor in localizacao.items() if chave != "classica"},
             })
         except Exception as erro:
-            resultados.append({"documento": documento, "situacao": "revisar", "motivo": str(erro)})
+            resultado = {"documento": documento, "situacao": "revisar", "motivo": str(erro)}
+            if contexto:
+                resultado.update({
+                    "ucNova": contexto["ucNova"], "ucPdf": uc_pdf,
+                    "cliente": contexto["cliente"],
+                    "usina": contexto["usina"],
+                    "competencia": contexto["dados"].get("competencia") or None,
+                    "origemIdentificacao": contexto.get("origemIdentificacao"),
+                    "origemUcAntiga": contexto.get("origemUcAntiga"),
+                    "origemInfo": contexto.get("origemInfo"),
+                })
+            elif uc_pdf:
+                resultado.update({"ucNova": uc_pdf, "ucPdf": uc_pdf})
+            resultados.append(resultado)
     return {"resultados": resultados}
 
 
@@ -801,47 +1024,67 @@ def processar_documental_isolado(args):
         raise RuntimeError("diretorio_de_homologacao_ja_existe")
     app = carregar_motor(args.motor)
     finais = []
+    pendencias = []
     for documento in documentos:
-        contexto = ler_contexto_gmail(args.banco, documento)
-        if not contexto["unidadeId"] or not contexto["ucNova"] or not contexto["cliente"] or not contexto["usina"]:
-            raise RuntimeError("vinculo_cadastral_incompleto")
-        if not contexto["ucsAntigas"]:
-            raise RuntimeError("uc_antiga_nao_referenciada")
-        pdf, nome_original, _ = ler_pdf_do_gmail(args.banco, documento)
-        uc_antiga = contexto["ucsAntigas"][0]
-        temporaria, identificado = preparar_fatura_temporaria_da_central(
-            app, pdf, uc_antiga, contexto["cliente"], contexto["usina"],
-        )
         try:
-            if identificado["ucNova"] != contexto["ucNova"]:
-                raise RuntimeError("uc_pdf_diverge_do_vinculo_cadastral")
-            pasta_final = raiz / "pdfs_finais"
-            pasta_impressao = raiz / "impressao"
-            pasta_final.mkdir(parents=True, exist_ok=True)
-            pasta_impressao.mkdir(parents=True, exist_ok=True)
-            base = app.limpar_nome_arquivo(
-                f"Fatura EQT - {identificado['mes']} - {contexto['usina']} - {contexto['cliente']} - "
-                f"{uc_antiga} - {identificado['ucNova']}"
+            pdf, nome_original, _ = ler_pdf_do_gmail(args.banco, documento)
+            identificado_pdf = identificar_pdf_gmail_pela_central(app, pdf)
+            uc_pdf = identificado_pdf["ucNova"]
+            if not uc_pdf:
+                raise RuntimeError("campos_obrigatorios_nao_extraidos_pela_central")
+            contexto = ler_contexto_gmail(
+                args.banco, documento, uc_pdf, app.chave_uc(uc_pdf),
             )
-            nome_final = app.criar_nome_saida_seguro(base, str(pasta_final))
-            destino = pasta_final / nome_final
-            shutil.copy2(temporaria, destino)
-            preparado = app.preparar_pdf_a4_para_impressao(str(destino))
+            validar_uc_pdf_com_metadado(app, contexto, uc_pdf)
+            contexto = resolver_contexto_integrado(args, app, contexto, identificado_pdf)
+            if not contexto["ucNova"] or not contexto["cliente"] or not contexto["usina"]:
+                raise RuntimeError("vinculo_cadastral_incompleto")
+            if not contexto["ucsAntigas"]:
+                raise RuntimeError("uc_antiga_nao_referenciada")
+            uc_antiga = contexto["ucsAntigas"][0]
+            temporaria, identificado = preparar_fatura_temporaria_da_central(
+                app, pdf, uc_antiga, contexto["cliente"], contexto["usina"],
+            )
             try:
-                destino_impressao = pasta_impressao / nome_final
-                shutil.copy2(preparado, destino_impressao)
+                if identificado["ucNova"] != contexto["ucNova"]:
+                    raise RuntimeError("uc_pdf_diverge_do_vinculo_cadastral")
+                pasta_final = raiz / "pdfs_finais"
+                pasta_impressao = raiz / "impressao"
+                pasta_final.mkdir(parents=True, exist_ok=True)
+                pasta_impressao.mkdir(parents=True, exist_ok=True)
+                base = app.limpar_nome_arquivo(
+                    f"Fatura EQT - {identificado['mes']} - {contexto['usina']} - {contexto['cliente']} - "
+                    f"{uc_antiga} - {identificado['ucNova']}"
+                )
+                nome_final = app.criar_nome_saida_seguro(base, str(pasta_final))
+                destino = pasta_final / nome_final
+                shutil.copy2(temporaria, destino)
+                preparado = app.preparar_pdf_a4_para_impressao(str(destino))
+                try:
+                    destino_impressao = pasta_impressao / nome_final
+                    shutil.copy2(preparado, destino_impressao)
+                finally:
+                    Path(preparado).unlink(missing_ok=True)
+                finais.append({
+                    "documento": documento, "nomeOriginal": nome_original,
+                    "nomeFinal": nome_final, "ucAntiga": uc_antiga,
+                    "ucNova": identificado["ucNova"], "mesFaturamento": identificado["mes"],
+                    "cliente": contexto["cliente"], "usina": contexto["usina"],
+                    "pdf_final": str(destino), "pdf_impressao": str(destino_impressao),
+                })
             finally:
-                Path(preparado).unlink(missing_ok=True)
-            finais.append({
-                "documento": documento, "nomeOriginal": nome_original,
-                "nomeFinal": nome_final, "ucAntiga": uc_antiga,
-                "ucNova": identificado["ucNova"], "mesFaturamento": identificado["mes"],
-                "cliente": contexto["cliente"], "usina": contexto["usina"],
-                "pdf_final": str(destino), "pdf_impressao": str(destino_impressao),
-            })
-        finally:
-            temporaria.unlink(missing_ok=True)
-    return {"situacao": "concluido", "modo": "documental", "documentos": documentos, "pdfs": finais}
+                temporaria.unlink(missing_ok=True)
+        except Exception as erro:
+            # A homologação documental é independente por PDF: uma UC sem
+            # evidência não impede que os demais arquivos do mesmo lote sejam
+            # carimbados e preparados para impressão simulada.
+            pendencias.append({"documento": documento, "motivo": str(erro)})
+            continue
+    return {
+        "situacao": "concluido" if finais else "revisar",
+        "modo": "documental", "documentos": documentos,
+        "pdfs": finais, "pendencias": pendencias,
+    }
 
 
 if __name__ == "__main__":

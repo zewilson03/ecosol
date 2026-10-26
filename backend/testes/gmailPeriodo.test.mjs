@@ -131,6 +131,32 @@ try {
     }).estado,
     "concluida",
   );
+  const preparacao = repo.salvarPreparacaoCentralDaCaptura({
+    capturaId: captura.id,
+    chaveIdempotencia: "a".repeat(64),
+    estado: "concluida",
+    resultado: { resumo: { pdfsProntosParaImpressao: 1 }, itens: [] },
+  });
+  assert.equal(preparacao.estado, "concluida");
+  assert.equal(
+    repo.obterPreparacaoCentralDaCaptura(captura.id).resultado.resumo
+      .pdfsProntosParaImpressao,
+    1,
+  );
+  repo.salvarPreparacaoCentralDaCaptura({
+    capturaId: captura.id,
+    chaveIdempotencia: "b".repeat(64),
+    estado: "revisar",
+    resultado: { resumo: { pdfsProntosParaImpressao: 0 }, itens: [] },
+  });
+  assert.equal(
+    db
+      .prepare(
+        "SELECT COUNT(*) AS total FROM gmail_capturas_periodo_preparacoes_central_historico WHERE captura_id=?",
+      )
+      .get(captura.id).total,
+    1,
+  );
   const retomavel = repo.iniciarCapturaPeriodo({
     contaId: conta.id,
     inicio: "2026-10-22T00:00",

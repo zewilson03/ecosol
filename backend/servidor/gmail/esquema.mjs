@@ -159,6 +159,33 @@ export function prepararGmail(banco) {
       CREATE INDEX IF NOT EXISTS gmail_capturas_periodo_mensagens_message
         ON gmail_capturas_periodo_mensagens(message_id,captura_id);
 
+      -- Resultado exclusivamente local da preparação documental da Central.
+      -- Não representa aprovação, cobrança, nem autorização de impressão física.
+      CREATE TABLE IF NOT EXISTS gmail_capturas_periodo_preparacoes_central (
+        captura_id INTEGER PRIMARY KEY REFERENCES gmail_capturas_periodo(id) ON DELETE RESTRICT,
+        chave_idempotencia TEXT NOT NULL,
+        estado TEXT NOT NULL CHECK(estado IN ('concluida','revisar','falhou')),
+        resultado TEXT NOT NULL,
+        criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        atualizado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      -- Uma nova fonte da Central não pode apagar a evidência da preparação
+      -- anterior. O estado corrente segue em uma linha; versões substituídas
+      -- ficam somente para rastreabilidade, sem representar aprovação.
+      CREATE TABLE IF NOT EXISTS gmail_capturas_periodo_preparacoes_central_historico (
+        id INTEGER PRIMARY KEY,
+        captura_id INTEGER NOT NULL REFERENCES gmail_capturas_periodo(id) ON DELETE RESTRICT,
+        chave_idempotencia TEXT NOT NULL,
+        estado TEXT NOT NULL CHECK(estado IN ('concluida','revisar','falhou')),
+        resultado TEXT NOT NULL,
+        criado_em TEXT NOT NULL,
+        atualizado_em TEXT NOT NULL,
+        substituido_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(captura_id,chave_idempotencia)
+      );
+      CREATE INDEX IF NOT EXISTS gmail_preparacoes_central_historico_captura
+        ON gmail_capturas_periodo_preparacoes_central_historico(captura_id,id DESC);
+
       CREATE INDEX IF NOT EXISTS gmail_mensagens_reservas
         ON gmail_mensagens(conta_id, tentativas, id)
         WHERE estado IN ('pendente','falha_temporaria','em_processamento');

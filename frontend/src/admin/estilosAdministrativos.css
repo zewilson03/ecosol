@@ -1195,24 +1195,47 @@
   background: #e9f7f7;
   color: #075864;
 }
-.gmail-etapa.ativa span { background: #0d6975; color: #fff; }
+.gmail-etapa.ativa span {
+  background: #0d6975;
+  color: #fff;
+}
 .gmail-fluxo-guiado {
   border: 1px solid #dce7ee;
   border-radius: 14px;
   background: #fff;
 }
-.gmail-passo { padding: 20px; }
-.gmail-passo-cabecalho { display: flex; align-items: baseline; gap: 10px; }
-.gmail-passo-cabecalho span { color: #4b7b8a; font-size: 12px; font-weight: 800; }
-.gmail-passo-cabecalho h5 { margin: 0; font-size: 20px; }
-.gmail-fluxo-acoes, .gmail-resumo-captura, .gmail-indicadores, .gmail-filtros, .gmail-paginacao {
+.gmail-passo {
+  padding: 20px;
+}
+.gmail-passo-cabecalho {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.gmail-passo-cabecalho span {
+  color: #4b7b8a;
+  font-size: 12px;
+  font-weight: 800;
+}
+.gmail-passo-cabecalho h5 {
+  margin: 0;
+  font-size: 20px;
+}
+.gmail-fluxo-acoes,
+.gmail-resumo-captura,
+.gmail-indicadores,
+.gmail-filtros,
+.gmail-paginacao {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
 }
-.gmail-fluxo-acoes { margin: 16px 0; }
-.gmail-resumo-captura, .gmail-indicadores {
+.gmail-fluxo-acoes {
+  margin: 16px 0;
+}
+.gmail-resumo-captura,
+.gmail-indicadores {
   margin-top: 16px;
   padding: 12px;
   border-radius: 10px;
@@ -1220,42 +1243,164 @@
   color: #315d79;
   font-size: 14px;
 }
-.gmail-resumo-captura button { margin-left: auto; }
-.gmail-filtros { margin: 18px 0; }
-.gmail-filtros label { display: grid; gap: 5px; color: #577085; font-size: 12px; font-weight: 700; }
-.gmail-filtros input, .gmail-filtros select { min-height: 38px; min-width: 150px; }
-.gmail-tabela { border: 1px solid #dce7ee; border-radius: 10px; overflow: hidden; }
-.gmail-tabela-cabecalho, .gmail-linha-preparacao {
+.gmail-resumo-captura button {
+  margin-left: auto;
+}
+.gmail-filtros {
+  margin: 18px 0;
+}
+.gmail-filtros label {
   display: grid;
-  grid-template-columns: 1.1fr 1.2fr 1fr .75fr 1.2fr auto;
+  gap: 5px;
+  color: #577085;
+  font-size: 12px;
+  font-weight: 700;
+}
+.gmail-filtros input,
+.gmail-filtros select {
+  min-height: 38px;
+  min-width: 150px;
+}
+.gmail-tabela {
+  border: 1px solid #dce7ee;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.gmail-tabela-cabecalho,
+.gmail-linha-preparacao {
+  display: grid;
+  grid-template-columns: 1.1fr 1.2fr 1fr 0.75fr 1.45fr auto;
   gap: 12px;
   align-items: center;
   padding: 12px 14px;
 }
-.gmail-tabela-cabecalho { background: #f3f8fb; color: #547086; font-size: 12px; font-weight: 800; }
-.gmail-linha-preparacao { border-top: 1px solid #e4edf2; overflow-wrap: anywhere; }
-.gmail-linha-preparacao small { display: block; margin-top: 3px; color: #6d8292; }
-.gmail-status-preparacao.preparado { color: #18704f; font-weight: 800; }
-.gmail-status-preparacao.revisar { color: #a4492b; font-weight: 700; }
-.gmail-status-preparacao details { margin-top: 5px; font-size: 12px; font-weight: 400; }
-.gmail-status-preparacao code { display: block; margin-top: 5px; white-space: normal; }
-.gmail-paginacao { justify-content: flex-end; margin-top: 14px; color: #60788a; font-size: 13px; }
-.gmail-recursos-secundarios { margin-top: 16px; color: #5f7789; }
-.gmail-recursos-secundarios summary { cursor: pointer; font-weight: 700; }
-.gmail-recursos-secundarios .gmail-conta-acoes { margin-top: 12px; }
-.gmail-legado-recolhido { margin-top: 14px; color: #5f7789; }
-.gmail-legado-recolhido summary { cursor: pointer; font-weight: 700; }
+.gmail-tabela-cabecalho {
+  background: #f3f8fb;
+  color: #547086;
+  font-size: 12px;
+  font-weight: 800;
+}
+.gmail-linha-preparacao {
+  border-top: 1px solid #e4edf2;
+  overflow-wrap: anywhere;
+}
+.gmail-linha-preparacao small {
+  display: block;
+  margin-top: 3px;
+  color: #6d8292;
+}
+.gmail-acoes-preparacao {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.gmail-acoes-preparacao .admin-botao {
+  min-width: auto;
+  white-space: nowrap;
+}
+.gmail-status-preparacao {
+  display: grid;
+  gap: 8px;
+}
+.gmail-status-documental,
+.gmail-status-financeiro {
+  display: grid;
+  gap: 1px;
+  line-height: 1.3;
+}
+.gmail-status-documental small,
+.gmail-status-financeiro small {
+  margin: 0;
+  color: #6d8292;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.gmail-status-documental.pronto,
+.gmail-status-financeiro.apto {
+  color: #18704f;
+  font-weight: 800;
+}
+.gmail-status-documental.revisar,
+.gmail-status-financeiro.revisar {
+  color: #a4492b;
+  font-weight: 700;
+}
+.gmail-status-financeiro.documental {
+  color: #315d79;
+  font-weight: 700;
+}
+.gmail-motivo-documental {
+  color: #a4492b !important;
+}
+.gmail-status-preparacao details {
+  margin-top: 5px;
+  font-size: 12px;
+  font-weight: 400;
+}
+.gmail-status-preparacao code {
+  display: block;
+  margin-top: 5px;
+  white-space: normal;
+}
+.gmail-paginacao {
+  justify-content: flex-end;
+  margin-top: 14px;
+  color: #60788a;
+  font-size: 13px;
+}
+.gmail-recursos-secundarios {
+  margin-top: 16px;
+  color: #5f7789;
+}
+.gmail-recursos-secundarios summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.gmail-recursos-secundarios .gmail-conta-acoes {
+  margin-top: 12px;
+}
+.gmail-legado-recolhido {
+  margin-top: 14px;
+  color: #5f7789;
+}
+.gmail-legado-recolhido summary {
+  cursor: pointer;
+  font-weight: 700;
+}
 
 @media (max-width: 900px) {
-  .gmail-tabela-cabecalho { display: none; }
-  .gmail-linha-preparacao { grid-template-columns: 1fr 1fr; }
-  .gmail-linha-preparacao > span::before { content: attr(data-label); display: block; color: #6b8292; font-size: 11px; font-weight: 800; }
+  .gmail-tabela-cabecalho {
+    display: none;
+  }
+  .gmail-linha-preparacao {
+    grid-template-columns: 1fr 1fr;
+  }
+  .gmail-linha-preparacao > span::before {
+    content: attr(data-label);
+    display: block;
+    color: #6b8292;
+    font-size: 11px;
+    font-weight: 800;
+  }
+  .gmail-acoes-preparacao {
+    grid-column: 1 / -1;
+  }
 }
 @media (max-width: 600px) {
-  .gmail-etapas { grid-template-columns: 1fr; }
-  .gmail-linha-preparacao { grid-template-columns: 1fr; }
-  .gmail-resumo-captura button { margin-left: 0; }
-  .gmail-fluxo-acoes > * { width: 100%; }
+  .gmail-etapas {
+    grid-template-columns: 1fr;
+  }
+  .gmail-linha-preparacao {
+    grid-template-columns: 1fr;
+  }
+  .gmail-resumo-captura button {
+    margin-left: 0;
+  }
+  .gmail-fluxo-acoes > * {
+    width: 100%;
+  }
 }
 .admin-contato {
   display: flex;

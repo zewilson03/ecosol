@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,7 +14,7 @@ const executarArquivo = promisify(execFile);
 const codigoFonteCentralPadrao =
   "C:\\Users\\User\\Desktop\\00 - Central de Faturas Ecosol\\_SUPORTE_ORGANIZACAO\\ARQUIVOS_RETIRADOS_DA_RAIZ_20260917\\CODIGO_FONTE_V146";
 const planilhasAtualizadasPadrao =
-  "G:\\.shortcut-targets-by-id\\1WBX1jPldTDgAie6u0FujV9L6xWIjRtdx\\01 - Usinas Goiás\\00 - Planilhas Atualizadas";
+  "C:\\Users\\User\\Desktop\\00 - Central de Faturas Ecosol\\Faturas\\PLANILHAS ATUALIZADAS";
 
 // Regra temporária e auditável de homologação. Ela não substitui o cadastro
 // operacional de perfis: somente materializa os dois fluxos já homologados
@@ -55,6 +55,7 @@ function ultimoJsonDaSaida(saida) {
 function argumentosDaCentral() {
   const codigoFonte =
     process.env.ECOSOL_CENTRAL_CODIGO_FONTE ?? codigoFonteCentralPadrao;
+  const raizCentral = resolve(codigoFonte, "..", "..", "..");
   const planilhas =
     process.env.ECOSOL_PLANILHAS_ATUALIZADAS ?? planilhasAtualizadasPadrao;
   return {
@@ -68,7 +69,37 @@ function argumentosDaCentral() {
     motor: join(codigoFonte, "nomeador_engine.py"),
     atualizador: join(codigoFonte, "atualizador_engine.py"),
     planilhas,
+    planilhaCarteira: join(raizCentral, "Venda de energia", "uc por usina.xlsx"),
+    cacheMedidores: join(
+      raizCentral,
+      "_SUPORTE_ORGANIZACAO",
+      "indice_medidores_2026.db",
+    ),
   };
+}
+
+// A preparação só pode ser reutilizada quando os documentos e as fontes da
+// Central continuam os mesmos. A assinatura usa apenas metadados dos arquivos:
+// não lê nem altera conteúdo de planilha.
+export async function assinaturaDaFonteCentral() {
+  const central = argumentosDaCentral();
+  const planilhas = (await readdir(central.planilhas, { withFileTypes: true }))
+    .filter((arquivo) => arquivo.isFile() && /\.xlsx$/i.test(arquivo.name))
+    .map((arquivo) => join(central.planilhas, arquivo.name))
+    .sort((a, b) => a.localeCompare(b, "pt-BR"));
+  const fontes = [
+    central.motor,
+    central.atualizador,
+    central.planilhaCarteira,
+    ...planilhas,
+  ];
+  const metadados = await Promise.all(
+    fontes.map(async (arquivo) => {
+      const dados = await stat(arquivo);
+      return [resolve(arquivo), dados.size, dados.mtimeMs];
+    }),
+  );
+  return JSON.stringify({ versao: 1, fontes: metadados });
 }
 
 export async function executarSimulacaoCentral({ documentos }) {
@@ -88,6 +119,10 @@ export async function executarSimulacaoCentral({ documentos }) {
       central.atualizador,
       "--pasta-vendas",
       central.planilhas,
+      "--planilha-carteira",
+      central.planilhaCarteira,
+      "--cache-medidores",
+      central.cacheMedidores,
     ],
     { windowsHide: true, timeout: 120_000, maxBuffer: 2 * 1024 * 1024 },
   );
@@ -117,10 +152,16 @@ export async function localizarDocumentosCentral({ documentos }) {
           central.banco,
           "--documentos",
           grupo.join(","),
+          "--motor",
+          central.motor,
           "--atualizador",
           central.atualizador,
           "--pasta-vendas",
           central.planilhas,
+          "--planilha-carteira",
+          central.planilhaCarteira,
+          "--cache-medidores",
+          central.cacheMedidores,
         ],
         { windowsHide: true, timeout: 120_000, maxBuffer: 2 * 1024 * 1024 },
       );
@@ -232,6 +273,10 @@ export async function executarProcessamentoCentralHomologacao({
       central.atualizador,
       "--pasta-vendas",
       central.planilhas,
+      "--planilha-carteira",
+      central.planilhaCarteira,
+      "--cache-medidores",
+      central.cacheMedidores,
       "--diretorio-saida",
       raiz,
     ],
@@ -244,7 +289,6 @@ export async function executarProcessamentoCentralHomologacao({
     typeof arquivo === "string" && resolve(arquivo).startsWith(raiz + "\\");
   const pdfsInvalidos =
     !Array.isArray(resultado.pdfs) ||
-    resultado.pdfs.length !== documentos.length ||
     resultado.pdfs.some(
       (pdf) =>
         !dentroDaHomologacao(pdf.pdf_final) ||
@@ -255,6 +299,7 @@ export async function executarProcessamentoCentralHomologacao({
   if (
     resultado.situacao === "concluido" &&
     (pdfsInvalidos ||
+      (modo === "financeiro" && resultado.pdfs.length !== documentos.length) ||
       (modo === "financeiro" &&
         (!dentroDaHomologacao(resultado.planilhaPreenchida) ||
           !dentroDaHomologacao(resultado.log))))
