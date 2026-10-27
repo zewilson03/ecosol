@@ -1242,6 +1242,33 @@ try {
     "gmail",
   );
 
+  const faturaPagamentoGmail = await receberPdf(
+    entradaGmail(
+      pdf([
+        "GRANDEZAS CONTRATADAS",
+        "DEMANDA - kW 0",
+        "DEMANDA GERACAO - kW 1000",
+        "FATURA SEM DADOS COMPLETOS PARA PAGAMENTO",
+      ]),
+      "pagamento-incompleto.pdf",
+    ),
+  );
+  assert.equal(faturaPagamentoGmail.tipo, "novo");
+  assert.equal(
+    banco
+      .prepare("SELECT finalidade FROM faturamento_documentos WHERE id=?")
+      .get(faturaPagamentoGmail.documentoId).finalidade,
+    "pagamento",
+  );
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT COUNT(*) AS n FROM financeiro_solicitacoes_pagamento WHERE faturamento_documento_id=?",
+      )
+      .get(faturaPagamentoGmail.documentoId).n,
+    0,
+  );
+
   const termoPdf = pdf(["TERMO DE RECEBIMENTO DE FATURA POR E-MAIL"]);
   const termo = await receberPdf(entradaGmail(termoPdf, "termo.pdf"));
   assert.equal(termo.tipo, "novo");

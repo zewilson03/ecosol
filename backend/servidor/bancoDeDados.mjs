@@ -6,7 +6,10 @@ import { prepararFaturamento } from "./faturamento/esquema.mjs";
 import { prepararGmail } from "./gmail/esquema.mjs";
 import { prepararBancario } from "./bancario/esquema.mjs";
 import { prepararPagamentosECompras } from "./financeiro/pagamentos.mjs";
-import { registrarBaselineDoEsquema } from "./persistencia/migracoes.mjs";
+import {
+  registrarBaselineDoEsquema,
+  removerTabelasMfaLegado,
+} from "./persistencia/migracoes.mjs";
 
 let banco;
 
@@ -185,6 +188,7 @@ export function obterBanco() {
     prepararBancario(banco);
     prepararPagamentosECompras(banco);
     registrarBaselineDoEsquema(banco);
+    removerTabelasMfaLegado(banco);
     return banco;
   } catch (erro) {
     const conexaoIncompleta = banco;

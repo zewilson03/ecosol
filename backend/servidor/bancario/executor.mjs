@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { obterBanco } from "../bancoDeDados.mjs";
 import { criarAdaptadorSicoobSimulado } from "./adaptadorSimulado.mjs";
 import { FalhaDeIntegracaoBancaria } from "./contrato.mjs";
+import { criarIntegracaoSicoob } from "./integracaoSicoob.mjs";
 import { conferirOperacaoAntesDoPrimeiroEnvio } from "./operacoes.mjs";
 
 const cincoMinutos = 5 * 60_000;
@@ -520,24 +521,46 @@ export function criarAgendadorExecutorBancario({
   return { iniciar, parar };
 }
 
-export function iniciarExecutorBancarioSeConfigurado() {
-  const modo = String(process.env.BANCARIO_EXECUTOR_MODO ?? "desligado")
+export function iniciarExecutorBancarioSeConfigurado({
+  variaveis = process.env,
+  banco = null,
+  criarIntegracao = criarIntegracaoSicoob,
+  criarAdaptadorSimulado = criarAdaptadorSicoobSimulado,
+  criarAgendador = criarAgendadorExecutorBancario,
+} = {}) {
+  const modo = String(variaveis.BANCARIO_EXECUTOR_MODO ?? "desligado")
     .trim()
     .toLowerCase();
   if (modo === "desligado" || !modo) return null;
-  if (modo !== "simulado")
+  if (modo !== "simulado" && modo !== "sicoob")
     throw new Error("Modo de executor bancário ainda não suportado.");
-  const ambiente = String(process.env.SICOOB_AMBIENTE ?? "homologacao")
+  const ambiente = String(variaveis.SICOOB_AMBIENTE ?? "homologacao")
     .trim()
     .toLowerCase();
-  if (ambiente !== "homologacao")
+  if (modo === "simulado" && ambiente !== "homologacao")
     throw new Error("O simulador bancário só pode operar em homologação.");
-  const banco = obterBanco();
+  if (modo === "sicoob" && ambiente !== "producao")
+    throw new Error(
+      "O executor Sicoob real exige ambiente de produção explícito.",
+    );
+  if (
+    modo === "sicoob" &&
+    (String(variaveis.NODE_ENV ?? "").trim() !== "production" ||
+      String(variaveis.SICOOB_PRODUCAO_HABILITADA ?? "").trim() !== "SIM")
+  )
+    throw new Error(
+      "O executor Sicoob real exige produção habilitada explicitamente.",
+    );
+  const bancoEfetivo = banco ?? obterBanco();
+  const adaptador =
+    modo === "simulado"
+      ? criarAdaptadorSimulado({ banco: bancoEfetivo })
+      : criarIntegracao({ variaveis }).adaptador;
   const executor = criarExecutorBancario({
-    banco,
-    adaptador: criarAdaptadorSicoobSimulado({ banco }),
+    banco: bancoEfetivo,
+    adaptador,
   });
-  const agendador = criarAgendadorExecutorBancario({ executor });
+  const agendador = criarAgendador({ executor });
   agendador.iniciar();
   return agendador;
 }

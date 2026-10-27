@@ -3,7 +3,31 @@ import { DatabaseSync } from "node:sqlite";
 import {
   estadoDasMigracoes,
   registrarBaselineDoEsquema,
+  removerTabelasMfaLegado,
 } from "../servidor/persistencia/migracoes.mjs";
+
+const tabelasMfaLegado = [
+  "bancario_mfa_equipe",
+  "bancario_mfa_recuperacao",
+  "bancario_mfa_auditoria",
+  "bancario_mfa_pedidos_recuperacao",
+  "bancario_mfa_aprovacoes_recuperacao",
+  "bancario_mfa_auditoria_recuperacao",
+];
+
+function criarTabelasMfaLegado(banco) {
+  banco.exec(`
+    CREATE TABLE bancario_mfa_equipe(id INTEGER PRIMARY KEY);
+    CREATE TABLE bancario_mfa_recuperacao(id INTEGER PRIMARY KEY);
+    CREATE TABLE bancario_mfa_auditoria(id INTEGER PRIMARY KEY);
+    CREATE TABLE bancario_mfa_pedidos_recuperacao(id INTEGER PRIMARY KEY);
+    CREATE TABLE bancario_mfa_aprovacoes_recuperacao(
+      id INTEGER PRIMARY KEY,
+      pedido_id INTEGER REFERENCES bancario_mfa_pedidos_recuperacao(id)
+    );
+    CREATE TABLE bancario_mfa_auditoria_recuperacao(id INTEGER PRIMARY KEY);
+  `);
+}
 
 function bancoCompativel() {
   const banco = new DatabaseSync(":memory:");
@@ -27,16 +51,27 @@ function bancoCompativel() {
 }
 
 const banco = bancoCompativel();
+criarTabelasMfaLegado(banco);
 registrarBaselineDoEsquema(banco, { ECOSOL_APP_COMMIT: "teste" });
 registrarBaselineDoEsquema(banco, { ECOSOL_APP_COMMIT: "outro" });
+assert.equal(estadoDasMigracoes(banco).integra, false);
+removerTabelasMfaLegado(banco, { ECOSOL_APP_COMMIT: "teste" });
+removerTabelasMfaLegado(banco);
 assert.deepEqual(estadoDasMigracoes(banco), {
-  atual: 1,
-  esperada: 1,
+  atual: 2,
+  esperada: 2,
   integra: true,
 });
+for (const nome of tabelasMfaLegado)
+  assert.equal(
+    banco
+      .prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?")
+      .get(nome),
+    undefined,
+  );
 assert.equal(
   banco.prepare("SELECT COUNT(*) AS total FROM schema_migrations").get().total,
-  1,
+  2,
 );
 banco.exec("DROP TRIGGER bancario_operacao_transicao_valida");
 assert.equal(estadoDasMigracoes(banco).integra, false);
@@ -59,7 +94,7 @@ banco
   .run(checksumCorreto);
 banco
   .prepare(
-    "INSERT INTO schema_migrations(version,name,checksum_sha256,duration_ms) VALUES(2,'futura',?,0)",
+    "INSERT INTO schema_migrations(version,name,checksum_sha256,duration_ms) VALUES(3,'futura',?,0)",
   )
   .run("1".repeat(64));
 assert.throws(
@@ -83,4 +118,45 @@ assert.equal(
 );
 incompleto.close();
 
-console.log("OK: baseline versionado, idempotente e protegido por checksum.");
+const comRegistros = bancoCompativel();
+criarTabelasMfaLegado(comRegistros);
+registrarBaselineDoEsquema(comRegistros);
+comRegistros.exec("INSERT INTO bancario_mfa_equipe(id) VALUES(1)");
+assert.throws(
+  () => removerTabelasMfaLegado(comRegistros),
+  /contém registros; remoção cancelada/,
+);
+assert.equal(
+  comRegistros.prepare("SELECT COUNT(*) AS total FROM schema_migrations").get()
+    .total,
+  1,
+);
+assert.equal(
+  comRegistros
+    .prepare("SELECT 1 FROM sqlite_schema WHERE name='bancario_mfa_equipe'")
+    .get()["1"],
+  1,
+);
+comRegistros.close();
+
+const comDependencia = bancoCompativel();
+criarTabelasMfaLegado(comDependencia);
+registrarBaselineDoEsquema(comDependencia);
+comDependencia.exec(
+  "CREATE VIEW vista_mfa_externa AS SELECT id FROM bancario_mfa_equipe",
+);
+assert.throws(
+  () => removerTabelasMfaLegado(comDependencia),
+  /objetos externos dependentes/,
+);
+comDependencia.close();
+
+const novo = bancoCompativel();
+registrarBaselineDoEsquema(novo);
+removerTabelasMfaLegado(novo);
+assert.equal(estadoDasMigracoes(novo).integra, true);
+novo.close();
+
+console.log(
+  "OK: migrações versionadas, MFA vazio removido e dados preservados.",
+);

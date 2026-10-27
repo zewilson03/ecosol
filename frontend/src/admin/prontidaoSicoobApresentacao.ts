@@ -8,6 +8,11 @@ export const nomesDasPendenciasSicoob: Record<string, string> = {
   VERSAO_CONTRATO_AUSENTE: "Versão do contrato oficial ausente",
   CONVENIO_CONSULTA_INCOMPLETO: "Convênio incompleto para consultas",
   CONVENIO_EMISSAO_INCOMPLETO: "Convênio incompleto para emissão",
+  EXECUTOR_REAL_DESLIGADO: "Executor real Sicoob ainda está desligado",
+  AMBIENTE_PRODUCAO_NAO_SELECIONADO:
+    "Selecione explicitamente o ambiente de produção",
+  PRODUCAO_SICOOB_NAO_HABILITADA:
+    "Habilitação explícita de produção ainda não confirmada",
 };
 
 export function nomeDaPendenciaSicoob(codigo: string) {

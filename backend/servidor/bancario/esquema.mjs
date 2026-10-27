@@ -334,7 +334,9 @@ export function prepararBancario(banco) {
         ('cancelada','resultado_desconhecido','falhou')) OR
       (OLD.estado='agendada' AND NEW.estado IN
         ('paga','cancelamento_pendente','falhou')) OR
-      (OLD.estado='paga' AND NEW.estado='estornada')
+      (OLD.estado='paga' AND NEW.estado='estornada') OR
+      (OLD.estado='falhou' AND NEW.estado='cancelada') OR
+      (OLD.estado='cancelada' AND NEW.estado='aprovada')
     )
     BEGIN
       SELECT RAISE(ABORT, 'Transição bancária inválida');

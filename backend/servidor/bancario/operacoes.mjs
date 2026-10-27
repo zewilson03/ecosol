@@ -641,6 +641,110 @@ export function enfileirarOperacao(operacaoId, administrador) {
   });
 }
 
+export function liberarNovaEmissaoAposFalha(operacaoId, administrador) {
+  if (!/^[0-9a-f-]{36}$/.test(String(operacaoId)))
+    falhar("Operação bancária inválida.");
+  if (!administrador?.id) falhar("Use uma conta nominal da equipe.", 403);
+  return transacaoImediata((banco) => {
+    const operacao = banco
+      .prepare("SELECT * FROM bancario_operacoes WHERE id=?")
+      .get(operacaoId);
+    if (!operacao) falhar("Operação bancária não encontrada.", 404);
+    if (operacao.tipo !== "cobranca")
+      falhar("Somente cobranças podem ser liberadas para nova emissão.", 409);
+    if (operacao.estado !== "falhou")
+      falhar("Somente uma cobrança com falha confirmada pode ser reemitida.", 409);
+    if (operacao.provedor_id)
+      falhar(
+        "A cobrança possui identificador bancário e precisa ser conciliada antes de qualquer nova emissão.",
+        409,
+      );
+    const artefato = banco
+      .prepare("SELECT 1 FROM bancario_artefatos_cobranca WHERE operacao_id=?")
+      .get(operacao.id);
+    if (artefato)
+      falhar(
+        "A cobrança possui artefatos bancários e precisa ser conciliada antes de qualquer nova emissão.",
+        409,
+      );
+    const intencao = banco
+      .prepare(
+        `SELECT id,estado FROM bancario_intencoes
+         WHERE operacao_id=? AND operacao_versao=? AND acao='registrar_cobranca'`,
+      )
+      .get(operacao.id, operacao.versao);
+    if (!intencao || intencao.estado !== "falhou")
+      falhar(
+        "A falha da emissão ainda não foi encerrada com segurança.",
+        409,
+      );
+    const tentativas = banco
+      .prepare(
+        `SELECT resultado FROM bancario_tentativas
+         WHERE intencao_id=? ORDER BY iniciado_em,id`,
+      )
+      .all(intencao.id);
+    const falhaLocalAntesDoEnvio =
+      operacao.ultimo_codigo === "VALIDACAO_ANTES_ENVIO" &&
+      tentativas.length === 0;
+    const apenasFalhasSeguras =
+      tentativas.length > 0 &&
+      tentativas.every((tentativa) => tentativa.resultado === "falha_segura");
+    if (!falhaLocalAntesDoEnvio && !apenasFalhasSeguras)
+      falhar(
+        "Não há prova de que o Sicoob deixou de criar o boleto. Faça a conciliação antes de tentar novamente.",
+        409,
+      );
+
+    const versaoAnterior = operacao.versao;
+    const novaVersao = versaoAnterior + 1;
+    const novaIdempotencia = hashCanonico({
+      operacao_id: operacao.id,
+      idempotencia_anterior: operacao.idempotencia,
+      revisao_emissao: novaVersao,
+      motivo: "falha_confirmada_sem_efeito",
+    });
+    banco
+      .prepare(
+        `UPDATE bancario_operacoes
+         SET estado='cancelada',atualizado_em=CURRENT_TIMESTAMP
+         WHERE id=? AND estado='falhou'`,
+      )
+      .run(operacao.id);
+    registrarAuditoria(
+      banco,
+      operacao.id,
+      administrador,
+      "Emissão com falha confirmada cancelada",
+      "falhou",
+      "cancelada",
+      { versao: versaoAnterior, intencao_id: intencao.id },
+    );
+    banco
+      .prepare(
+        `UPDATE bancario_operacoes
+         SET estado='aprovada',versao=?,idempotencia=?,ultimo_codigo=NULL,
+             atualizado_em=CURRENT_TIMESTAMP
+         WHERE id=? AND estado='cancelada' AND versao=?`,
+      )
+      .run(novaVersao, novaIdempotencia, operacao.id, versaoAnterior);
+    registrarAuditoria(
+      banco,
+      operacao.id,
+      administrador,
+      "Nova revisão liberada para emissão",
+      "cancelada",
+      "aprovada",
+      {
+        versao_anterior: versaoAnterior,
+        nova_versao: novaVersao,
+        motivo: "falha_confirmada_sem_efeito",
+      },
+    );
+    return { alterada: true, operacao: linhaCompleta(banco, operacao.id) };
+  });
+}
+
 export function listarOperacoes(administradorId, consultaAmpla = false) {
   if (!administradorId) falhar("Use uma conta nominal da equipe.", 403);
   const filtro = consultaAmpla ? "" : "WHERE o.preparado_por=?";

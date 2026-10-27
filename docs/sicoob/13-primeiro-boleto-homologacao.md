@@ -46,14 +46,18 @@ pelo Git. Valores secretos não devem aparecer neste documento.
    - número do cliente/beneficiário na Plataforma de Serviços Financeiros.
 
 O Portal Developers da aplicação confirmou em 23/10/2026 a cooperativa `3246`
-e a conta corrente `15.837-2`. Como o contrato de inclusão recebe a conta como
-inteiro, a configuração local usa `15837`; o dígito `2` é preservado apenas como
-referência e não é enviado no corpo. O boleto anterior e o contrato V3 também
-confirmam modalidade `1` (simples com registro) e espécie `DM`.
+e a conta corrente `15.837-2`. Em 27/10/2026, o atendimento do Sicoob confirmou
+que a requisição de cobrança deve enviar a conta corrente com o dígito
+verificador. Como o contrato de inclusão recebe um inteiro, a configuração usa
+os dígitos completos, sem pontuação: `158372`. O boleto anterior e o contrato V3
+também confirmam modalidade `1` (simples com registro) e espécie `DM`.
 
 As decisões do primeiro piloto já estão registradas localmente: o Sicoob emite
 (`identificacaoEmissaoBoleto = 1`), a Ecosol distribui
 (`identificacaoDistribuicaoBoleto = 2`) e a resposta deve solicitar o PDF.
+O boleto é enviado com juros de mora isentos (`tipoJurosMora = 3`) e valor zero.
+Multa, juros e desconto bancários também ficam zerados, pois os encargos de
+atraso da Ecosol são calculados internamente e incorporados à cobrança seguinte.
 
 O campo `numeroContratoCobranca` é opcional e só deve ser enviado quando o
 beneficiário possuir mais de um contrato e houver orientação expressa do Sicoob.

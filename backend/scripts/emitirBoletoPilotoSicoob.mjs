@@ -4,6 +4,7 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -59,36 +60,14 @@ function gravarAtomico(caminho, valor) {
 
 function variaveisDeProducao() {
   const variaveis = { ...process.env };
-  const sufixos = [
-    "API_BASE_URL",
-    "OAUTH_TOKEN_URL",
-    "CLIENT_ID",
-    "CLIENT_SECRET",
-    "OAUTH_SCOPE",
-    "MTLS_CERT_PATH",
-    "MTLS_KEY_PATH",
-    "MTLS_KEY_PASSPHRASE",
-    "MTLS_PFX_PATH",
-    "MTLS_PFX_PASSPHRASE",
-    "CONTRATO_VERSAO",
-    "COBRANCA_NUMERO_CLIENTE",
-    "COBRANCA_CODIGO_MODALIDADE",
-    "COBRANCA_NUMERO_CONTA_CORRENTE",
-    "COBRANCA_ESPECIE_DOCUMENTO",
-    "COBRANCA_IDENTIFICACAO_EMISSAO",
-    "COBRANCA_IDENTIFICACAO_DISTRIBUICAO",
-    "COBRANCA_NUMERO_CONTRATO",
-    "COBRANCA_GERAR_PDF",
-  ];
-  for (const sufixo of sufixos) {
-    const destino = `SICOOB_PRODUCAO_${sufixo}`;
-    const origem = `SICOOB_HOMOLOGACAO_${sufixo}`;
-    if (!variaveis[destino] && variaveis[origem])
-      variaveis[destino] = variaveis[origem];
-  }
-  variaveis.NODE_ENV = "production";
-  variaveis.SICOOB_AMBIENTE = "producao";
-  variaveis.SICOOB_PRODUCAO_HABILITADA = "SIM";
+  if (
+    variaveis.NODE_ENV !== "production" ||
+    variaveis.SICOOB_AMBIENTE !== "producao" ||
+    variaveis.SICOOB_PRODUCAO_HABILITADA !== "SIM"
+  )
+    falhar(
+      "O piloto exige produção configurada e habilitada explicitamente; não há migração automática entre ambientes.",
+    );
   return variaveis;
 }
 
@@ -99,11 +78,16 @@ const entrada = JSON.parse(readFileSync(entradaPath, "utf8"));
 if (!cpfValido(entrada?.cliente?.documento))
   falhar("O CPF do pagador não passou na validação dos dígitos verificadores.");
 const variaveis = variaveisDeProducao();
+const revisao = Number(argumento("revisao") ?? 2);
 const configuracao = obterConfiguracaoSicoob({
   variaveis,
   exigirCompleta: true,
 });
-const idempotencia = criarIdempotenciaPilotoSicoob({ entrada, configuracao });
+const idempotencia = criarIdempotenciaPilotoSicoob({
+  entrada,
+  configuracao,
+  revisao,
+});
 const idempotenciaLegada = criarIdempotenciaLegadaPilotoSicoob(entrada);
 const registroPath = resolve(`backend/data/pilotos/${idempotencia}.json`);
 const registroLegadoPath = resolve(
@@ -160,6 +144,7 @@ if (process.argv.includes("--validar")) {
     JSON.stringify({
       valida: true,
       ambiente: "producao",
+      revisao,
       idempotencia: idempotencia.slice(0, 12),
       migra_rejeicao_legada: historico.migraRejeicaoLegada,
     }),
@@ -170,9 +155,22 @@ if (process.argv.includes("--validar")) {
 if (argumento("confirmar") !== confirmacaoExigida)
   falhar(`Confirmação ausente. Use --confirmar=${confirmacaoExigida}.`);
 
+const travaPath = `${registroPath}.lock`;
+try {
+  writeFileSync(travaPath, `${process.pid}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+    flag: "wx",
+  });
+} catch (erro) {
+  if (erro?.code === "EEXIST")
+    falhar("Já existe outra execução ou uma trava pendente para este piloto.");
+  throw erro;
+}
+
 gravarAtomico(registroPath, {
   versao: 2,
-  identidade_versao: 2,
+  identidade_versao: revisao,
   idempotencia,
   migrada_de_rejeicao: historico.migraRejeicaoLegada
     ? idempotenciaLegada
@@ -181,6 +179,7 @@ gravarAtomico(registroPath, {
   criado_em: new Date().toISOString(),
 });
 
+let registroAceito = null;
 try {
   const resultado = await integracao.adaptador.registrarCobranca({
     idempotencia,
@@ -190,7 +189,7 @@ try {
   });
   const final = {
     versao: 2,
-    identidade_versao: 2,
+    identidade_versao: revisao,
     idempotencia,
     migrada_de_rejeicao: historico.migraRejeicaoLegada
       ? idempotenciaLegada
@@ -216,18 +215,30 @@ try {
   }
   final.linha_digitavel = resultado.artefatos?.linha_digitavel ?? null;
   final.codigo_barras = resultado.artefatos?.codigo_barras ?? null;
+  // O aceite externo é persistido antes da consulta. Se a consulta falhar, o
+  // boleto continua registrado e será reconciliado sem novo POST.
+  gravarAtomico(registroPath, final);
+  if (final.estado === "registrada") registroAceito = final;
   if (final.estado === "registrada" && final.provedor_id) {
-    const consulta = await integracao.adaptador.consultarCobranca({
-      idempotencia,
-      provedor_id: final.provedor_id,
-      correlacao: randomUUID(),
-      tentativa: 1,
-    });
-    final.conciliacao = {
-      estado: consulta.estado ?? null,
-      codigo: consulta.codigo ?? null,
-      consultada_em: new Date().toISOString(),
-    };
+    try {
+      const consulta = await integracao.adaptador.consultarCobranca({
+        idempotencia,
+        provedor_id: final.provedor_id,
+        correlacao: randomUUID(),
+        tentativa: 1,
+      });
+      final.conciliacao = {
+        estado: consulta.estado ?? null,
+        codigo: consulta.codigo ?? null,
+        consultada_em: new Date().toISOString(),
+      };
+    } catch (erroConsulta) {
+      final.conciliacao = {
+        estado: "pendente",
+        codigo: erroConsulta?.codigo ?? "SICOOB_CONSULTA_FALHOU",
+        consultada_em: new Date().toISOString(),
+      };
+    }
   }
   gravarAtomico(registroPath, final);
   console.log(
@@ -239,23 +250,30 @@ try {
     }),
   );
 } catch (erro) {
-  gravarAtomico(registroPath, {
-    versao: 2,
-    identidade_versao: 2,
-    idempotencia,
-    migrada_de_rejeicao: historico.migraRejeicaoLegada
-      ? idempotenciaLegada
-      : null,
-    estado: "resultado_desconhecido",
-    codigo: erro?.codigo ?? "SICOOB_FALHA_NAO_CLASSIFICADA",
-    criado_em: new Date().toISOString(),
-  });
+  if (!registroAceito)
+    gravarAtomico(registroPath, {
+      versao: 2,
+      identidade_versao: revisao,
+      idempotencia,
+      migrada_de_rejeicao: historico.migraRejeicaoLegada
+        ? idempotenciaLegada
+        : null,
+      estado: "resultado_desconhecido",
+      codigo: erro?.codigo ?? "SICOOB_FALHA_NAO_CLASSIFICADA",
+      criado_em: new Date().toISOString(),
+    });
   console.log(
     JSON.stringify({
       executada: true,
-      estado: "resultado_desconhecido",
+      estado: registroAceito ? "registrada" : "resultado_desconhecido",
       codigo: erro?.codigo ?? "SICOOB_FALHA_NAO_CLASSIFICADA",
     }),
   );
   process.exitCode = 2;
+} finally {
+  try {
+    unlinkSync(travaPath);
+  } catch (erroTrava) {
+    if (erroTrava?.code !== "ENOENT") throw erroTrava;
+  }
 }

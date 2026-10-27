@@ -29,6 +29,14 @@ function respostaValida() {
   };
 }
 
+function respostaOficialEnvelopada() {
+  const resposta = respostaValida();
+  return {
+    status: resposta.status,
+    conteudo: { mensagens: [], resultado: resposta.conteudo },
+  };
+}
+
 const chamadas = [];
 let respostas = [{ status: 401, conteudo: {} }, respostaValida()];
 const oauth = {
@@ -73,6 +81,14 @@ assert.equal(extrato.saldos.atual, "1500.25");
 assert.equal(extrato.saldos.limite, "1000.00");
 assert.equal(extrato.transacoes[0].documento_mascarado, "***.982.247-**");
 assert.equal("cpfCnpj" in extrato.transacoes[0], false);
+
+respostas = [respostaOficialEnvelopada()];
+const extratoEnvelopado = await conta.consultarExtrato({
+  mes: 10,
+  ano: 2026,
+});
+assert.equal(extratoEnvelopado.saldos.atual, "1500.25");
+assert.equal(extratoEnvelopado.transacoes.length, 1);
 
 await assert.rejects(
   () => conta.consultarExtrato({ mes: 13, ano: 2026 }),

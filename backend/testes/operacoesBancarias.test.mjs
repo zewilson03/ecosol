@@ -16,7 +16,13 @@ const { obterBanco } = await import("../servidor/bancoDeDados.mjs");
 const { obterApuracaoDeDividas } =
   await import("../servidor/financeiro/dividas.mjs");
 const { prepararBancario } = await import("../servidor/bancario/esquema.mjs");
-const { criarOperacaoDeCobranca, hashCanonico, jsonCanonico } =
+const {
+  criarOperacaoDeCobranca,
+  enfileirarOperacao,
+  hashCanonico,
+  jsonCanonico,
+  liberarNovaEmissaoAposFalha,
+} =
   await import("../servidor/bancario/operacoes.mjs");
 const { rotasAdministrativas } =
   await import("../servidor/rotasAdministrativas.mjs");
@@ -240,6 +246,115 @@ try {
   assert.equal(repetida.status, 200);
   assert.equal((await repetida.json()).operacao.id, cobranca.operacao.id);
 
+  const faturaFalhaSeguraId = criarFatura("falha-segura");
+  const operacaoFalhaSegura = criarOperacaoDeCobranca(
+    faturaFalhaSeguraId,
+    { id: colaborador.id, nome: "colaborador" },
+  ).operacao;
+  const idempotenciaAnterior = operacaoFalhaSegura.idempotencia;
+  enfileirarOperacao(operacaoFalhaSegura.id, {
+    id: colaborador.id,
+    nome: "colaborador",
+  });
+  const intencaoFalhaSegura = banco
+    .prepare(
+      "SELECT id FROM bancario_intencoes WHERE operacao_id=? AND operacao_versao=1",
+    )
+    .get(operacaoFalhaSegura.id);
+  banco
+    .prepare("UPDATE bancario_intencoes SET estado='falhou' WHERE id=?")
+    .run(intencaoFalhaSegura.id);
+  banco
+    .prepare("UPDATE bancario_operacoes SET estado='falhou' WHERE id=?")
+    .run(operacaoFalhaSegura.id);
+  banco
+    .prepare(
+      `INSERT INTO bancario_tentativas
+       (id,intencao_id,operacao_id,etapa,correlacao,resultado,concluido_em)
+       VALUES(?,?,?,?,?,'falha_segura',CURRENT_TIMESTAMP)`,
+    )
+    .run(
+      randomUUID(),
+      intencaoFalhaSegura.id,
+      operacaoFalhaSegura.id,
+      "envio",
+      randomUUID(),
+    );
+  const liberada = await chamar(
+    `/api/admin/bancario/operacoes/${operacaoFalhaSegura.id}/liberar-nova-emissao`,
+    colaborador,
+    "POST",
+  );
+  assert.equal(liberada.status, 200);
+  const operacaoLiberada = (await liberada.json()).operacao;
+  assert.equal(operacaoLiberada.estado, "aprovada");
+  assert.equal(operacaoLiberada.versao, 2);
+  assert.notEqual(operacaoLiberada.idempotencia, idempotenciaAnterior);
+  assert.equal(
+    banco
+      .prepare(
+        `SELECT COUNT(*) AS n FROM bancario_auditoria_operacoes
+         WHERE operacao_id=? AND acao IN
+           ('Emissão com falha confirmada cancelada','Nova revisão liberada para emissão')`,
+      )
+      .get(operacaoFalhaSegura.id).n,
+    2,
+  );
+  enfileirarOperacao(operacaoFalhaSegura.id, {
+    id: colaborador.id,
+    nome: "colaborador",
+  });
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT COUNT(*) AS n FROM bancario_intencoes WHERE operacao_id=?",
+      )
+      .get(operacaoFalhaSegura.id).n,
+    2,
+  );
+
+  const faturaFalhaInconclusivaId = criarFatura("falha-inconclusiva");
+  const operacaoFalhaInconclusiva = criarOperacaoDeCobranca(
+    faturaFalhaInconclusivaId,
+    { id: colaborador.id, nome: "colaborador" },
+  ).operacao;
+  enfileirarOperacao(operacaoFalhaInconclusiva.id, {
+    id: colaborador.id,
+    nome: "colaborador",
+  });
+  const intencaoFalhaInconclusiva = banco
+    .prepare(
+      "SELECT id FROM bancario_intencoes WHERE operacao_id=? AND operacao_versao=1",
+    )
+    .get(operacaoFalhaInconclusiva.id);
+  banco
+    .prepare("UPDATE bancario_intencoes SET estado='falhou' WHERE id=?")
+    .run(intencaoFalhaInconclusiva.id);
+  banco
+    .prepare("UPDATE bancario_operacoes SET estado='falhou' WHERE id=?")
+    .run(operacaoFalhaInconclusiva.id);
+  banco
+    .prepare(
+      `INSERT INTO bancario_tentativas
+       (id,intencao_id,operacao_id,etapa,correlacao,resultado,concluido_em)
+       VALUES(?,?,?,?,?,'resultado_desconhecido',CURRENT_TIMESTAMP)`,
+    )
+    .run(
+      randomUUID(),
+      intencaoFalhaInconclusiva.id,
+      operacaoFalhaInconclusiva.id,
+      "envio",
+      randomUUID(),
+    );
+  assert.throws(
+    () =>
+      liberarNovaEmissaoAposFalha(operacaoFalhaInconclusiva.id, {
+        id: colaborador.id,
+        nome: "colaborador",
+      }),
+    /Faça a conciliação antes de tentar novamente/,
+  );
+
   const operacaoVencidaId = criarCobrancaRegistradaVencida(
     "encargo",
     10_000,
@@ -352,13 +467,17 @@ try {
   assert.equal(fila.status, 200);
   assert.equal((await fila.json()).operacao.estado, "envio_pendente");
   assert.equal(
-    banco.prepare("SELECT COUNT(*) AS n FROM bancario_intencoes").get().n,
+    banco
+      .prepare(
+        "SELECT COUNT(*) AS n FROM bancario_intencoes WHERE operacao_id=?",
+      )
+      .get(cobranca.operacao.id).n,
     1,
   );
 
   const lista = await chamar("/api/admin/bancario/operacoes", colaborador);
   assert.equal(lista.status, 200);
-  assert.equal((await lista.json()).length, 4);
+  assert.equal((await lista.json()).length, 6);
 
   const pagamentoId = criarPagamento(colaborador.id, "a");
   assert.equal(

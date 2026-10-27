@@ -11,6 +11,7 @@ const { obterBanco } = await import("../servidor/bancoDeDados.mjs");
 const {
   aprovarSolicitacao,
   baixarPagamentoExterno,
+  cadastrarFaturaParaPagamento,
   criarProduto,
   criarSolicitacaoPagamento,
   criarTipoProduto,
@@ -131,6 +132,181 @@ const energia = criarSolicitacaoPagamento(
   operador,
 );
 assert.equal(energia.valor_centavos, 12345);
+
+const documentoPagamento = Number(
+  banco
+    .prepare(
+      `INSERT INTO faturamento_documentos
+        (hash,nome,lote,pdf,texto,extracao,dados,status,classificacao,finalidade,versao)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+    )
+    .run(
+      "fatura-pagamento-teste",
+      "fatura-usina.pdf",
+      "outubro-2026",
+      Buffer.from("pdf"),
+      "fatura",
+      JSON.stringify({
+        finalidade: { motivo: "grandezas_contratadas_com_demanda" },
+      }),
+      JSON.stringify({
+        uc: "123456789012",
+        competencia: "2026-10",
+        vencimento_equatorial: "2026-11-20",
+        total_equatorial: "17512.57",
+      }),
+      "Recebida",
+      "fatura",
+      "pagamento",
+      3,
+    ).lastInsertRowid,
+);
+const cadastrada = cadastrarFaturaParaPagamento(documentoPagamento, operador);
+assert.equal(cadastrada.status, "rascunho");
+assert.equal(cadastrada.valor_centavos, 1751257);
+assert.equal(cadastrada.vencimento, "2026-11-20");
+assert.equal(
+  banco
+    .prepare(
+      "SELECT descricao FROM financeiro_solicitacoes_pagamento WHERE id=?",
+    )
+    .get(cadastrada.id).descricao,
+  "Fatura Equatorial — UC 123456789012 — competência 2026-10",
+);
+const repetida = cadastrarFaturaParaPagamento(documentoPagamento, operador);
+assert.equal(repetida.existente, true);
+assert.equal(repetida.id, cadastrada.id);
+assert.equal(
+  banco
+    .prepare(
+      "SELECT COUNT(*) AS total FROM financeiro_solicitacoes_pagamento WHERE faturamento_documento_id=?",
+    )
+    .get(documentoPagamento).total,
+  1,
+);
+function corrigirFaturaPagamento(total, vencimento) {
+  const atual = banco
+    .prepare("SELECT dados FROM faturamento_documentos WHERE id=?")
+    .get(documentoPagamento);
+  const dados = JSON.parse(atual.dados);
+  banco
+    .prepare(
+      "UPDATE faturamento_documentos SET dados=?,versao=versao+1 WHERE id=?",
+    )
+    .run(
+      JSON.stringify({
+        ...dados,
+        total_equatorial: total,
+        vencimento_equatorial: vencimento,
+      }),
+      documentoPagamento,
+    );
+}
+corrigirFaturaPagamento("17400.00", "2026-11-21");
+assert.throws(
+  () => enviarParaAprovacao(cadastrada.id, operador),
+  /A fatura mudou após o cadastro/,
+);
+const atualizada = cadastrarFaturaParaPagamento(documentoPagamento, operador);
+assert.equal(atualizada.atualizada, true);
+assert.equal(atualizada.valor_centavos, 1740000);
+assert.equal(atualizada.vencimento, "2026-11-21");
+assert.equal(
+  enviarParaAprovacao(cadastrada.id, operador).status,
+  "aguardando_aprovacao",
+);
+corrigirFaturaPagamento("17300.00", "2026-11-22");
+await assert.rejects(
+  aprovarSolicitacao(cadastrada.id, proprietarioUm, senhaFinanceira),
+  /A fatura mudou após o cadastro/,
+);
+const revalidada = cadastrarFaturaParaPagamento(documentoPagamento, operador);
+assert.equal(revalidada.status, "rascunho");
+assert.equal(revalidada.valor_centavos, 1730000);
+assert.equal(
+  enviarParaAprovacao(cadastrada.id, operador).status,
+  "aguardando_aprovacao",
+);
+assert.equal(
+  (await aprovarSolicitacao(cadastrada.id, proprietarioUm, senhaFinanceira))
+    .status,
+  "aprovada",
+);
+corrigirFaturaPagamento("17200.00", "2026-11-23");
+await assert.rejects(
+  baixarPagamentoExterno(
+    cadastrada.id,
+    { senha: senhaFinanceira, pago_em: "2026-11-23" },
+    proprietarioUm,
+  ),
+  /A fatura mudou após o cadastro/,
+);
+assert.equal(
+  cadastrarFaturaParaPagamento(documentoPagamento, operador).status,
+  "rascunho",
+);
+const documentoCobranca = Number(
+  banco
+    .prepare(
+      `INSERT INTO faturamento_documentos
+        (hash,nome,lote,pdf,texto,extracao,dados,status,classificacao,finalidade,versao)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+    )
+    .run(
+      "fatura-cobranca-e-pagamento-teste",
+      "fatura-cliente.pdf",
+      "outubro-2026",
+      Buffer.from("pdf"),
+      "fatura",
+      JSON.stringify({}),
+      JSON.stringify({
+        uc: "999999999999",
+        competencia: "2026-10",
+        vencimento_equatorial: "2026-11-25",
+        total_equatorial: "302.40",
+      }),
+      "Aprovada — aguardando emissão",
+      "fatura",
+      "cobranca",
+      4,
+    ).lastInsertRowid,
+);
+const obrigacaoDaCobranca = cadastrarFaturaParaPagamento(
+  documentoCobranca,
+  operador,
+);
+assert.equal(obrigacaoDaCobranca.valor_centavos, 30240);
+assert.equal(obrigacaoDaCobranca.vencimento, "2026-11-25");
+const documentoDuplicado = Number(
+  banco
+    .prepare(
+      `INSERT INTO faturamento_documentos
+        (hash,nome,lote,pdf,texto,extracao,dados,status,classificacao,finalidade,versao)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+    )
+    .run(
+      "fatura-mesma-uc-competencia-outro-pdf",
+      "segunda-via.pdf",
+      "outubro-2026",
+      Buffer.from("outro-pdf"),
+      "segunda via",
+      JSON.stringify({}),
+      JSON.stringify({
+        uc: "999999999999",
+        competencia: "2026-10",
+        vencimento_equatorial: "2026-11-25",
+        total_equatorial: "302.40",
+      }),
+      "Aprovada — aguardando emissão",
+      "fatura",
+      "cobranca",
+      1,
+    ).lastInsertRowid,
+);
+assert.throws(
+  () => cadastrarFaturaParaPagamento(documentoDuplicado, operador),
+  /UNIQUE constraint failed/,
+);
 assert.equal(listarPagamentosECompras().produtos.length, 1);
 assert.equal(
   banco

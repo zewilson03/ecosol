@@ -52,7 +52,8 @@ const entrada = {
   convenio: {
     numeroCliente: 123,
     codigoModalidade: 1,
-    numeroContaCorrente: 456,
+    // A conta da cobrança inclui o dígito verificador no último algarismo.
+    numeroContaCorrente: 4567,
     codigoEspecieDocumento: "DM",
     identificacaoEmissaoBoleto: 1,
     identificacaoDistribuicaoBoleto: 1,
@@ -64,10 +65,19 @@ assert.equal(boleto.valor, 123.45);
 assert.equal(boleto.pagador.numeroCpfCnpj, "52998224725");
 assert.equal(boleto.pagador.cep, "74000000");
 assert.equal(boleto.pagador.email, "cliente@exemplo.test");
+assert.equal(boleto.numeroContaCorrente, 4567);
 assert.equal(boleto.seuNumero.length, 18);
 assert.equal(boleto.identificacaoBoletoEmpresa.length, 20);
 assert.equal("nossoNumero" in boleto, false);
-assert.equal("valorMulta" in boleto, false);
+assert.equal(boleto.valorAbatimento, 0);
+assert.equal(boleto.tipoDesconto, 0);
+assert.equal(boleto.tipoMulta, 0);
+assert.equal(boleto.valorMulta, 0);
+assert.equal(boleto.tipoJurosMora, 3);
+assert.equal(boleto.valorJurosMora, 0);
+assert.equal(boleto.aceite, false);
+assert.equal(boleto.codigoNegativacao, 3);
+assert.equal(boleto.codigoProtesto, 3);
 assert.equal("numeroContratoCobranca" in boleto, false);
 assert.equal("tipoFormularioImpressaoPDF" in boleto, false);
 
@@ -101,6 +111,9 @@ assert.equal(requisicaoRegistro.metodo, "POST");
 assert.equal(requisicaoRegistro.caminho, "/boletos");
 assert.equal(requisicaoRegistro.corpo.dataEmissao, "2026-10-22");
 assert.equal(requisicaoRegistro.corpo.valor, 123.45);
+assert.equal(requisicaoRegistro.corpo.numeroContaCorrente, 4567);
+assert.equal(requisicaoRegistro.corpo.tipoJurosMora, 3);
+assert.equal(requisicaoRegistro.corpo.valorJurosMora, 0);
 assert.deepEqual(
   contratoCobranca.interpretarRegistro({
     status: 200,
@@ -355,7 +368,7 @@ try {
       SICOOB_HOMOLOGACAO_MTLS_PFX_PATH: "certificado-teste.pfx",
       SICOOB_HOMOLOGACAO_COBRANCA_NUMERO_CLIENTE: "123",
       SICOOB_HOMOLOGACAO_COBRANCA_CODIGO_MODALIDADE: "1",
-      SICOOB_HOMOLOGACAO_COBRANCA_NUMERO_CONTA_CORRENTE: "456",
+      SICOOB_HOMOLOGACAO_COBRANCA_NUMERO_CONTA_CORRENTE: "4567",
       SICOOB_HOMOLOGACAO_COBRANCA_ESPECIE_DOCUMENTO: "DM",
       SICOOB_HOMOLOGACAO_COBRANCA_IDENTIFICACAO_EMISSAO: "1",
       SICOOB_HOMOLOGACAO_COBRANCA_IDENTIFICACAO_DISTRIBUICAO: "1",

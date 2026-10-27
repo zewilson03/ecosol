@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { EstadoDaConsulta, ListaVazia } from "./ComponentesDoPainel";
-import { usarConsulta } from "./comunicacaoComServidor";
+import { alterarDados, usarConsulta } from "./comunicacaoComServidor";
 
 type Pagamento = {
   id: number;
@@ -18,6 +19,8 @@ type Pagamento = {
       evidencias: { quantidade_itens: number };
     };
   };
+  solicitacao_pagamento_id: number | null;
+  solicitacao_pagamento_status: string | null;
 };
 
 const reais = new Intl.NumberFormat("pt-BR", {
@@ -30,21 +33,55 @@ export default function Pagamentos() {
     "/api/admin/faturamento/pagamentos",
   );
   const itens = consulta.dados ?? [];
+  const [ocupado, definirOcupado] = useState<number | null>(null);
+  const [mensagem, definirMensagem] = useState("");
+  const [erro, definirErro] = useState("");
+
+  async function cadastrar(item: Pagamento) {
+    if (ocupado !== null) return;
+    definirOcupado(item.id);
+    definirMensagem("");
+    definirErro("");
+    try {
+      const resultado = (await alterarDados(
+        `/api/admin/faturamento/pagamentos/${item.id}/cadastrar`,
+        {},
+      )) as { atualizada?: boolean; existente?: boolean };
+      definirMensagem(
+        resultado.atualizada
+          ? "Dados da fatura atualizados. Confira o valor e o vencimento antes de enviar para aprovação."
+          : resultado.existente
+            ? "A solicitação já está atualizada."
+            : "Fatura cadastrada na área financeira para conferência.",
+      );
+      consulta.atualizar();
+    } catch (falha) {
+      definirErro((falha as Error).message);
+    } finally {
+      definirOcupado(null);
+    }
+  }
   return (
     <section className="admin-cartao">
       <div className="admin-barra">
         <div>
-          <h2>Pagamentos das usinas</h2>
+          <h2>Faturas a pagar</h2>
           <small>
-            Contas próprias da Ecosol. Estes PDFs não geram cobrança nem boleto
-            para clientes.
+            Faturas de clientes e das unidades próprias. O pagamento usa o
+            vencimento e o valor integral informados pela distribuidora.
           </small>
         </div>
         <strong>{itens.length} documento(s)</strong>
       </div>
       <EstadoDaConsulta {...consulta} repetir={consulta.atualizar} />
+      {mensagem && <p className="admin-aviso sucesso">{mensagem}</p>}
+      {erro && (
+        <p className="admin-aviso erro" role="alert">
+          {erro}
+        </p>
+      )}
       {!consulta.carregando && !consulta.erro && itens.length === 0 && (
-        <ListaVazia texto="Nenhuma conta própria de usina foi identificada." />
+        <ListaVazia texto="Nenhuma fatura foi cadastrada para pagamento." />
       )}
       {itens.length > 0 && (
         <div className="admin-tabela">
@@ -79,20 +116,47 @@ export default function Pagamentos() {
                       : reais.format(Number(item.dados.total_equatorial))}
                   </td>
                   <td>
-                    {item.extracao.finalidade?.motivo ===
-                    "grandezas_contratadas_com_demanda"
-                      ? "Demanda e demanda de geração"
-                      : `Consumo SCEE com ${item.extracao.finalidade?.evidencias.quantidade_itens ?? 0} itens`}
+                    <strong>Fatura Equatorial</strong>
+                    <small>
+                      {item.extracao.finalidade?.motivo ===
+                      "grandezas_contratadas_com_demanda"
+                        ? "Demanda e demanda de geração"
+                        : `Consumo SCEE com ${item.extracao.finalidade?.evidencias.quantidade_itens ?? 0} itens`}
+                    </small>
                   </td>
                   <td>
-                    <a
-                      className="admin-botao secundario"
-                      href={`/api/admin/faturamento/pagamentos/${item.id}/pdf`}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Abrir PDF
-                    </a>
+                    <div className="admin-acoes">
+                      <a
+                        className="admin-botao secundario"
+                        href={`/api/admin/faturamento/pagamentos/${item.id}/pdf`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Abrir PDF
+                      </a>
+                      {item.solicitacao_pagamento_id && (
+                        <small>
+                          Cadastrada · {item.solicitacao_pagamento_status}
+                        </small>
+                      )}
+                      {!item.solicitacao_pagamento_id ||
+                      !["paga", "cancelada"].includes(
+                        item.solicitacao_pagamento_status ?? "",
+                      ) ? (
+                        <button
+                          className="admin-botao"
+                          disabled={ocupado !== null}
+                          onClick={() => cadastrar(item)}
+                          type="button"
+                        >
+                          {ocupado === item.id
+                            ? "Cadastrando..."
+                            : item.solicitacao_pagamento_id
+                              ? "Revalidar dados"
+                              : "Cadastrar pagamento"}
+                        </button>
+                      ) : null}
+                    </div>
                   </td>
                 </tr>
               ))}
