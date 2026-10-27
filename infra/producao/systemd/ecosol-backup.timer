@@ -1,0 +1,11 @@
+[Unit]
+Description=Backup diário do SQLite Ecosol
+
+[Timer]
+OnCalendar=*-*-* 02:15:00 America/Sao_Paulo
+Persistent=true
+RandomizedDelaySec=10m
+Unit=ecosol-backup.service
+
+[Install]
+WantedBy=timers.target

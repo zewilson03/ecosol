@@ -15,6 +15,8 @@ import { validarContatoCliente } from "../validacaoDeContato.mjs";
 import { lerPdf } from "./extracao.mjs";
 import { identificarUsinaPorGeracao } from "./identificadoresUsinas.mjs";
 import { receberPdf } from "./receberPdf.mjs";
+import { criarRotasLeituraFaturamento } from "./rotasLeitura.mjs";
+import { criarRepositorioLeituraFaturamento } from "./repositorioLeitura.mjs";
 import { listarLotes } from "./lotes.mjs";
 import { reanalisarFatura } from "./reanalisar.mjs";
 import { simularDocumentoCentral } from "./simulacaoCentral.mjs";
@@ -49,6 +51,11 @@ import {
 export const rotasFaturamento = Router();
 const router = Router();
 rotasFaturamento.use("/api/admin/faturamento", exigirNivel(1), router);
+router.use(
+  criarRotasLeituraFaturamento({
+    obterRepositorio: () => criarRepositorioLeituraFaturamento(obterBanco()),
+  }),
+);
 const APROVADA = "Aprovada — aguardando emissão";
 const colunas =
   "id, hash, nome, lote, extracao, dados, memoria, unidade_id, competencia, status, classificacao, finalidade, versao, criado_em, atualizado_em";
@@ -175,70 +182,6 @@ function modoProcessamentoCentral(d) {
     409,
   );
 }
-function listarUnidades() {
-  const banco = obterBanco();
-  return banco
-    .prepare(
-      "SELECT u.*, s.nome AS usina_nome, COALESCE(c.name,o.nome,p.nome) AS cliente_nome, o.referencia_interna AS cliente_referencia_interna, (SELECT json_object('inicio',sc.inicio,'destino_externo',sc.destino_externo) FROM faturamento_saidas_carteira sc WHERE sc.unidade_id=u.id ORDER BY sc.inicio DESC LIMIT 1) AS saida_carteira FROM faturamento_unidades u LEFT JOIN usinas s ON s.id=u.usina_id LEFT JOIN customers c ON c.id=u.cliente_id LEFT JOIN faturamento_clientes_operacionais o ON o.id=u.cliente_operacional_id LEFT JOIN faturamento_clientes_provisorios p ON p.id=u.cliente_provisorio_id ORDER BY u.nome, u.uc",
-    )
-    .all()
-    .map((u) => {
-      const vinculos = banco
-        .prepare(
-          `SELECT v.inicio,v.usina_id,s.nome AS usina_nome
-           FROM faturamento_vinculos_usina v JOIN usinas s ON s.id=v.usina_id
-           WHERE v.unidade_id=? ORDER BY v.inicio DESC`,
-        )
-        .all(u.id);
-      if (!vinculos.length && u.usina_id !== null)
-        vinculos.push({
-          inicio: "0000-01",
-          usina_id: u.usina_id,
-          usina_nome: u.usina_nome,
-        });
-      return {
-        ...u,
-        saida_carteira: u.saida_carteira ? JSON.parse(u.saida_carteira) : null,
-        ucs_antigas: banco
-          .prepare(
-            "SELECT uc FROM faturamento_unidades_aliases WHERE unidade_id=? ORDER BY id DESC",
-          )
-          .all(u.id)
-          .map((item) => item.uc),
-        vinculos_usina: vinculos.map((v) => ({
-          ...v,
-          modalidades:
-            chaveUsina(v.usina_nome) === "ecosol"
-              ? []
-              : banco
-                  .prepare(
-                    "SELECT inicio,modalidade FROM usinas_modalidades WHERE usina_id=? ORDER BY inicio DESC",
-                  )
-                  .all(v.usina_id),
-        })),
-        descontos: banco
-          .prepare(
-            "SELECT id,inicio,desconto FROM faturamento_descontos_uc WHERE unidade_id=? ORDER BY inicio DESC",
-          )
-          .all(u.id),
-        contratos: banco
-          .prepare(
-            "SELECT * FROM faturamento_contratos WHERE unidade_id=? ORDER BY inicio DESC",
-          )
-          .all(u.id),
-        modalidades_usina:
-          u.usina_id === null || chaveUsina(u.usina_nome) === "ecosol"
-            ? []
-            : banco
-                .prepare(
-                  "SELECT inicio,modalidade FROM usinas_modalidades WHERE usina_id=? ORDER BY inicio DESC",
-                )
-                .all(u.usina_id),
-      };
-    });
-}
-
-router.get("/unidades", (_req, res) => res.json(listarUnidades()));
 router.get("/clientes-provisorios", (_req, res) =>
   res.json(
     obterBanco()
@@ -1138,16 +1081,6 @@ router.post("/lotes/processar", exigirNivel(2), async (req, res) => {
   res.json({ resultados });
 });
 
-router.get("/documentos", (_req, res) => {
-  res.json(
-    obterBanco()
-      .prepare(
-        "SELECT id FROM faturamento_documentos WHERE classificacao='fatura' AND finalidade='cobranca' AND excluido_em IS NULL ORDER BY id DESC",
-      )
-      .all()
-      .map((r) => documento(r.id)),
-  );
-});
 router.get("/recebimentos", (_req, res) => {
   res.json(
     obterBanco()

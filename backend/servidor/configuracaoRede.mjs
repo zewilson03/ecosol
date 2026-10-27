@@ -11,6 +11,7 @@ function falhar(mensagem) {
 }
 
 export function obterConfiguracaoRede(variaveis = process.env) {
+  const emProducao = String(variaveis.NODE_ENV ?? "").trim() === "production";
   const porta = Number(variaveis.PORT ?? 3000);
   if (!Number.isInteger(porta) || porta < 1 || porta > 65_535)
     falhar("PORT deve ser um inteiro entre 1 e 65535.");
@@ -22,6 +23,8 @@ export function obterConfiguracaoRede(variaveis = process.env) {
     falhar("HOST deve ser local ou um endereço curinga autorizado.");
 
   const acessoPelaRede = host === "0.0.0.0" || host === "::";
+  if (emProducao && !variaveis.APP_URL)
+    falhar("APP_URL é obrigatória em produção.");
   if (acessoPelaRede && !variaveis.APP_URL)
     falhar("APP_URL é obrigatória quando HOST permite acesso pela rede.");
 
@@ -43,6 +46,8 @@ export function obterConfiguracaoRede(variaveis = process.env) {
     appUrl.hash
   )
     falhar("APP_URL deve conter somente a origem HTTP ou HTTPS.");
+  if (emProducao && appUrl.protocol !== "https:")
+    falhar("APP_URL deve usar HTTPS em produção.");
   if (
     acessoPelaRede &&
     ["localhost", "127.0.0.1", "[::1]"].includes(appUrl.hostname.toLowerCase())

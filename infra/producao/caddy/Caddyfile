@@ -1,0 +1,20 @@
+# Substitua o domínio antes de instalar. O Caddy obtém e renova o TLS.
+SEU_DOMINIO_ECOSOL {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+		-Server
+	}
+
+	reverse_proxy 127.0.0.1:3000 {
+		health_uri /api/saude
+		health_interval 30s
+		health_timeout 5s
+	}
+}
+
+# Não habilite access log sem antes remover query strings. O retorno OAuth do
+# Gmail inclui um código temporário na URL e não pode ser persistido em logs.

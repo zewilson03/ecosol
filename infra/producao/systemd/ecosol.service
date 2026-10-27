@@ -1,0 +1,40 @@
+[Unit]
+Description=Ecosol - aplicação web
+Documentation=file:/opt/ecosol/current/docs/implantacao/operacao-servidor.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=ecosol
+Group=ecosol
+WorkingDirectory=/opt/ecosol/current
+EnvironmentFile=/etc/ecosol/ecosol.env
+ExecStartPre=/usr/bin/test -r /opt/ecosol/current/frontend/dist/index.html
+ExecStartPre=/usr/bin/test -d /var/lib/ecosol
+ExecStart=/usr/bin/node backend/servidor/iniciar.mjs
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=60s
+TimeoutStopSec=60s
+KillSignal=SIGTERM
+UMask=0077
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ReadOnlyPaths=/opt/ecosol /etc/ecosol
+ReadWritePaths=/var/lib/ecosol
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictRealtime=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

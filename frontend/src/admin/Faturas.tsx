@@ -1,10 +1,11 @@
-import PreparacaoFaturas from "./PreparacaoFaturas";
+import { lazy, Suspense, useEffect } from "react";
 import { CabecalhoDoModulo } from "./ComponentesDoPainel";
-import Calculos from "./Calculos";
 import { Link, useSearchParams } from "react-router-dom";
-import { useEffect } from "react";
-import Pagamentos from "./Pagamentos";
-import LotesFaturamento from "./LotesFaturamento";
+
+const PreparacaoFaturas = lazy(() => import("./PreparacaoFaturas"));
+const Calculos = lazy(() => import("./Calculos"));
+const Pagamentos = lazy(() => import("./Pagamentos"));
+const LotesFaturamento = lazy(() => import("./LotesFaturamento"));
 
 export default function Faturas() {
   const [parametros] = useSearchParams();
@@ -66,15 +67,23 @@ export default function Faturas() {
           ))}
         </ol>
       </nav>
-      {etapa === "lotes" ? (
-        <LotesFaturamento />
-      ) : etapa === "pagamentos" ? (
-        <Pagamentos />
-      ) : etapa === "calcular" || etapa === "aprovar" ? (
-        <Calculos incorporado modo={etapa} />
-      ) : (
-        <PreparacaoFaturas />
-      )}
+      <Suspense
+        fallback={
+          <section aria-live="polite" aria-busy="true">
+            Carregando etapa…
+          </section>
+        }
+      >
+        {etapa === "lotes" ? (
+          <LotesFaturamento />
+        ) : etapa === "pagamentos" ? (
+          <Pagamentos />
+        ) : etapa === "calcular" || etapa === "aprovar" ? (
+          <Calculos incorporado modo={etapa} />
+        ) : (
+          <PreparacaoFaturas />
+        )}
+      </Suspense>
     </>
   );
 }

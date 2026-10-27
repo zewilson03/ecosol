@@ -35,6 +35,24 @@ function validarPar(configuracao, primeiro, segundo, descricao) {
     falhar(`${descricao} deve informar os dois arquivos em conjunto.`);
 }
 
+function validarMtls(configuracao) {
+  const usaPem = Boolean(
+    configuracao.certificadoPath || configuracao.chavePrivadaPath,
+  );
+  const usaPfx = Boolean(configuracao.pfxPath);
+  if (usaPem && usaPfx)
+    falhar(
+      "A configuração mTLS deve usar PFX ou certificado/chave PEM, não ambos.",
+    );
+  validarPar(
+    configuracao,
+    "certificadoPath",
+    "chavePrivadaPath",
+    "A configuração mTLS em PEM",
+  );
+  return usaPfx || Boolean(configuracao.certificadoPath);
+}
+
 function inteiroOpcional(ambiente, nome) {
   const valor = lerTexto(ambiente, nome);
   if (!valor) return null;
@@ -72,7 +90,16 @@ export function obterConfiguracaoSicoob({
     certificadoPath: lerTexto(variaveis, `${prefixo}MTLS_CERT_PATH`),
     chavePrivadaPath: lerTexto(variaveis, `${prefixo}MTLS_KEY_PATH`),
     chavePrivadaSenha: lerTexto(variaveis, `${prefixo}MTLS_KEY_PASSPHRASE`),
+    pfxPath: lerTexto(variaveis, `${prefixo}MTLS_PFX_PATH`),
+    pfxSenha: lerTexto(variaveis, `${prefixo}MTLS_PFX_PASSPHRASE`),
     contratoVersao: lerTexto(variaveis, `${prefixo}CONTRATO_VERSAO`),
+    contaCorrente: Object.freeze({
+      apiBaseUrl: lerTexto(variaveis, `${prefixo}CONTA_CORRENTE_API_BASE_URL`),
+      numeroContaCorrente: inteiroOpcional(
+        variaveis,
+        `${prefixo}CONTA_CORRENTE_NUMERO_CONTA`,
+      ),
+    }),
     cobranca: Object.freeze({
       numeroCliente: inteiroOpcional(
         variaveis,
@@ -102,20 +129,11 @@ export function obterConfiguracaoSicoob({
         variaveis,
         `${prefixo}COBRANCA_NUMERO_CONTRATO`,
       ),
-      tipoFormularioImpressaoPDF: inteiroOpcional(
-        variaveis,
-        `${prefixo}COBRANCA_TIPO_FORMULARIO_PDF`,
-      ),
       gerarPdf: lerTexto(variaveis, `${prefixo}COBRANCA_GERAR_PDF`) === "SIM",
     }),
   };
 
-  validarPar(
-    configuracao,
-    "certificadoPath",
-    "chavePrivadaPath",
-    "A configuração mTLS",
-  );
+  const mtlsConfigurado = validarMtls(configuracao);
   const apiUrl = validarUrl(configuracao.apiBaseUrl, `${prefixo}API_BASE_URL`, {
     ambiente,
     nodeEnv,
@@ -125,10 +143,34 @@ export function obterConfiguracaoSicoob({
     `${prefixo}OAUTH_TOKEN_URL`,
     { ambiente, nodeEnv },
   );
+  const contaCorrenteUrl = validarUrl(
+    configuracao.contaCorrente.apiBaseUrl,
+    `${prefixo}CONTA_CORRENTE_API_BASE_URL`,
+    { ambiente, nodeEnv },
+  );
   if (apiUrl && apiUrl.search)
     falhar(`${prefixo}API_BASE_URL não pode conter parâmetros de consulta.`);
   if (tokenUrl && tokenUrl.search)
     falhar(`${prefixo}OAUTH_TOKEN_URL não pode conter parâmetros de consulta.`);
+  if (contaCorrenteUrl && contaCorrenteUrl.search)
+    falhar(
+      `${prefixo}CONTA_CORRENTE_API_BASE_URL não pode conter parâmetros de consulta.`,
+    );
+  if (
+    Boolean(configuracao.contaCorrente.apiBaseUrl) !==
+    Boolean(configuracao.contaCorrente.numeroContaCorrente)
+  )
+    falhar(
+      `A API de Conta Corrente exige ${prefixo}CONTA_CORRENTE_API_BASE_URL e ` +
+        `${prefixo}CONTA_CORRENTE_NUMERO_CONTA em conjunto.`,
+    );
+  if (
+    configuracao.contaCorrente.apiBaseUrl &&
+    !configuracao.oauthScope.split(/\s+/).includes("cco_consulta")
+  )
+    falhar(
+      `${prefixo}OAUTH_SCOPE deve incluir cco_consulta para consultar o extrato.`,
+    );
 
   if (ambiente === "producao") {
     if (nodeEnv !== "production")
@@ -150,6 +192,11 @@ export function obterConfiguracaoSicoob({
       .map(([, nome]) => nome);
     if (ausentes.length)
       falhar(`Configuração Sicoob incompleta: ${ausentes.join(", ")}.`);
+    if (!mtlsConfigurado)
+      falhar(
+        `Configuração Sicoob incompleta: ${prefixo}MTLS_PFX_PATH ou ` +
+          `${prefixo}MTLS_CERT_PATH/${prefixo}MTLS_KEY_PATH.`,
+      );
   }
 
   return Object.freeze(configuracao);
@@ -164,8 +211,13 @@ export function resumirConfiguracaoSicoob(configuracao) {
       configuracao.oauthTokenUrl && configuracao.clientId,
     ),
     mtls_configurado: Boolean(
-      configuracao.certificadoPath && configuracao.chavePrivadaPath,
+      configuracao.pfxPath ||
+      (configuracao.certificadoPath && configuracao.chavePrivadaPath),
     ),
     contrato_versao: configuracao.contratoVersao || null,
+    conta_corrente_configurada: Boolean(
+      configuracao.contaCorrente?.apiBaseUrl &&
+      configuracao.contaCorrente?.numeroContaCorrente,
+    ),
   };
 }

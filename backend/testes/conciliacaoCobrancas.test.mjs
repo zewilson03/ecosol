@@ -172,6 +172,98 @@ function reconciliacaoDaOperacao(id) {
 }
 
 {
+  const operacao = criarOperacao("registrada");
+  const parcial = await conciliarCobranca({
+    banco,
+    operacaoId: operacao.id,
+    adaptador: {
+      async consultarCobranca() {
+        return {
+          categoria: "sucesso",
+          estado: "liquidada",
+          provedor_id: operacao.nossoNumero,
+          valor_pago_centavos: 5_000,
+          codigo: "SIM_PAGAMENTO_PARCIAL",
+        };
+      },
+    },
+  });
+  assert.equal(parcial.resultado, "inconclusiva");
+  assert.equal(parcial.codigo, "CONCILIACAO_PAGAMENTO_PARCIAL");
+  assert.equal(estadoDaOperacao(operacao.id), "registrada");
+}
+
+{
+  const operacao = criarOperacao("registrada");
+  const excedente = await conciliarCobranca({
+    banco,
+    operacaoId: operacao.id,
+    adaptador: {
+      async consultarCobranca() {
+        return {
+          categoria: "sucesso",
+          estado: "liquidada",
+          provedor_id: operacao.nossoNumero,
+          valor_pago_centavos: 10_001,
+          codigo: "SIM_VALOR_EXCEDENTE",
+        };
+      },
+    },
+  });
+  assert.equal(excedente.resultado, "inconclusiva");
+  assert.equal(excedente.codigo, "CONCILIACAO_VALOR_EXCEDENTE");
+  assert.equal(estadoDaOperacao(operacao.id), "registrada");
+}
+
+{
+  const operacao = criarOperacao("liquidada");
+  const estorno = await conciliarCobranca({
+    banco,
+    operacaoId: operacao.id,
+    adaptador: {
+      async consultarCobranca() {
+        return {
+          categoria: "sucesso",
+          estado: "estornada",
+          provedor_id: operacao.nossoNumero,
+          valor_pago_centavos: 10_000,
+          codigo: "SIM_ESTORNO",
+        };
+      },
+    },
+  });
+  assert.equal(estorno.resultado, "inconclusiva");
+  assert.equal(estorno.codigo, "CONCILIACAO_ESTORNO_REQUER_REVISAO");
+  assert.equal(estadoDaOperacao(operacao.id), "liquidada");
+}
+
+{
+  const operacao = criarOperacao("registrada");
+  const adaptador = {
+    async consultarCobranca() {
+      return {
+        categoria: "sucesso",
+        estado: "liquidada",
+        provedor_id: operacao.nossoNumero,
+        valor_pago_centavos: 10_000,
+        codigo: "SIM_LIQUIDADA",
+      };
+    },
+  };
+  await conciliarCobranca({ banco, operacaoId: operacao.id, adaptador });
+  await conciliarCobranca({ banco, operacaoId: operacao.id, adaptador });
+  assert.equal(estadoDaOperacao(operacao.id), "liquidada");
+  assert.equal(
+    banco
+      .prepare(
+        "SELECT COUNT(*) AS total FROM bancario_auditoria_operacoes WHERE operacao_id=? AND estado_anterior='registrada' AND estado_novo='liquidada'",
+      )
+      .get(operacao.id).total,
+    1,
+  );
+}
+
+{
   const operacao = criarOperacao("liquidada");
   const resposta = await conciliarCobranca({
     banco,

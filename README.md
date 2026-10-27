@@ -119,6 +119,12 @@ Próximas etapas: captura pelo Gmail, leitura autorizada do Drive, OCR,
 regras automáticas de vencimento, integração Sicoob, envio e conciliação.
 Não são necessários Redis, PostgreSQL ou credenciais bancárias para esta entrega.
 
+O gate completo usado em pull requests e na validação de releases é
+`pnpm quality:check`. Ele executa todos os testes, o build e a auditoria de
+dependências de produção. As decisões de risco, fronteiras do monólito modular,
+migrações e recuperação estão em
+[`docs/arquitetura/padrao-riscos-e-arquitetura.md`](docs/arquitetura/padrao-riscos-e-arquitetura.md).
+
 ## Excel por usina — importação e exportação separada
 
 **As planilhas originais não devem ser alteradas.** Este módulo lê o arquivo

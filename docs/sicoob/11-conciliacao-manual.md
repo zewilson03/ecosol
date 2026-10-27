@@ -10,7 +10,7 @@ Permitir que um administrador da integração consulte novamente uma cobrança p
 
 1. A central identifica uma operação com resultado desconhecido ou conciliação pendente de recuperação/revisão.
 2. A interface apresenta o comando somente ao papel `administrador_integracao` e somente quando há identificador do provedor.
-3. O backend exige sessão nominal, papel autorizado, origem confiável e confirmação recente por senha e MFA.
+3. O backend exige sessão nominal, papel autorizado, origem confiável e confirmação recente pela senha da equipe.
 4. O serviço abre uma posse exclusiva para a operação e registra a identidade do solicitante na auditoria.
 5. O adaptador realiza apenas uma consulta. Nenhum registro de cobrança (`POST`) é executado.
 6. O retorno é conferido contra o identificador já persistido. Divergência ou ausência de confirmação permanece inconclusiva.
@@ -25,6 +25,9 @@ Permitir que um administrador da integração consulte novamente uma cobrança p
 - a resposta atrasada do processo que perdeu a posse é ignorada;
 - indisponibilidade gera tentativa falha auditável sem alterar o estado financeiro;
 - identificador divergente gera `CONCILIACAO_PROVEDOR_DIVERGENTE` e não altera a cobrança.
+- valor pago inferior ou superior ao valor esperado permanece inconclusivo e exige revisão;
+- estorno observado não rebaixa automaticamente uma cobrança liquidada;
+- repetir a consulta de uma liquidação confirmada preserva um único estado financeiro, mantendo o histórico de consultas.
 
 ## Segurança e privacidade
 
@@ -40,7 +43,7 @@ Permitir que um administrador da integração consulte novamente uma cobrança p
 ## Critérios de aceite
 
 - somente `administrador_integracao` pode iniciar a conciliação;
-- senha e MFA recentes são obrigatórios;
+- confirmação recente pela senha da equipe é obrigatória;
 - consulta sem identificador do provedor é recusada antes do adaptador;
 - não existe reemissão de cobrança no fluxo;
 - concorrência, posse expirada e resposta atrasada são tratadas de forma idempotente;

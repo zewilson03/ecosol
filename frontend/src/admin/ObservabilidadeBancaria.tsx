@@ -469,7 +469,8 @@ export default function ObservabilidadeBancaria({
                           : "Consultar no simulador"}
                       </button>
                       <small>
-                        Exige senha e MFA; não cria uma nova cobrança.
+                        Exige a senha atual da equipe; não cria uma nova
+                        cobrança.
                       </small>
                     </div>
                   )}

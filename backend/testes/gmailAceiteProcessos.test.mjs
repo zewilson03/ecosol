@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { createServer } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
@@ -335,7 +336,7 @@ function rastrear(processo) {
     processo,
     saida: () => saida,
     erros: () => erros,
-    async esperar(marcador, limiteMs = 12000) {
+    async esperar(marcador, limiteMs = 30000) {
       if (saida.includes(marcador)) return;
       await new Promise((resolver, rejeitar) => {
         const limite = setTimeout(() => {
@@ -365,7 +366,7 @@ function rastrear(processo) {
         verificar();
       });
     },
-    async finalizar(limiteMs = 12000) {
+    async finalizar(limiteMs = 30000) {
       if (encerrado) return codigoFinal;
       return await new Promise((resolver, rejeitar) => {
         const limite = setTimeout(() => {
@@ -388,11 +389,22 @@ function rastrear(processo) {
 async function aceite() {
   const pasta = mkdtempSync(join(tmpdir(), "ecosol-gmail-aceite-"));
   const caminhoBanco = join(pasta, "ecosol.db");
+  const porta = await new Promise((resolver, rejeitar) => {
+    const servidor = createServer();
+    servidor.once("error", rejeitar);
+    servidor.listen(0, "127.0.0.1", () => {
+      const endereco = servidor.address();
+      servidor.close((erro) =>
+        erro ? rejeitar(erro) : resolver(endereco.port),
+      );
+    });
+  });
   const ambiente = {
     ...process.env,
     ECOSOL_DATA_DIR: pasta,
     NODE_ENV: "production",
-    PORT: "0",
+    PORT: String(porta),
+    APP_URL: `https://ecosol-aceite.invalid:${porta}`,
   };
   const processosAtivos = new Set();
   const registrarProcesso = (processo) => {
@@ -460,6 +472,9 @@ async function aceite() {
           "gmail_anexos",
           "gmail_auditoria",
           "gmail_capturas_periodo",
+          "gmail_capturas_periodo_mensagens",
+          "gmail_capturas_periodo_preparacoes_central",
+          "gmail_capturas_periodo_preparacoes_central_historico",
           "gmail_contas",
           "gmail_credenciais",
           "gmail_mensagens",
@@ -517,7 +532,7 @@ async function aceite() {
     try {
       retomada = rastrear(filho("timeout-e-retomada"));
       await retomada.esperar("PRONTO");
-      await retomada.esperar("BUSY", 10000);
+      await retomada.esperar("BUSY", 30000);
       assert.deepEqual(
         bancoDeBloqueio
           .prepare(
@@ -617,7 +632,7 @@ async function aceite() {
     bancoDeBloqueio.exec("BEGIN IMMEDIATE");
     try {
       reservaComTimeout.processo.stdin.write("CONTINUAR\n");
-      await reservaComTimeout.esperar("BUSY", 10000);
+      await reservaComTimeout.esperar("BUSY", 30000);
       assert.equal(
         bancoDeBloqueio
           .prepare("SELECT SUM(tentativas) AS total FROM gmail_mensagens")

@@ -14,6 +14,7 @@ import {
 import { contratoOAuthSicoob } from "./contratoOAuthSicoob.mjs";
 import { FalhaHttpSicoob } from "./clienteHttpSeguro.mjs";
 import { criarContratoCobrancaSicoob } from "./contratoCobrancaSicoob.mjs";
+import { criarContaCorrenteSicoob } from "./contaCorrenteSicoob.mjs";
 
 /**
  * Compõe a integração sem definir nenhum campo ou endpoint do provedor. Os
@@ -26,6 +27,7 @@ export function criarIntegracaoSicoob({
   relogio,
   permitirHttpLocal = false,
   timeoutMs = 10_000,
+  criarAgenteMtls = criarAgenteMtlsSicoob,
 } = {}) {
   const configuracao = obterConfiguracaoSicoob({
     variaveis,
@@ -39,9 +41,9 @@ export function criarIntegracaoSicoob({
       "O contrato OAuth oficial do Sicoob ainda não foi configurado.",
     );
 
-  const agente = configuracao.certificadoPath
-    ? criarAgenteMtlsSicoob(configuracao)
-    : undefined;
+  if (typeof criarAgenteMtls !== "function")
+    throw new Error("Informe como criar o agente mTLS do Sicoob.");
+  const agente = criarAgenteMtls(configuracao);
   const tokenUrl = new URL(configuracao.oauthTokenUrl);
   const clienteToken = criarClienteHttpSeguro({
     baseUrl: tokenUrl.origin,
@@ -58,6 +60,14 @@ export function criarIntegracaoSicoob({
     permitirHttpLocal,
     timeoutMs,
   });
+  const clienteContaCorrente = configuracao.contaCorrente.apiBaseUrl
+    ? criarClienteHttpSeguro({
+        baseUrl: configuracao.contaCorrente.apiBaseUrl,
+        agente,
+        permitirHttpLocal,
+        timeoutMs,
+      })
+    : null;
   const carregador = criarCarregadorTokenOAuth({
     clienteHttp: clienteToken,
     contratoOAuth: {
@@ -87,14 +97,26 @@ export function criarIntegracaoSicoob({
     clienteHttp: clienteApi,
     gerenciadorOAuth: oauth,
     contrato: contratoCobrancaEfetivo,
+    clientId: configuracao.clientId,
   });
+  const contaCorrente = clienteContaCorrente
+    ? criarContaCorrenteSicoob({
+        clienteHttp: clienteContaCorrente,
+        gerenciadorOAuth: oauth,
+        clientId: configuracao.clientId,
+        numeroContaCorrente: configuracao.contaCorrente.numeroContaCorrente,
+      })
+    : null;
   const diagnostico = Object.freeze({
     async consultarSaude() {
       const token = await oauth.obter();
       const resposta = await clienteApi.solicitar({
         metodo: "GET",
         caminho: "/health",
-        cabecalhos: { accept: "application/json" },
+        cabecalhos: {
+          accept: "application/json",
+          client_id: configuracao.clientId,
+        },
         accessToken: token.accessToken,
         tokenType: token.tokenType,
       });
@@ -116,6 +138,7 @@ export function criarIntegracaoSicoob({
     adaptador,
     oauth,
     diagnostico,
+    contaCorrente,
     configuracao: resumirConfiguracaoSicoob(configuracao),
   });
 }

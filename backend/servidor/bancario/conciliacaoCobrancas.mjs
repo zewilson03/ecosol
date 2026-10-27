@@ -167,24 +167,36 @@ function concluir(banco, trabalho, resultado) {
       return { ignorada: true, motivo: "posse_perdida" };
 
     const operacao = banco
-      .prepare("SELECT estado,provedor_id FROM bancario_operacoes WHERE id=?")
+      .prepare(
+        "SELECT estado,provedor_id,valor_centavos FROM bancario_operacoes WHERE id=?",
+      )
       .get(trabalho.operacaoId);
     if (!operacao) falhar("Operação bancária não encontrada.", 404);
 
     const provedorRecebido = String(resultado?.provedor_id ?? "").trim();
     const provedorEsperado = String(operacao.provedor_id ?? "").trim();
+    const estadoObservado = String(resultado?.estado ?? "").trim();
+    const valorPagoInformado = resultado?.valor_pago_centavos != null;
+    const valorPago = Number(resultado?.valor_pago_centavos);
+    const valorPagoValido =
+      !valorPagoInformado ||
+      (Number.isSafeInteger(valorPago) && valorPago >= 0);
+    const valorConfere =
+      !valorPagoInformado || valorPago === Number(operacao.valor_centavos);
     const sucessoValido =
       resultado?.categoria === "sucesso" &&
       provedorRecebido &&
       provedorRecebido === provedorEsperado &&
-      new Set(["registrada", "liquidada"]).has(resultado.estado);
+      new Set(["registrada", "liquidada"]).has(estadoObservado) &&
+      valorPagoValido &&
+      (estadoObservado !== "liquidada" || valorConfere);
 
     let estadoReconciliacao = "inconclusiva";
     let estadoNovo = operacao.estado;
     let codigo = String(resultado?.codigo ?? "CONCILIACAO_INCONCLUSIVA");
     if (sucessoValido) {
       estadoReconciliacao = "concluida";
-      if (resultado.estado === "liquidada") estadoNovo = "liquidada";
+      if (estadoObservado === "liquidada") estadoNovo = "liquidada";
       else if (operacao.estado === "resultado_desconhecido")
         estadoNovo = "registrada";
     } else if (
@@ -192,6 +204,27 @@ function concluir(banco, trabalho, resultado) {
       provedorRecebido !== provedorEsperado
     ) {
       codigo = "CONCILIACAO_PROVEDOR_DIVERGENTE";
+    } else if (!valorPagoValido) {
+      codigo = "CONCILIACAO_VALOR_INVALIDO";
+    } else if (
+      resultado?.categoria === "sucesso" &&
+      estadoObservado === "liquidada" &&
+      valorPagoInformado &&
+      valorPago < Number(operacao.valor_centavos)
+    ) {
+      codigo = "CONCILIACAO_PAGAMENTO_PARCIAL";
+    } else if (
+      resultado?.categoria === "sucesso" &&
+      estadoObservado === "liquidada" &&
+      valorPagoInformado &&
+      valorPago > Number(operacao.valor_centavos)
+    ) {
+      codigo = "CONCILIACAO_VALOR_EXCEDENTE";
+    } else if (
+      resultado?.categoria === "sucesso" &&
+      estadoObservado === "estornada"
+    ) {
+      codigo = "CONCILIACAO_ESTORNO_REQUER_REVISAO";
     }
 
     if (estadoNovo !== operacao.estado)
@@ -211,7 +244,7 @@ function concluir(banco, trabalho, resultado) {
       )
       .run(
         estadoReconciliacao,
-        sucessoValido ? resultado.estado : null,
+        estadoObservado || null,
         codigo,
         trabalho.id,
         trabalho.executorId,

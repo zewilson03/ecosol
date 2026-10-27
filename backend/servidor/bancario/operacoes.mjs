@@ -1,5 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import { obterBanco } from "../bancoDeDados.mjs";
+import {
+  calcularEncargosAtraso,
+  hojeEmSaoPaulo,
+  REGRA_ENCARGOS_ATRASO,
+} from "../financeiro/encargosAtraso.mjs";
+import { conferirCredencialConfirmacao } from "./credencialConfirmacao.mjs";
 import { temPapelCritico } from "./permissoes.mjs";
 
 const STATUS_FATURA_APROVADA = "Aprovada — aguardando emissão";
@@ -132,14 +138,137 @@ function conferirFaturaParaOperacao(fatura) {
   return memoria;
 }
 
+function liberarEncargosDeCobrancasSemEfeito(banco) {
+  banco
+    .prepare(
+      `UPDATE bancario_encargos_atraso
+       SET estado='liberado',liberado_em=CURRENT_TIMESTAMP
+       WHERE estado='aplicado' AND operacao_destino_id IN (
+         SELECT id FROM bancario_operacoes WHERE estado IN ('rejeitada','cancelada')
+       )`,
+    )
+    .run();
+}
+
+function encargosPendentesDaUnidade(
+  banco,
+  { unidadeId, vencimentoDestino, dataReferencia },
+) {
+  liberarEncargosDeCobrancasSemEfeito(banco);
+  return banco
+    .prepare(
+      `SELECT o.id AS operacao_origem_id,o.valor_centavos AS principal_centavos,
+              o.vencimento,o.provedor_id
+       FROM bancario_operacoes o
+       WHERE o.tipo='cobranca' AND o.estado='registrada'
+         AND o.vencimento IS NOT NULL AND o.vencimento<?
+         AND json_extract(o.snapshot,'$.unidade.id')=?
+         AND NOT EXISTS (
+           SELECT 1 FROM bancario_encargos_atraso e
+           WHERE e.operacao_origem_id=o.id AND e.estado='aplicado'
+         )
+       ORDER BY o.vencimento,o.id`,
+    )
+    .all(vencimentoDestino, unidadeId)
+    .map((origem) => ({
+      ...origem,
+      ...calcularEncargosAtraso({
+        principal_centavos: origem.principal_centavos,
+        vencimento: origem.vencimento,
+        data_referencia: dataReferencia,
+      }),
+    }))
+    .filter((encargo) => encargo.total_centavos > 0);
+}
+
+function somarCentavosSeguro(valores, nome) {
+  const total = valores.reduce((soma, valor) => soma + valor, 0);
+  if (!Number.isSafeInteger(total) || total < 0)
+    falhar(`${nome} excedeu o limite monetário seguro.`, 409);
+  return total;
+}
+
+function montarSnapshotCobranca(fatura, memoria, encargos) {
+  const totalEncargos = somarCentavosSeguro(
+    encargos.map((item) => item.total_centavos),
+    "O total dos encargos de atraso",
+  );
+  const valorTotal = somarCentavosSeguro(
+    [memoria.total_centavos, totalEncargos],
+    "O total da cobrança",
+  );
+  return {
+    versao: 1,
+    tipo: "cobranca",
+    origem: {
+      documento_id: fatura.id,
+      documento_hash: fatura.hash,
+      documento_versao: fatura.versao,
+      nome: fatura.nome,
+    },
+    cliente: {
+      id: fatura.cliente_id,
+      nome: fatura.cliente_nome,
+      documento: fatura.cliente_documento,
+    },
+    unidade: {
+      id: fatura.unidade_id,
+      uc: fatura.uc,
+      competencia: fatura.competencia,
+    },
+    cobranca: {
+      valor_base_centavos: memoria.total_centavos,
+      encargos_atraso_centavos: totalEncargos,
+      valor_centavos: valorTotal,
+      moeda: "BRL",
+      vencimento: memoria.vencimento_ecosol,
+    },
+    encargos_atraso: {
+      regra: REGRA_ENCARGOS_ATRASO,
+      total_centavos: totalEncargos,
+      itens: encargos,
+    },
+    memoria_calculo: memoria,
+  };
+}
+
+function montarSnapshotCobrancaLegado(fatura, memoria) {
+  return {
+    versao: 1,
+    tipo: "cobranca",
+    origem: {
+      documento_id: fatura.id,
+      documento_hash: fatura.hash,
+      documento_versao: fatura.versao,
+      nome: fatura.nome,
+    },
+    cliente: {
+      id: fatura.cliente_id,
+      nome: fatura.cliente_nome,
+      documento: fatura.cliente_documento,
+    },
+    unidade: {
+      id: fatura.unidade_id,
+      uc: fatura.uc,
+      competencia: fatura.competencia,
+    },
+    cobranca: {
+      valor_centavos: memoria.total_centavos,
+      moeda: "BRL",
+      vencimento: memoria.vencimento_ecosol,
+    },
+    memoria_calculo: memoria,
+  };
+}
+
 function linhaCompleta(banco, operacaoId) {
   const operacao = banco
     .prepare(
       `SELECT o.*,
               p.name AS preparador_nome,
-              COALESCE(a.aprovador_id,auto.proprietario_id) AS aprovador_id,
-              COALESCE(a.criado_em,auto.criado_em) AS aprovado_em,
-              (auto.id IS NOT NULL) AS autoaprovada,
+              COALESCE(pg.proprietario_id,a.aprovador_id,auto.proprietario_id) AS aprovador_id,
+              COALESCE(pg.criado_em,a.criado_em,auto.criado_em) AS aprovado_em,
+              (pg.id IS NOT NULL OR auto.id IS NOT NULL) AS autoaprovada,
               aprov.name AS aprovador_nome
        FROM bancario_operacoes o
        JOIN staff_users p ON p.id=o.preparado_por
@@ -147,7 +276,10 @@ function linhaCompleta(banco, operacaoId) {
          ON a.operacao_id=o.id AND a.operacao_versao=o.versao
        LEFT JOIN bancario_autoaprovacoes_proprietario auto
          ON auto.operacao_id=o.id AND auto.operacao_versao=o.versao
-       LEFT JOIN staff_users aprov ON aprov.id=COALESCE(a.aprovador_id,auto.proprietario_id)
+       LEFT JOIN bancario_aprovacoes_pagamento_proprietario pg
+         ON pg.operacao_id=o.id AND pg.operacao_versao=o.versao
+       LEFT JOIN staff_users aprov
+         ON aprov.id=COALESCE(pg.proprietario_id,a.aprovador_id,auto.proprietario_id)
        WHERE o.id=?`,
     )
     .get(operacaoId);
@@ -200,7 +332,11 @@ function linhaCompleta(banco, operacaoId) {
   };
 }
 
-export function criarOperacaoDeCobranca(documentoId, administrador) {
+export function criarOperacaoDeCobranca(
+  documentoId,
+  administrador,
+  dataReferencia = hojeEmSaoPaulo(),
+) {
   if (!Number.isSafeInteger(documentoId) || documentoId <= 0)
     falhar("Informe uma fatura válida.");
   if (!administrador?.id) falhar("Use uma conta nominal da equipe.", 403);
@@ -208,45 +344,9 @@ export function criarOperacaoDeCobranca(documentoId, administrador) {
   return transacaoImediata((banco) => {
     const fatura = faturaAprovada(banco, documentoId);
     const memoria = conferirFaturaParaOperacao(fatura);
-    const snapshot = {
-      versao: 1,
-      tipo: "cobranca",
-      origem: {
-        documento_id: fatura.id,
-        documento_hash: fatura.hash,
-        documento_versao: fatura.versao,
-        nome: fatura.nome,
-      },
-      cliente: {
-        id: fatura.cliente_id,
-        nome: fatura.cliente_nome,
-        documento: fatura.cliente_documento,
-      },
-      unidade: {
-        id: fatura.unidade_id,
-        uc: fatura.uc,
-        competencia: fatura.competencia,
-      },
-      cobranca: {
-        valor_centavos: memoria.total_centavos,
-        moeda: "BRL",
-        vencimento: memoria.vencimento_ecosol,
-      },
-      memoria_calculo: memoria,
-    };
-    const snapshotHash = hashCanonico(snapshot);
-    const idempotencia = hashCanonico({
-      tipo: "cobranca",
-      ambiente: configuracao.ambiente,
-      conta: configuracao.contaReferencia,
-      origem: "faturamento_documento",
-      origem_id: String(fatura.id),
-      origem_versao: fatura.versao,
-      snapshot_hash: snapshotHash,
-    });
     const existente = banco
       .prepare(
-        `SELECT id,idempotencia,snapshot_hash FROM bancario_operacoes
+        `SELECT id,idempotencia,snapshot,snapshot_hash FROM bancario_operacoes
          WHERE tipo='cobranca' AND ambiente=? AND conta_referencia=?
            AND origem_tipo='faturamento_documento' AND origem_id=? AND origem_versao=?`,
       )
@@ -257,9 +357,32 @@ export function criarOperacaoDeCobranca(documentoId, administrador) {
         fatura.versao,
       );
     if (existente) {
+      let snapshotExistente;
+      try {
+        snapshotExistente = JSON.parse(existente.snapshot);
+      } catch {
+        falhar("A operação existente possui memória corrompida.", 409);
+      }
+      const snapshotAtual = Object.hasOwn(snapshotExistente, "encargos_atraso")
+        ? montarSnapshotCobranca(
+            fatura,
+            memoria,
+            snapshotExistente.encargos_atraso?.itens ?? [],
+          )
+        : montarSnapshotCobrancaLegado(fatura, memoria);
+      const snapshotHashAtual = hashCanonico(snapshotAtual);
+      const idempotenciaAtual = hashCanonico({
+        tipo: "cobranca",
+        ambiente: configuracao.ambiente,
+        conta: configuracao.contaReferencia,
+        origem: "faturamento_documento",
+        origem_id: String(fatura.id),
+        origem_versao: fatura.versao,
+        snapshot_hash: snapshotHashAtual,
+      });
       if (
-        existente.idempotencia !== idempotencia ||
-        existente.snapshot_hash !== snapshotHash
+        existente.idempotencia !== idempotenciaAtual ||
+        existente.snapshot_hash !== snapshotHashAtual
       )
         falhar(
           "A mesma versão da fatura possui conteúdo divergente. Recalcule antes de prosseguir.",
@@ -267,6 +390,23 @@ export function criarOperacaoDeCobranca(documentoId, administrador) {
         );
       return { criada: false, operacao: linhaCompleta(banco, existente.id) };
     }
+
+    const encargos = encargosPendentesDaUnidade(banco, {
+      unidadeId: fatura.unidade_id,
+      vencimentoDestino: memoria.vencimento_ecosol,
+      dataReferencia,
+    });
+    const snapshot = montarSnapshotCobranca(fatura, memoria, encargos);
+    const snapshotHash = hashCanonico(snapshot);
+    const idempotencia = hashCanonico({
+      tipo: "cobranca",
+      ambiente: configuracao.ambiente,
+      conta: configuracao.contaReferencia,
+      origem: "faturamento_documento",
+      origem_id: String(fatura.id),
+      origem_versao: fatura.versao,
+      snapshot_hash: snapshotHash,
+    });
 
     const operacaoId = randomUUID();
     banco
@@ -286,84 +426,90 @@ export function criarOperacaoDeCobranca(documentoId, administrador) {
         String(fatura.id),
         fatura.versao,
         idempotencia,
-        memoria.total_centavos,
+        snapshot.cobranca.valor_centavos,
         memoria.vencimento_ecosol,
         jsonCanonico(snapshot),
         snapshotHash,
-        "aguardando_aprovacao",
+        "aprovada",
         administrador.id,
+      );
+    const inserirEncargo = banco.prepare(
+      `INSERT INTO bancario_encargos_atraso
+       (id,operacao_origem_id,operacao_destino_id,unidade_id,data_referencia,
+        dias_atraso,dias_juros,principal_centavos,multa_centavos,
+        juros_centavos,total_centavos,regra)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+    );
+    for (const encargo of encargos)
+      inserirEncargo.run(
+        randomUUID(),
+        encargo.operacao_origem_id,
+        operacaoId,
+        fatura.unidade_id,
+        dataReferencia,
+        encargo.dias_atraso,
+        encargo.dias_juros,
+        encargo.principal_centavos,
+        encargo.multa_centavos,
+        encargo.juros_centavos,
+        encargo.total_centavos,
+        encargo.regra,
       );
     registrarAuditoria(
       banco,
       operacaoId,
       administrador,
-      "Operação de cobrança preparada",
+      "Cobrança preparada sem aprovação adicional",
       null,
-      "aguardando_aprovacao",
-      { origem_id: String(fatura.id), origem_versao: fatura.versao },
+      "aprovada",
+      {
+        origem_id: String(fatura.id),
+        origem_versao: fatura.versao,
+        valor_base_centavos: memoria.total_centavos,
+        encargos_atraso_centavos: snapshot.cobranca.encargos_atraso_centavos,
+        valor_total_centavos: snapshot.cobranca.valor_centavos,
+        cobrancas_vencidas: encargos.map((item) => item.operacao_origem_id),
+      },
     );
     return { criada: true, operacao: linhaCompleta(banco, operacaoId) };
   });
 }
 
-export function aprovarOperacao(
-  operacaoId,
-  administrador,
-  confirmacaoAutoaprovacao = false,
-) {
+export async function aprovarOperacao(operacaoId, administrador, senha) {
   if (!/^[0-9a-f-]{36}$/.test(String(operacaoId)))
     falhar("Operação bancária inválida.");
+  if (!temPapelCritico(administrador?.id, "proprietario"))
+    falhar("Somente o Proprietário pode aprovar pagamentos.", 403);
+  await conferirCredencialConfirmacao(administrador, senha);
   return transacaoImediata((banco) => {
     const operacao = banco
       .prepare("SELECT * FROM bancario_operacoes WHERE id=?")
       .get(operacaoId);
     if (!operacao) falhar("Operação bancária não encontrada.", 404);
-    const autoaprovacao = operacao.preparado_por === administrador.id;
-    if (autoaprovacao && !temPapelCritico(administrador.id, "proprietario"))
-      falhar("Quem preparou a operação não pode aprová-la.", 409);
-    if (autoaprovacao && confirmacaoAutoaprovacao !== true)
-      falhar("Confirme explicitamente a autoaprovação desta operação.", 400);
+    if (operacao.tipo !== "pagamento")
+      falhar("Cobranças não exigem aprovação do Proprietário.", 409);
     const aprovacaoExistente = banco
       .prepare(
-        `SELECT aprovador_id FROM bancario_aprovacoes
-         WHERE operacao_id=? AND operacao_versao=?
-         UNION ALL
-         SELECT proprietario_id FROM bancario_autoaprovacoes_proprietario
+        `SELECT proprietario_id FROM bancario_aprovacoes_pagamento_proprietario
          WHERE operacao_id=? AND operacao_versao=?`,
       )
-      .get(operacao.id, operacao.versao, operacao.id, operacao.versao);
+      .get(operacao.id, operacao.versao);
     if (aprovacaoExistente)
       return { alterada: false, operacao: linhaCompleta(banco, operacao.id) };
     if (operacao.estado !== "aguardando_aprovacao")
       falhar("Esta operação não está aguardando aprovação.", 409);
-    if (autoaprovacao) {
-      banco
-        .prepare(
-          `INSERT INTO bancario_autoaprovacoes_proprietario
-           (operacao_id,operacao_versao,snapshot_hash,proprietario_id)
-           VALUES(?,?,?,?)`,
-        )
-        .run(
-          operacao.id,
-          operacao.versao,
-          operacao.snapshot_hash,
-          administrador.id,
-        );
-    } else {
-      banco
-        .prepare(
-          `INSERT INTO bancario_aprovacoes
-           (operacao_id,operacao_versao,snapshot_hash,preparador_id,aprovador_id)
-           VALUES(?,?,?,?,?)`,
-        )
-        .run(
-          operacao.id,
-          operacao.versao,
-          operacao.snapshot_hash,
-          operacao.preparado_por,
-          administrador.id,
-        );
-    }
+    banco
+      .prepare(
+        `INSERT INTO bancario_aprovacoes_pagamento_proprietario
+         (operacao_id,operacao_versao,snapshot_hash,proprietario_id)
+         VALUES(?,?,?,?)`,
+      )
+      .run(
+        operacao.id,
+        operacao.versao,
+        operacao.snapshot_hash,
+        administrador.id,
+      );
     banco
       .prepare(
         `UPDATE bancario_operacoes
@@ -375,10 +521,13 @@ export function aprovarOperacao(
       banco,
       operacao.id,
       administrador,
-      autoaprovacao ? "Autoaprovação pelo Proprietário" : "Operação aprovada",
+      "Pagamento aprovado pelo Proprietário com senha de confirmação",
       "aguardando_aprovacao",
       "aprovada",
-      { snapshot_hash: operacao.snapshot_hash, autoaprovacao },
+      {
+        snapshot_hash: operacao.snapshot_hash,
+        autenticacao: "senha_confirmacao_financeira",
+      },
     );
     return { alterada: true, operacao: linhaCompleta(banco, operacao.id) };
   });
@@ -402,40 +551,20 @@ function conferirOrigemImutavel(banco, operacao) {
 }
 
 function conferirAprovacaoAindaValida(banco, operacao) {
-  const autoaprovacao = banco
+  if (operacao.tipo === "cobranca") return;
+  const aprovacaoDoProprietario = banco
     .prepare(
-      `SELECT 1 FROM bancario_autoaprovacoes_proprietario a
+      `SELECT 1 FROM bancario_aprovacoes_pagamento_proprietario a
        JOIN equipe_papeis_criticos p
          ON p.staff_id=a.proprietario_id AND p.papel='proprietario'
        JOIN staff_users s ON s.id=p.staff_id AND s.access_level=3
        WHERE a.operacao_id=? AND a.operacao_versao=?
-         AND a.snapshot_hash=? AND a.proprietario_id=?`,
+         AND a.snapshot_hash=?`,
     )
-    .get(
-      operacao.id,
-      operacao.versao,
-      operacao.snapshot_hash,
-      operacao.preparado_por,
-    );
-  if (autoaprovacao) return;
-  const aprovacao = banco
-    .prepare(
-      `SELECT 1
-       FROM bancario_aprovacoes a
-       JOIN bancario_papeis_equipe p
-         ON p.staff_id=a.aprovador_id AND p.papel='aprovador_financeiro'
-       WHERE a.operacao_id=? AND a.operacao_versao=?
-         AND a.snapshot_hash=? AND a.preparador_id=?`,
-    )
-    .get(
-      operacao.id,
-      operacao.versao,
-      operacao.snapshot_hash,
-      operacao.preparado_por,
-    );
-  if (!aprovacao)
+    .get(operacao.id, operacao.versao, operacao.snapshot_hash);
+  if (!aprovacaoDoProprietario)
     falhar(
-      "A aprovação perdeu validade porque o aprovador não possui mais a permissão necessária.",
+      "A aprovação perdeu validade porque o Proprietário não possui mais a autorização necessária.",
       409,
     );
 }
@@ -461,6 +590,26 @@ export function enfileirarOperacao(operacaoId, administrador) {
       .get(operacao.id, operacao.versao);
     if (existente)
       return { criada: false, operacao: linhaCompleta(banco, operacao.id) };
+    if (operacao.tipo !== "cobranca")
+      falhar("Este fluxo de fila aceita somente cobranças.", 409);
+    if (operacao.estado === "aguardando_aprovacao") {
+      banco
+        .prepare(
+          `UPDATE bancario_operacoes
+           SET estado='aprovada',atualizado_em=CURRENT_TIMESTAMP
+           WHERE id=? AND tipo='cobranca' AND estado='aguardando_aprovacao'`,
+        )
+        .run(operacao.id);
+      registrarAuditoria(
+        banco,
+        operacao.id,
+        administrador,
+        "Cobrança legada liberada sem aprovação adicional",
+        "aguardando_aprovacao",
+        "aprovada",
+      );
+      operacao.estado = "aprovada";
+    }
     if (operacao.estado !== "aprovada")
       falhar("A operação precisa estar aprovada antes de entrar na fila.", 409);
     conferirOperacaoAntesDoPrimeiroEnvio(banco, operacao);
@@ -492,15 +641,17 @@ export function enfileirarOperacao(operacaoId, administrador) {
   });
 }
 
-export function listarOperacoes() {
+export function listarOperacoes(administradorId, consultaAmpla = false) {
+  if (!administradorId) falhar("Use uma conta nominal da equipe.", 403);
+  const filtro = consultaAmpla ? "" : "WHERE o.preparado_por=?";
   return obterBanco()
     .prepare(
       `SELECT o.id,o.tipo,o.ambiente,o.conta_referencia,o.origem_tipo,
               o.origem_id,o.origem_versao,o.moeda,o.valor_centavos,
               o.vencimento,o.estado,o.versao,o.criado_em,o.atualizado_em,
               p.name AS preparador_nome,
-              COALESCE(a.aprovador_id,auto.proprietario_id) AS aprovador_id,
-              (auto.id IS NOT NULL) AS autoaprovada,
+              COALESCE(pg.proprietario_id,a.aprovador_id,auto.proprietario_id) AS aprovador_id,
+              (pg.id IS NOT NULL OR auto.id IS NOT NULL) AS autoaprovada,
               aprov.name AS aprovador_nome,
               (SELECT COUNT(*) FROM bancario_tentativas t
                WHERE t.operacao_id=o.id) AS total_tentativas
@@ -510,12 +661,23 @@ export function listarOperacoes() {
          ON a.operacao_id=o.id AND a.operacao_versao=o.versao
        LEFT JOIN bancario_autoaprovacoes_proprietario auto
          ON auto.operacao_id=o.id AND auto.operacao_versao=o.versao
-       LEFT JOIN staff_users aprov ON aprov.id=COALESCE(a.aprovador_id,auto.proprietario_id)
+       LEFT JOIN bancario_aprovacoes_pagamento_proprietario pg
+         ON pg.operacao_id=o.id AND pg.operacao_versao=o.versao
+       LEFT JOIN staff_users aprov
+         ON aprov.id=COALESCE(pg.proprietario_id,a.aprovador_id,auto.proprietario_id)
+       ${filtro}
        ORDER BY o.criado_em DESC,o.id DESC`,
     )
-    .all();
+    .all(...(consultaAmpla ? [] : [administradorId]));
 }
 
-export function obterOperacao(operacaoId) {
-  return linhaCompleta(obterBanco(), operacaoId);
+export function obterOperacao(
+  operacaoId,
+  administradorId,
+  consultaAmpla = false,
+) {
+  const operacao = linhaCompleta(obterBanco(), operacaoId);
+  if (!consultaAmpla && operacao.preparado_por !== administradorId)
+    falhar("Operação bancária não encontrada.", 404);
+  return operacao;
 }

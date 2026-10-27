@@ -70,7 +70,7 @@ const componente = readFileSync(
 assert.match(componente, /\/api\/admin\/bancario\/observabilidade\?limite=50/);
 assert.match(componente, /method:\s*["']POST["']/);
 assert.match(componente, /consultarServidorBancario/);
-assert.match(componente, /não cria uma nova cobrança/);
+assert.match(componente, /não cria uma nova\s+cobrança/);
 assert.match(componente, /CONFIRMAÇÃO DE CONSULTA/);
 assert.match(componente, /Histórico de conciliações/);
 assert.match(componente, /CONCILIACAO_LIMITE_ATINGIDO/);

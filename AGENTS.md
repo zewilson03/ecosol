@@ -64,3 +64,7 @@ This repository defines project-scoped Codex agents in `.codex/agents/`:
 For non-trivial work, delegate independent, well-bounded analysis when the user asks for subagents or parallel work, or when separate read-heavy investigations will materially improve quality. Prefer the specialized agent whose description matches the task. Do not run multiple write-capable agents against the same files. The primary agent owns the final decision, integration, and validation.
 
 Agents inherit the user's installed skills. When delegating, name the relevant skill or risk domain explicitly so the specialist applies the correct workflow. Never delegate approval decisions, destructive production actions, commits, pushes, publication, or deployment.
+
+<API_TASKS>
+Before responding to any non-trivial API engineering task — designing, implementing, mocking, testing, monitoring, documenting, or deploying an API or Postman Flow — read `postman/skills/api-engineer/SKILL.md` and follow it. It is the default entry point for API work in this repository. Pure questions and trivial one-line edits do not need it.
+</API_TASKS>

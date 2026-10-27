@@ -43,6 +43,11 @@ function IconeModulo({ modulo }: { modulo: string }) {
         <path d="M15 7h4v4" />
       </>
     ),
+    pagamentos: (
+      <>
+        <path d="M4 6h16v12H4zM4 10h16M8 15h3" />
+      </>
+    ),
     bancario: (
       <>
         <path d="M3 9h18M5 9V7l7-4 7 4v2M6 9v9m4-9v9m4-9v9m4-9v9M3 21h18" />
@@ -135,7 +140,10 @@ export default function EstruturaAdministrativa() {
         { rota: "faturas", nome: "Faturas" },
         { rota: "clientes", nome: "Cadastros" },
         ...(administrador.nivel >= 2
-          ? [{ rota: "financeiro", nome: "Financeiro" }]
+          ? [
+              { rota: "financeiro", nome: "Financeiro" },
+              { rota: "pagamentos", nome: "Pagamentos" },
+            ]
           : []),
         ...(papeisBancarios.length
           ? [{ rota: "bancario", nome: "Banco · homologação" }]

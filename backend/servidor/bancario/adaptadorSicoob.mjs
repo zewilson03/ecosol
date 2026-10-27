@@ -122,6 +122,7 @@ export function criarAdaptadorSicoob({
   clienteHttp,
   gerenciadorOAuth,
   contrato,
+  clientId,
 } = {}) {
   if (!clienteHttp?.solicitar || !gerenciadorOAuth?.obter)
     throw new Error("Cliente HTTP e gerenciador OAuth são obrigatórios.");
@@ -142,6 +143,10 @@ export function criarAdaptadorSicoob({
         iniciouOperacao = true;
         resposta = await clienteHttp.solicitar({
           ...requisicao,
+          cabecalhos: {
+            ...requisicao.cabecalhos,
+            ...(clientId ? { client_id: clientId } : {}),
+          },
           accessToken: token.accessToken,
           tokenType: token.tokenType,
         });

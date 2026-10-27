@@ -350,22 +350,22 @@ try {
   assert.equal(operacao(limiteRetentativas.operacaoId).estado, "falhou");
   assert.equal(intencao(limiteRetentativas.intencaoId).estado, "falhou");
 
-  const permissaoRevogada = criarTrabalho("permissao-revogada");
+  const cobrancaSemAprovador = criarTrabalho("cobranca-sem-aprovador");
   banco
     .prepare(
       "DELETE FROM bancario_papeis_equipe WHERE staff_id=? AND papel='aprovador_financeiro'",
     )
     .run(aprovadorId);
-  const bloqueio = await executor.processarUma();
-  assert.equal(bloqueio.motivo, "bloqueada_antes_envio");
-  assert.equal(operacao(permissaoRevogada.operacaoId).estado, "falhou");
+  const processamentoSemAprovador = await executor.processarUma();
+  assert.equal(processamentoSemAprovador.processada, true);
+  assert.equal(operacao(cobrancaSemAprovador.operacaoId).estado, "registrada");
   assert.equal(
     banco
       .prepare(
         "SELECT COUNT(*) AS n FROM bancario_tentativas WHERE operacao_id=?",
       )
-      .get(permissaoRevogada.operacaoId).n,
-    0,
+      .get(cobrancaSemAprovador.operacaoId).n,
+    1,
   );
   banco
     .prepare(

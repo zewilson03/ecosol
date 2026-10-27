@@ -80,16 +80,27 @@ export function criarAgenteMtlsSicoob({
   certificadoPath,
   chavePrivadaPath,
   chavePrivadaSenha,
+  pfxPath,
+  pfxSenha,
 }) {
-  if (!certificadoPath || !chavePrivadaPath)
+  const usaPfx = Boolean(pfxPath);
+  const usaPem = Boolean(certificadoPath || chavePrivadaPath);
+  if (usaPfx === usaPem || (usaPem && (!certificadoPath || !chavePrivadaPath)))
     throw new Error(
-      "Informe certificado e chave privada para configurar mTLS.",
+      "Configure mTLS com um PFX ou com certificado e chave privada PEM.",
     );
   try {
     return new https.Agent({
-      cert: readFileSync(certificadoPath),
-      key: readFileSync(chavePrivadaPath),
-      passphrase: chavePrivadaSenha || undefined,
+      ...(usaPfx
+        ? {
+            pfx: readFileSync(pfxPath),
+            passphrase: pfxSenha || undefined,
+          }
+        : {
+            cert: readFileSync(certificadoPath),
+            key: readFileSync(chavePrivadaPath),
+            passphrase: chavePrivadaSenha || undefined,
+          }),
       keepAlive: true,
       rejectUnauthorized: true,
       minVersion: "TLSv1.2",

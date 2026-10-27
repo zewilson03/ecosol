@@ -933,6 +933,77 @@
   background: #e6f3fc;
   color: #245c86;
 }
+.financeiro-recebiveis > .admin-barra > div:first-child {
+  margin-right: auto;
+}
+.financeiro-dividas > .admin-barra > div:first-child {
+  margin-right: auto;
+}
+.financeiro-dividas > .admin-barra h2 {
+  margin-bottom: 4px;
+}
+.financeiro-dividas > .admin-barra small {
+  color: #688095;
+}
+.financeiro-busca-uc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.financeiro-busca-uc input {
+  width: min(100%, 210px);
+}
+.financeiro-composicao-divida summary {
+  color: #176873;
+  cursor: pointer;
+  font-weight: 700;
+}
+.financeiro-composicao-divida ul {
+  min-width: 260px;
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: #587181;
+  line-height: 1.7;
+}
+.financeiro-recebiveis > .admin-barra h2 {
+  margin-bottom: 4px;
+}
+.financeiro-recebiveis > .admin-barra small {
+  color: #688095;
+}
+.financeiro-filtros {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  align-items: end;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.financeiro-filtros label {
+  display: grid;
+  gap: 6px;
+  color: #36545e;
+  font-size: 11px;
+  font-weight: 700;
+}
+.financeiro-filtros .admin-botao {
+  min-height: 42px;
+}
+.financeiro-resumos-recebiveis {
+  margin-top: 18px;
+}
+.admin-status.financeiro-pago {
+  background: #e5f5ef;
+  color: #17684d;
+}
+.admin-status.financeiro-vencido,
+.admin-status.financeiro-divergente {
+  background: #fff0e8;
+  color: #9a442d;
+}
+.admin-status.financeiro-a_receber {
+  background: #e6f3fc;
+  color: #245c86;
+}
 .admin-vazio {
   text-align: center;
   padding: 48px 18px;
@@ -3530,4 +3601,30 @@
   border-bottom: 1px solid #e4ecee;
   text-align: left;
   vertical-align: top;
+}
+
+.pagamentos-grade {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.pagamentos-grade > :last-child {
+  grid-column: 1 / -1;
+}
+
+.pagamentos-itens,
+.pagamentos-baixa {
+  display: grid;
+  gap: 12px;
+}
+
+.pagamentos-baixa {
+  min-width: min(100%, 360px);
+}
+
+@media (max-width: 760px) {
+  .pagamentos-grade {
+    grid-template-columns: 1fr;
+  }
 }

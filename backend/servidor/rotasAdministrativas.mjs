@@ -2,10 +2,7 @@ import { Router } from "express";
 import { resumoCriptografico } from "./autenticacao.mjs";
 import { obterBanco } from "./bancoDeDados.mjs";
 import { registrarHistorico } from "./faturamento/registros.mjs";
-import {
-  exigirNivel,
-  identificarAdministrador,
-} from "./permissoesDaEquipe.mjs";
+import { exigirNivel } from "./permissoesDaEquipe.mjs";
 import {
   nivelMinimoDoPapel,
   rotasPermissoesBancarias,
@@ -14,6 +11,21 @@ import { rotasOperacoesBancarias } from "./bancario/rotasOperacoes.mjs";
 import { exportarClientes } from "./exportacaoClientes.mjs";
 import { exportarUsinas } from "./exportacaoUsinas.mjs";
 import { rotasImportacaoDadosClientes } from "./importacaoDadosClientes.mjs";
+import {
+  ErroDeFiltroDeRecebiveis,
+  obterVisaoDeRecebiveis,
+} from "./financeiro/recebiveis.mjs";
+import { obterApuracaoDeDividas } from "./financeiro/dividas.mjs";
+import { consultarExtratoBancario } from "./financeiro/extratoBancario.mjs";
+import {
+  aprovarSolicitacao,
+  baixarPagamentoExterno,
+  criarProduto,
+  criarSolicitacaoPagamento,
+  criarTipoProduto,
+  enviarParaAprovacao,
+  listarPagamentosECompras,
+} from "./financeiro/pagamentos.mjs";
 
 export const rotasAdministrativas = Router();
 const exigirAdministrador = exigirNivel(1);
@@ -25,35 +37,6 @@ rotasAdministrativas.use("/api/admin", (requisicao, resposta, proximo) => {
     requisicao.originalUrl.split("?", 1)[0] === "/api/admin/gmail/oauth/retorno"
   )
     return proximo();
-  const guardiao = identificarAdministrador(requisicao);
-  if (guardiao?.guardiao_recuperacao) {
-    const caminho = requisicao.originalUrl.split("?", 1)[0];
-    const rotasMfa = new Set([
-      "/api/admin/bancario/mfa",
-      "/api/admin/bancario/mfa/iniciar",
-      "/api/admin/bancario/mfa/ativar",
-      "/api/admin/bancario/mfa/substituir",
-      "/api/admin/bancario/mfa/recuperacao/minha",
-      "/api/admin/bancario/mfa/recuperacao/solicitar",
-      "/api/admin/bancario/mfa/recuperacoes",
-      "/api/admin/bancario/confirmar-identidade",
-    ]);
-    const rotaPedido =
-      /^\/api\/admin\/bancario\/mfa\/recuperacao\/[0-9a-f-]{36}\/iniciar$/.test(
-        caminho,
-      );
-    const rotaAprovacao =
-      /^\/api\/admin\/bancario\/mfa\/recuperacoes\/[0-9a-f-]{36}\/aprovar$/.test(
-        caminho,
-      );
-    if (rotasMfa.has(caminho) || rotaPedido || rotaAprovacao) {
-      requisicao.administrador = guardiao;
-      return proximo();
-    }
-    return resposta
-      .status(403)
-      .json({ erro: "Guardião não acessa outras áreas." });
-  }
   return exigirAdministrador(requisicao, resposta, proximo);
 });
 rotasAdministrativas.use(rotasPermissoesBancarias);
@@ -116,6 +99,10 @@ rotasAdministrativas.get("/api/admin/usinas", (_requisicao, resposta) => {
 });
 
 rotasAdministrativas.get("/api/admin/faturas", (_requisicao, resposta) => {
+  resposta.set({
+    Deprecation: "true",
+    Link: '</api/admin/faturamento/documentos>; rel="successor-version"',
+  });
   resposta.json(
     obterBanco()
       .prepare(
@@ -289,6 +276,182 @@ rotasAdministrativas.delete(
     } catch (erro) {
       banco.exec("ROLLBACK");
       throw erro;
+    }
+  },
+);
+
+rotasAdministrativas.get(
+  "/api/admin/financeiro/dividas",
+  exigirNivel(2),
+  (requisicao, resposta, proximo) => {
+    try {
+      resposta.json(obterApuracaoDeDividas(obterBanco(), requisicao.query));
+    } catch (erro) {
+      if (erro instanceof ErroDeFiltroDeRecebiveis)
+        return resposta.status(400).json({ erro: erro.message });
+      proximo(erro);
+    }
+  },
+);
+
+rotasAdministrativas.get(
+  "/api/admin/financeiro/recebiveis",
+  exigirNivel(2),
+  (requisicao, resposta, proximo) => {
+    try {
+      resposta.json(obterVisaoDeRecebiveis(obterBanco(), requisicao.query));
+    } catch (erro) {
+      if (erro instanceof ErroDeFiltroDeRecebiveis)
+        return resposta.status(400).json({ erro: erro.message });
+      proximo(erro);
+    }
+  },
+);
+
+rotasAdministrativas.get(
+  "/api/admin/financeiro/pagamentos",
+  exigirNivel(2),
+  (_requisicao, resposta) => resposta.json(listarPagamentosECompras()),
+);
+
+rotasAdministrativas.get(
+  "/api/admin/financeiro/extrato",
+  exigirNivel(2),
+  async (requisicao, resposta) => {
+    try {
+      resposta.json(await consultarExtratoBancario(requisicao.query));
+    } catch (erro) {
+      const codigo = erro?.codigo || "SICOOB_EXTRATO_INDISPONIVEL";
+      const entradaInvalida =
+        codigo.startsWith("SICOOB_EXTRATO_") &&
+        (codigo.endsWith("_INVALIDO") || codigo.endsWith("_INCOMPLETO"));
+      const configuracaoInvalida =
+        codigo === "SICOOB_CONFIGURACAO_INVALIDA" ||
+        codigo === "SICOOB_CONTA_CORRENTE_NAO_CONFIGURADA";
+      if (erro?.retryAfterMs)
+        resposta.set(
+          "Retry-After",
+          String(Math.ceil(erro.retryAfterMs / 1000)),
+        );
+      resposta
+        .status(entradaInvalida ? 400 : configuracaoInvalida ? 503 : 502)
+        .json({
+          erro: configuracaoInvalida
+            ? "A consulta de extrato bancário ainda não está configurada."
+            : entradaInvalida
+              ? "Informe um período válido para consultar o extrato."
+              : "Não foi possível consultar o extrato no Sicoob.",
+          codigo,
+        });
+    }
+  },
+);
+
+rotasAdministrativas.post(
+  "/api/admin/financeiro/tipos-produto",
+  exigirNivel(3),
+  (requisicao, resposta, proximo) => {
+    try {
+      resposta
+        .status(201)
+        .json(criarTipoProduto(requisicao.body, requisicao.administrador));
+    } catch (erro) {
+      if (!erro.status) return proximo(erro);
+      resposta.status(erro.status).json({ erro: erro.message });
+    }
+  },
+);
+
+rotasAdministrativas.post(
+  "/api/admin/financeiro/produtos",
+  exigirNivel(3),
+  (requisicao, resposta, proximo) => {
+    try {
+      resposta
+        .status(201)
+        .json(criarProduto(requisicao.body, requisicao.administrador));
+    } catch (erro) {
+      if (!erro.status) return proximo(erro);
+      resposta.status(erro.status).json({ erro: erro.message });
+    }
+  },
+);
+
+rotasAdministrativas.post(
+  "/api/admin/financeiro/solicitacoes",
+  exigirNivel(2),
+  (requisicao, resposta, proximo) => {
+    try {
+      resposta
+        .status(201)
+        .json(
+          criarSolicitacaoPagamento(requisicao.body, requisicao.administrador),
+        );
+    } catch (erro) {
+      if (!erro.status) return proximo(erro);
+      resposta.status(erro.status).json({ erro: erro.message });
+    }
+  },
+);
+
+rotasAdministrativas.post(
+  "/api/admin/financeiro/solicitacoes/:id/enviar",
+  exigirNivel(2),
+  (requisicao, resposta, proximo) => {
+    try {
+      resposta.json(
+        enviarParaAprovacao(
+          Number(requisicao.params.id),
+          requisicao.administrador,
+        ),
+      );
+    } catch (erro) {
+      if (!erro.status) return proximo(erro);
+      resposta.status(erro.status).json({ erro: erro.message });
+    }
+  },
+);
+
+rotasAdministrativas.post(
+  "/api/admin/financeiro/solicitacoes/:id/aprovar",
+  exigirNivel(1),
+  async (requisicao, resposta, proximo) => {
+    try {
+      resposta.json(
+        await aprovarSolicitacao(
+          Number(requisicao.params.id),
+          requisicao.administrador,
+          requisicao.body?.senha,
+        ),
+      );
+    } catch (erro) {
+      if (!erro.status) return proximo(erro);
+      resposta.status(erro.status).json({
+        erro: erro.message,
+        ...(erro.codigo ? { codigo: erro.codigo } : {}),
+      });
+    }
+  },
+);
+
+rotasAdministrativas.post(
+  "/api/admin/financeiro/solicitacoes/:id/baixar",
+  exigirNivel(1),
+  async (requisicao, resposta, proximo) => {
+    try {
+      resposta.json(
+        await baixarPagamentoExterno(
+          Number(requisicao.params.id),
+          requisicao.body,
+          requisicao.administrador,
+        ),
+      );
+    } catch (erro) {
+      if (!erro.status) return proximo(erro);
+      resposta.status(erro.status).json({
+        erro: erro.message,
+        ...(erro.codigo ? { codigo: erro.codigo } : {}),
+      });
     }
   },
 );
