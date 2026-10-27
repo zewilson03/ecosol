@@ -13,6 +13,7 @@ import {
   EstadoDaConsulta,
   ListaVazia,
 } from "./ComponentesDoPainel";
+import FaturasAPagar from "./Pagamentos";
 
 type Tipo = { id: number; nome: string; categoria: string };
 type Produto = {
@@ -88,9 +89,9 @@ export default function PagamentosECompras() {
   const proprietario =
     sessao.dados?.perfil === "equipe" &&
     sessao.dados.administrador.proprietario === true;
-  const [aba, definirAba] = useState<"pagamentos" | "catalogo" | "extrato">(
-    "pagamentos",
-  );
+  const [aba, definirAba] = useState<
+    "pagamentos" | "faturas" | "catalogo" | "extrato"
+  >("pagamentos");
   const [origem, definirOrigem] = useState("energia");
   const [itens, definirItens] = useState<Item[]>([{ ...vazio }]);
   const [mensagem, definirMensagem] = useState("");
@@ -156,6 +157,13 @@ export default function PagamentosECompras() {
           Pagamentos
         </button>
         <button
+          className={aba === "faturas" ? "selecionada" : ""}
+          aria-pressed={aba === "faturas"}
+          onClick={() => definirAba("faturas")}
+        >
+          Faturas
+        </button>
+        <button
           className={aba === "catalogo" ? "selecionada" : ""}
           aria-pressed={aba === "catalogo"}
           onClick={() => definirAba("catalogo")}
@@ -181,7 +189,9 @@ export default function PagamentosECompras() {
         </p>
       )}
       <EstadoDaConsulta {...consulta} repetir={consulta.atualizar} />
-      {aba === "catalogo" ? (
+      {aba === "faturas" ? (
+        <FaturasAPagar />
+      ) : aba === "catalogo" ? (
         <Catalogo dados={dados} ocupado={ocupado} executar={executar} />
       ) : aba === "extrato" ? (
         <ExtratoBancario />

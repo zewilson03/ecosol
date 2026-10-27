@@ -71,23 +71,36 @@ export function avaliarProntidaoSicoob({
   const modo = String(variaveis.BANCARIO_EXECUTOR_MODO ?? "desligado")
     .trim()
     .toLowerCase();
+  const producaoHabilitada =
+    configuracao.ambiente === "producao" &&
+    String(variaveis.SICOOB_PRODUCAO_HABILITADA ?? "").trim() === "SIM";
+  const executorRealDisponivel =
+    emissaoCompleta && modo === "sicoob" && producaoHabilitada;
+  if (emissaoCompleta && modo !== "sicoob")
+    pendencias.push("EXECUTOR_REAL_DESLIGADO");
+  if (modo === "sicoob" && configuracao.ambiente !== "producao")
+    pendencias.push("AMBIENTE_PRODUCAO_NAO_SELECIONADO");
+  if (modo === "sicoob" && !producaoHabilitada)
+    pendencias.push("PRODUCAO_SICOOB_NAO_HABILITADA");
 
   return Object.freeze({
-    estado: emissaoCompleta
-      ? "configuracao_completa_executor_nao_implementado"
-      : consultaCompleta
-        ? "somente_consulta"
-        : "incompleta",
+    estado: executorRealDisponivel
+      ? executorPausado
+        ? "pronto_pausado"
+        : "producao_ativa"
+      : emissaoCompleta
+        ? "configuracao_completa_executor_desligado"
+        : consultaCompleta
+          ? "somente_consulta"
+          : "incompleta",
     ambiente: configuracao.ambiente,
     contrato_versao: resumo.contrato_versao,
     executor_modo: modo,
     executor_pausado: executorPausado,
     configuracao_consulta_completa: consultaCompleta,
     configuracao_emissao_completa: emissaoCompleta,
-    executor_real_disponivel: false,
-    producao_habilitada:
-      configuracao.ambiente === "producao" &&
-      String(variaveis.SICOOB_PRODUCAO_HABILITADA ?? "").trim() === "SIM",
+    executor_real_disponivel: executorRealDisponivel,
+    producao_habilitada: producaoHabilitada,
     configuracao: Object.freeze({
       conta_referencia: resumo.conta_referencia_configurada,
       api: resumo.api_configurada,

@@ -59,13 +59,37 @@ const completa = avaliarProntidaoSicoob({
     SICOOB_HOMOLOGACAO_COBRANCA_IDENTIFICACAO_DISTRIBUICAO: "1",
   },
 });
-assert.equal(
-  completa.estado,
-  "configuracao_completa_executor_nao_implementado",
-);
+assert.equal(completa.estado, "configuracao_completa_executor_desligado");
 assert.equal(completa.configuracao_emissao_completa, true);
 assert.equal(completa.executor_real_disponivel, false);
-assert.deepEqual(completa.pendencias, []);
+assert.deepEqual(completa.pendencias, ["EXECUTOR_REAL_DESLIGADO"]);
+
+const producaoPronta = avaliarProntidaoSicoob({
+  banco,
+  variaveis: {
+    NODE_ENV: "production",
+    SICOOB_AMBIENTE: "producao",
+    SICOOB_PRODUCAO_HABILITADA: "SIM",
+    BANCARIO_EXECUTOR_MODO: "sicoob",
+    SICOOB_CONTA_REFERENCIA: "conta-interna",
+    SICOOB_PRODUCAO_API_BASE_URL: "https://api.sicoob.test/cobranca/v3",
+    SICOOB_PRODUCAO_OAUTH_TOKEN_URL: "https://auth.sicoob.test/token",
+    SICOOB_PRODUCAO_CLIENT_ID: "cliente-teste",
+    SICOOB_PRODUCAO_OAUTH_SCOPE: "boletos_inclusao boletos_consulta",
+    SICOOB_PRODUCAO_MTLS_PFX_PATH: "certificado-teste.pfx",
+    SICOOB_PRODUCAO_CONTRATO_VERSAO: "cobranca-v3",
+    SICOOB_PRODUCAO_COBRANCA_NUMERO_CLIENTE: "123",
+    SICOOB_PRODUCAO_COBRANCA_CODIGO_MODALIDADE: "1",
+    SICOOB_PRODUCAO_COBRANCA_NUMERO_CONTA_CORRENTE: "456",
+    SICOOB_PRODUCAO_COBRANCA_ESPECIE_DOCUMENTO: "DM",
+    SICOOB_PRODUCAO_COBRANCA_IDENTIFICACAO_EMISSAO: "1",
+    SICOOB_PRODUCAO_COBRANCA_IDENTIFICACAO_DISTRIBUICAO: "1",
+  },
+});
+assert.equal(producaoPronta.estado, "pronto_pausado");
+assert.equal(producaoPronta.executor_real_disponivel, true);
+assert.equal(producaoPronta.producao_habilitada, true);
+assert.deepEqual(producaoPronta.pendencias, []);
 
 const invalida = avaliarProntidaoSicoob({
   banco,

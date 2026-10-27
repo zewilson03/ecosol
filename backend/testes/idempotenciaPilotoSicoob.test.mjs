@@ -36,6 +36,21 @@ const configuracao = {
 };
 
 const original = criarIdempotenciaPilotoSicoob({ entrada, configuracao });
+const revisaoSeguinte = criarIdempotenciaPilotoSicoob({
+  entrada,
+  configuracao,
+  revisao: 3,
+});
+assert.notEqual(revisaoSeguinte, original);
+assert.throws(
+  () =>
+    criarIdempotenciaPilotoSicoob({
+      entrada,
+      configuracao,
+      revisao: 1,
+    }),
+  /revisão idempotente/,
+);
 assert.equal(original.length, 64);
 assert.equal(
   criarIdempotenciaLegadaPilotoSicoob(entrada),

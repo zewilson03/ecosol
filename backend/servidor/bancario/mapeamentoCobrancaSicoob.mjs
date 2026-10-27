@@ -156,9 +156,20 @@ export function mapearCobrancaParaSicoob({ operacao, pagador, convenio } = {}) {
     ),
     valor: reaisDosCentavos(operacao?.valorCentavos, "valor"),
     dataVencimento: vencimento,
+    // A Ecosol não aplica encargos neste título: multa e juros por atraso são
+    // calculados internamente e transferidos para a cobrança seguinte.
+    valorAbatimento: 0,
+    tipoDesconto: 0,
+    tipoMulta: 0,
+    valorMulta: 0,
+    tipoJurosMora: 3,
+    valorJurosMora: 0,
     numeroParcela: inteiro(operacao?.numeroParcela ?? 1, "número da parcela", {
       minimo: 1,
     }),
+    aceite: false,
+    codigoNegativacao: 3,
+    codigoProtesto: 3,
     pagador: {
       numeroCpfCnpj: digitos(
         pagador?.documento,

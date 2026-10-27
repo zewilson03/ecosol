@@ -65,9 +65,15 @@ function destinoEfetivo(configuracao) {
  * A chave representa uma versão imutável do boleto e do destino bancário.
  * Credenciais, certificados, URLs e tokens não participam da identidade.
  */
-export function criarIdempotenciaPilotoSicoob({ entrada, configuracao } = {}) {
+export function criarIdempotenciaPilotoSicoob({
+  entrada,
+  configuracao,
+  revisao = 2,
+} = {}) {
+  if (!Number.isInteger(revisao) || revisao < 2 || revisao > 99)
+    throw new Error("A revisão idempotente do piloto é inválida.");
   return hash({
-    versao_identidade: 2,
+    versao_identidade: revisao,
     provedor: "sicoob",
     operacao: "registrar_boleto_piloto",
     destino: destinoEfetivo(configuracao),

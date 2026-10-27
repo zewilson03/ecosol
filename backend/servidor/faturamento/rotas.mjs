@@ -26,6 +26,7 @@ import {
   processamentoCentralSeguro,
 } from "./processamentoCentral.mjs";
 import { registrarHistorico, registrarRecebimentoPdf } from "./registros.mjs";
+import { cadastrarFaturaParaPagamento } from "../financeiro/pagamentos.mjs";
 import { rotasPlanilhas } from "./rotasPlanilhas.mjs";
 import { rotasVinculosUsinas } from "./rotasVinculosUsinas.mjs";
 import { rotasTransferenciasUsinas } from "./rotasTransferenciasUsinas.mjs";
@@ -1327,12 +1328,18 @@ router.get(
 router.get("/pagamentos", (_req, res) => {
   const itens = obterBanco()
     .prepare(
-      `SELECT id,nome,lote,extracao,dados,status,versao,criado_em,atualizado_em
-       FROM faturamento_documentos
-       WHERE classificacao='fatura' AND finalidade='pagamento'
-         AND excluido_em IS NULL ORDER BY id DESC`,
+      `SELECT d.id,d.nome,d.lote,d.extracao,d.dados,d.status,d.versao,
+              d.criado_em,d.atualizado_em,
+              s.id AS solicitacao_pagamento_id,
+              s.status AS solicitacao_pagamento_status
+       FROM faturamento_documentos d
+       LEFT JOIN financeiro_solicitacoes_pagamento s
+         ON s.faturamento_documento_id=d.id
+       WHERE d.classificacao='fatura'
+         AND (d.finalidade='pagamento' OR s.id IS NOT NULL OR d.status=?)
+         AND d.excluido_em IS NULL ORDER BY d.id DESC`,
     )
-    .all()
+    .all(APROVADA)
     .map((item) => ({
       ...item,
       extracao: JSON.parse(item.extracao),
@@ -1340,15 +1347,44 @@ router.get("/pagamentos", (_req, res) => {
     }));
   res.set("Cache-Control", "no-store").json(itens);
 });
+router.post("/pagamentos/:id/cadastrar", exigirNivel(2), (req, res, next) => {
+  try {
+    const numero = id(req.params.id);
+    const documentoPagamento = obterBanco()
+      .prepare(
+        `SELECT finalidade,status FROM faturamento_documentos
+         WHERE id=? AND classificacao='fatura'
+           AND excluido_em IS NULL`,
+      )
+      .get(numero);
+    if (
+      !documentoPagamento ||
+      (documentoPagamento.finalidade !== "pagamento" &&
+        documentoPagamento.status !== APROVADA)
+    )
+      falhar(
+        "A cobrança precisa ser aprovada antes de entrar em Pagamentos.",
+        409,
+      );
+    const resultado = cadastrarFaturaParaPagamento(numero, req.administrador);
+    res.status(resultado.existente ? 200 : 201).json(resultado);
+  } catch (erro) {
+    if (!erro.status) return next(erro);
+    res.status(erro.status).json({ erro: erro.message });
+  }
+});
 router.get("/pagamentos/:id/pdf", (req, res) => {
   const numero = id(req.params.id);
   const d = obterBanco()
     .prepare(
-      `SELECT nome,pdf FROM faturamento_documentos
-       WHERE id=? AND classificacao='fatura' AND finalidade='pagamento'
-         AND excluido_em IS NULL`,
+      `SELECT d.nome,d.pdf FROM faturamento_documentos d
+       LEFT JOIN financeiro_solicitacoes_pagamento s
+         ON s.faturamento_documento_id=d.id
+       WHERE d.id=? AND d.classificacao='fatura'
+         AND (d.finalidade='pagamento' OR s.id IS NOT NULL OR d.status=?)
+         AND d.excluido_em IS NULL`,
     )
-    .get(numero);
+    .get(numero, APROVADA);
   if (!d) falhar("Pagamento não encontrado.", 404);
   const nomeAscii = d.nome
     .normalize("NFD")

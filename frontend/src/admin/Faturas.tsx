@@ -4,7 +4,6 @@ import { Link, useSearchParams } from "react-router-dom";
 
 const PreparacaoFaturas = lazy(() => import("./PreparacaoFaturas"));
 const Calculos = lazy(() => import("./Calculos"));
-const Pagamentos = lazy(() => import("./Pagamentos"));
 const LotesFaturamento = lazy(() => import("./LotesFaturamento"));
 
 export default function Faturas() {
@@ -15,7 +14,6 @@ export default function Faturas() {
     "conferir",
     "calcular",
     "aprovar",
-    "pagamentos",
     "lotes",
   ].includes(solicitada ?? "")
     ? solicitada!
@@ -43,7 +41,6 @@ export default function Faturas() {
     { id: "conferir", nome: "Conferir dados" },
     { id: "calcular", nome: "Calcular" },
     { id: "aprovar", nome: "Aprovar" },
-    { id: "pagamentos", nome: "Pagamentos" },
   ];
 
   return (
@@ -76,8 +73,6 @@ export default function Faturas() {
       >
         {etapa === "lotes" ? (
           <LotesFaturamento />
-        ) : etapa === "pagamentos" ? (
-          <Pagamentos />
         ) : etapa === "calcular" || etapa === "aprovar" ? (
           <Calculos incorporado modo={etapa} />
         ) : (

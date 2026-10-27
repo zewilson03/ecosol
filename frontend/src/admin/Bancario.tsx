@@ -558,6 +558,26 @@ export default function Bancario() {
                             Enviar à fila simulada
                           </button>
                         )}
+                      {operador &&
+                        operacao.tipo === "cobranca" &&
+                        operacao.estado === "falhou" && (
+                          <button
+                            className="admin-botao"
+                            disabled={ocupado}
+                            onClick={() =>
+                              executar(
+                                () =>
+                                  consultarServidor(
+                                    `/api/admin/bancario/operacoes/${operacao.id}/liberar-nova-emissao`,
+                                    { method: "POST" },
+                                  ),
+                                "Falha cancelada. A cobrança foi liberada para uma nova emissão.",
+                              )
+                            }
+                          >
+                            Liberar nova emissão
+                          </button>
+                        )}
                     </div>
                     <div className="bancario-historicos">
                       <div>

@@ -130,11 +130,15 @@ export default function ProntidaoSicoob() {
               )}
             </div>
             <div className="bancario-prontidao-bloqueio">
-              <strong>Produção permanece bloqueada</strong>
+              <strong>
+                {dados.producao_habilitada
+                  ? "Produção habilitada com controle operacional"
+                  : "Produção permanece bloqueada"}
+              </strong>
               <p>
-                Configuração completa não autoriza emissão. O executor real, a
-                homologação conectada e a liberação humana continuam sendo
-                portões independentes.
+                {dados.producao_habilitada
+                  ? "A fila continua dependente do estado pausado e da liberação humana antes do primeiro envio."
+                  : "Configuração completa não autoriza emissão. O executor real e a liberação humana continuam sendo portões independentes."}
               </p>
             </div>
           </div>

@@ -20,6 +20,7 @@ import {
   aprovarOperacao,
   criarOperacaoDeCobranca,
   enfileirarOperacao,
+  liberarNovaEmissaoAposFalha,
   listarOperacoes,
   obterOperacao,
 } from "./operacoes.mjs";
@@ -205,6 +206,19 @@ rotasOperacoesBancarias.post(
   exigirOrigemConfiavel,
   (req, res) =>
     res.json(enfileirarOperacao(String(req.params.id), req.administrador)),
+);
+
+rotasOperacoesBancarias.post(
+  "/api/admin/bancario/operacoes/:id/liberar-nova-emissao",
+  exigirContaNominalDaEquipe,
+  exigirOrigemConfiavel,
+  (req, res) =>
+    res.json(
+      liberarNovaEmissaoAposFalha(
+        String(req.params.id),
+        req.administrador,
+      ),
+    ),
 );
 
 rotasOperacoesBancarias.use((erro, _req, res, next) => {

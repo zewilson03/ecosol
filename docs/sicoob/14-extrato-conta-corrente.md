@@ -68,3 +68,12 @@ implantação e gestão isolada de segredos.
 O extrato é exibido para conferência, mas ainda não efetua conciliação automática
 com as solicitações de pagamento. Essa etapa deverá usar regras explícitas e
 auditáveis; coincidência apenas por data e valor não poderá dar baixa automática.
+
+## Validação conectada de 27/10/2026
+
+A resposta real da API V4 envolve os saldos e as transações no campo
+`resultado`. O parser foi ajustado para aceitar esse envelope oficial, mantendo
+compatibilidade com o formato interno usado pelos testes. Uma consulta real de
+somente leitura foi concluída com sucesso, sem registrar o payload e sem expor
+CPF/CNPJ integral. A suíte automatizada passou após a inclusão do caso de
+regressão para o envelope.

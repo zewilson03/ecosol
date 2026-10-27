@@ -175,6 +175,28 @@ export function prepararPagamentosECompras(banco = obterBanco()) {
     banco.exec(
       "ALTER TABLE financeiro_solicitacoes_pagamento ADD COLUMN referencia_pagamento TEXT",
     );
+  if (!nomes.has("faturamento_documento_id"))
+    banco.exec(
+      "ALTER TABLE financeiro_solicitacoes_pagamento ADD COLUMN faturamento_documento_id INTEGER REFERENCES faturamento_documentos(id) ON DELETE RESTRICT",
+    );
+  if (!nomes.has("faturamento_documento_versao"))
+    banco.exec(
+      "ALTER TABLE financeiro_solicitacoes_pagamento ADD COLUMN faturamento_documento_versao INTEGER",
+    );
+  if (!nomes.has("fatura_uc"))
+    banco.exec(
+      "ALTER TABLE financeiro_solicitacoes_pagamento ADD COLUMN fatura_uc TEXT",
+    );
+  if (!nomes.has("fatura_competencia"))
+    banco.exec(
+      "ALTER TABLE financeiro_solicitacoes_pagamento ADD COLUMN fatura_competencia TEXT",
+    );
+  banco.exec(`CREATE UNIQUE INDEX IF NOT EXISTS financeiro_solicitacao_fatura
+    ON financeiro_solicitacoes_pagamento(faturamento_documento_id)
+    WHERE faturamento_documento_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS financeiro_solicitacao_uc_competencia
+    ON financeiro_solicitacoes_pagamento(fatura_uc,fatura_competencia)
+    WHERE fatura_uc IS NOT NULL AND fatura_competencia IS NOT NULL`);
 }
 
 export function listarPagamentosECompras(banco = obterBanco()) {
@@ -358,16 +380,193 @@ export function criarSolicitacaoPagamento(
   });
 }
 
+function dadosDaFaturaParaPagamento(documentoId, banco) {
+  const numero = Number(documentoId);
+  if (!Number.isSafeInteger(numero) || numero <= 0)
+    falhar("Documento de faturamento inválido.");
+  const documento = banco
+    .prepare(
+      `SELECT id,dados,versao
+         FROM faturamento_documentos
+         WHERE id=? AND classificacao='fatura'
+           AND finalidade IN ('cobranca','pagamento')
+           AND excluido_em IS NULL`,
+    )
+    .get(numero);
+  if (!documento) falhar("Fatura destinada a pagamento não encontrada.", 404);
+
+  let dados;
+  try {
+    dados = JSON.parse(documento.dados);
+  } catch {
+    falhar("Os dados extraídos da fatura estão inválidos.", 409);
+  }
+  let vencimento;
+  let valor;
+  try {
+    vencimento = dataIso(dados?.vencimento_equatorial);
+    valor = centavos(dados?.total_equatorial, "valor total da fatura");
+  } catch {
+    falhar("Confirme o vencimento e o valor total da fatura.", 409);
+  }
+  const uc = String(dados?.uc ?? dados?.uc_geradora ?? "").trim();
+  const competencia = String(dados?.competencia ?? "").trim();
+  if (!/^\d{4,20}$/.test(uc) || !/^20\d{2}-(0[1-9]|1[0-2])$/.test(competencia))
+    falhar(
+      "Confirme a UC e a competência da fatura antes de cadastrá-la para pagamento.",
+      409,
+    );
+  const referencias = [
+    uc && `UC ${uc}`,
+    competencia && `competência ${competencia}`,
+  ]
+    .filter(Boolean)
+    .join(" — ");
+  const descricao = `Fatura Equatorial${referencias ? ` — ${referencias}` : ""}`;
+  return { documento, vencimento, valor, uc, competencia, descricao };
+}
+
+function conferirSnapshotDaFatura(solicitacao, banco) {
+  if (solicitacao.faturamento_documento_id == null) return;
+  const atual = dadosDaFaturaParaPagamento(
+    solicitacao.faturamento_documento_id,
+    banco,
+  );
+  if (
+    solicitacao.faturamento_documento_versao !== atual.documento.versao ||
+    solicitacao.valor_centavos !== atual.valor ||
+    solicitacao.vencimento !== atual.vencimento ||
+    solicitacao.fatura_uc !== atual.uc ||
+    solicitacao.fatura_competencia !== atual.competencia
+  )
+    falhar(
+      "A fatura mudou após o cadastro do pagamento. Atualize-a e confira novamente antes de prosseguir.",
+      409,
+    );
+}
+
+export function cadastrarFaturaParaPagamentoNoBanco(
+  documentoId,
+  administrador,
+  banco = obterBanco(),
+) {
+  if (!Number.isSafeInteger(administrador?.id) || administrador.id <= 0)
+    falhar("Use uma conta nominal da equipe para cadastrar a fatura.", 403);
+  const { documento, vencimento, valor, uc, competencia, descricao } =
+    dadosDaFaturaParaPagamento(documentoId, banco);
+  const existente = banco
+    .prepare(
+      `SELECT * FROM financeiro_solicitacoes_pagamento
+         WHERE faturamento_documento_id=?`,
+    )
+    .get(documento.id);
+  if (existente) {
+    try {
+      conferirSnapshotDaFatura(existente, banco);
+      return { ...existente, existente: true, atualizada: false };
+    } catch (erro) {
+      if (erro.status !== 409) throw erro;
+    }
+    if (["paga", "cancelada"].includes(existente.status))
+      falhar("Pagamento encerrado não pode ser atualizado.", 409);
+    banco
+      .prepare(
+        `UPDATE financeiro_solicitacoes_pagamento
+         SET descricao=?,vencimento=?,valor_centavos=?,faturamento_documento_versao=?,
+             fatura_uc=?,fatura_competencia=?,status='rascunho',aprovado_por=NULL,
+             versao=versao+1,atualizado_em=CURRENT_TIMESTAMP
+         WHERE id=?`,
+      )
+      .run(
+        descricao,
+        vencimento,
+        valor,
+        documento.versao,
+        uc,
+        competencia,
+        existente.id,
+      );
+    banco
+      .prepare(
+        `INSERT INTO financeiro_auditoria_pagamentos
+          (solicitacao_id,ator_id,ator_nome,acao,estado_anterior,estado_novo)
+         VALUES(?,?,?,?,?,'rascunho')`,
+      )
+      .run(
+        existente.id,
+        administrador.id,
+        administrador.nome,
+        `Fatura atualizada: valor ${existente.valor_centavos}→${valor} centavos, vencimento ${existente.vencimento}→${vencimento}, versão ${existente.faturamento_documento_versao}→${documento.versao}`,
+        existente.status,
+      );
+    return {
+      id: existente.id,
+      status: "rascunho",
+      valor_centavos: valor,
+      vencimento,
+      existente: true,
+      atualizada: true,
+    };
+  }
+
+  const resultado = banco
+    .prepare(
+      `INSERT INTO financeiro_solicitacoes_pagamento
+          (origem,descricao,favorecido,forma_pagamento,vencimento,valor_centavos,
+           criado_por,faturamento_documento_id,faturamento_documento_versao,
+           fatura_uc,fatura_competencia)
+         VALUES('energia',?,'Distribuidora de energia','boleto',?,?,?,?,?,?,?)`,
+    )
+    .run(
+      descricao,
+      vencimento,
+      valor,
+      administrador.id,
+      documento.id,
+      documento.versao,
+      uc,
+      competencia,
+    );
+  const id = Number(resultado.lastInsertRowid);
+  banco
+    .prepare(
+      `INSERT INTO financeiro_auditoria_pagamentos
+          (solicitacao_id,ator_id,ator_nome,acao,estado_novo)
+         VALUES(?,?,?,'Fatura cadastrada para pagamento','rascunho')`,
+    )
+    .run(id, administrador.id, administrador.nome);
+  return {
+    id,
+    status: "rascunho",
+    valor_centavos: valor,
+    vencimento,
+    existente: false,
+  };
+}
+
+export function cadastrarFaturaParaPagamento(
+  documentoId,
+  administrador,
+  banco = obterBanco(),
+) {
+  return transacao(banco, () => {
+    return cadastrarFaturaParaPagamentoNoBanco(
+      documentoId,
+      administrador,
+      banco,
+    );
+  });
+}
+
 export function enviarParaAprovacao(id, administrador, banco = obterBanco()) {
   return transacao(banco, () => {
     const atual = banco
-      .prepare(
-        "SELECT status FROM financeiro_solicitacoes_pagamento WHERE id=?",
-      )
+      .prepare("SELECT * FROM financeiro_solicitacoes_pagamento WHERE id=?")
       .get(id);
     if (!atual) falhar("Solicitação não encontrada.", 404);
     if (atual.status !== "rascunho")
       falhar("Somente um rascunho pode ser enviado para aprovação.", 409);
+    conferirSnapshotDaFatura(atual, banco);
     banco
       .prepare(
         "UPDATE financeiro_solicitacoes_pagamento SET status='aguardando_aprovacao',versao=versao+1,atualizado_em=CURRENT_TIMESTAMP WHERE id=?",
@@ -397,13 +596,12 @@ export async function aprovarSolicitacao(
   await conferirCredencialConfirmacao(administrador, senha);
   return transacao(banco, () => {
     const atual = banco
-      .prepare(
-        "SELECT status FROM financeiro_solicitacoes_pagamento WHERE id=?",
-      )
+      .prepare("SELECT * FROM financeiro_solicitacoes_pagamento WHERE id=?")
       .get(id);
     if (!atual) falhar("Solicitação não encontrada.", 404);
     if (atual.status !== "aguardando_aprovacao")
       falhar("O pagamento não está aguardando aprovação.", 409);
+    conferirSnapshotDaFatura(atual, banco);
     banco
       .prepare(
         "UPDATE financeiro_solicitacoes_pagamento SET status='aprovada',aprovado_por=?,versao=versao+1,atualizado_em=CURRENT_TIMESTAMP WHERE id=?",
@@ -440,13 +638,12 @@ export async function baixarPagamentoExterno(
   );
   return transacao(banco, () => {
     const atual = banco
-      .prepare(
-        "SELECT status,forma_pagamento FROM financeiro_solicitacoes_pagamento WHERE id=?",
-      )
+      .prepare("SELECT * FROM financeiro_solicitacoes_pagamento WHERE id=?")
       .get(id);
     if (!atual) falhar("Solicitação não encontrada.", 404);
     if (atual.status !== "aprovada")
       falhar("Somente um pagamento aprovado pode receber baixa.", 409);
+    conferirSnapshotDaFatura(atual, banco);
     banco
       .prepare(
         `UPDATE financeiro_solicitacoes_pagamento

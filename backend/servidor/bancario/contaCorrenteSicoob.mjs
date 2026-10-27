@@ -69,20 +69,24 @@ function codigoHttp(status) {
 function interpretarResposta(conteudo) {
   if (!conteudo || typeof conteudo !== "object" || Array.isArray(conteudo))
     falhaContrato();
+  const resultado = conteudo.resultado ?? conteudo;
   if (
-    !Array.isArray(conteudo.transacoes) ||
-    conteudo.transacoes.length > LIMITE_TRANSACOES
+    !resultado ||
+    typeof resultado !== "object" ||
+    Array.isArray(resultado) ||
+    !Array.isArray(resultado.transacoes) ||
+    resultado.transacoes.length > LIMITE_TRANSACOES
   )
     falhaContrato();
   return Object.freeze({
     saldos: Object.freeze({
-      atual: valorDecimal(conteudo.saldoAtual),
-      anterior: valorDecimal(conteudo.saldoAnterior),
-      bloqueado: valorDecimal(conteudo.saldoBloqueado),
-      limite: valorDecimal(conteudo.saldoLimite),
-      bloqueio_judicial: valorDecimal(conteudo.saldoBloqueioJudicial),
+      atual: valorDecimal(resultado.saldoAtual),
+      anterior: valorDecimal(resultado.saldoAnterior),
+      bloqueado: valorDecimal(resultado.saldoBloqueado),
+      limite: valorDecimal(resultado.saldoLimite),
+      bloqueio_judicial: valorDecimal(resultado.saldoBloqueioJudicial),
     }),
-    transacoes: conteudo.transacoes.map((item) => {
+    transacoes: resultado.transacoes.map((item) => {
       if (!item || typeof item !== "object" || Array.isArray(item))
         falhaContrato();
       return Object.freeze({
