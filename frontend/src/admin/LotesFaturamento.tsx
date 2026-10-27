@@ -19,7 +19,9 @@ type Item = {
   status: string | null;
 };
 type Lote = {
+  id: string;
   lote: string;
+  rotulo: string;
   recebido: number;
   aptas: number;
   pendentes: number;
@@ -35,7 +37,7 @@ export default function LotesFaturamento() {
   const [conferido, setConferido] = useState(false);
   const [ocupado, setOcupado] = useState(false);
   const [mensagem, setMensagem] = useState("");
-  const atual = consulta.dados?.find((l) => l.lote === lote);
+  const atual = consulta.dados?.find((l) => l.id === lote);
   const candidatas =
     atual?.itens.filter(
       (i) =>
@@ -54,7 +56,7 @@ export default function LotesFaturamento() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            lote,
+            lote: atual?.lote,
             conferido: true,
             itens: candidatas
               .slice(inicio, inicio + 100)
@@ -95,7 +97,9 @@ export default function LotesFaturamento() {
         >
           <option value="">Selecione</option>
           {consulta.dados?.map((l) => (
-            <option key={l.lote}>{l.lote}</option>
+            <option key={l.id} value={l.id}>
+              {l.rotulo}
+            </option>
           ))}
         </select>
       </label>

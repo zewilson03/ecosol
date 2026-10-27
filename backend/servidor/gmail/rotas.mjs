@@ -353,6 +353,12 @@ export function criarRotasGmail({
               documentos,
               modo: "documental",
             }),
+          processarFinanceiro: ({ documentos, chaveIdempotencia, sequencia }) =>
+            processadorDocumentalCentral({
+              processamentoId: `gmail-${capturaId}-${chaveIdempotencia.slice(0, 12)}-financeiro-${sequencia}`,
+              documentos,
+              modo: "financeiro",
+            }),
         });
         return resposta.set("Cache-Control", "no-store").json(resultado);
       } catch (erro) {

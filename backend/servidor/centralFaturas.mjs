@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
@@ -13,8 +14,11 @@ const pastaDoProjeto = resolve(
 const executarArquivo = promisify(execFile);
 const codigoFonteCentralPadrao =
   "C:\\Users\\User\\Desktop\\00 - Central de Faturas Ecosol\\_SUPORTE_ORGANIZACAO\\ARQUIVOS_RETIRADOS_DA_RAIZ_20260917\\CODIGO_FONTE_V146";
-const planilhasAtualizadasPadrao =
-  "C:\\Users\\User\\Desktop\\00 - Central de Faturas Ecosol\\Faturas\\PLANILHAS ATUALIZADAS";
+// A Central lê a pasta-base de venda e grava a planilha atualizada em uma
+// saída própria. Apontar a leitura para "PLANILHAS ATUALIZADAS" deslocava a
+// linha de referência e fazia o José divergir do lote original.
+const planilhasVendaPadrao =
+  "C:\\Users\\User\\Desktop\\00 - Central de Faturas Ecosol\\Venda de energia";
 
 // Regra temporária e auditável de homologação. Ela não substitui o cadastro
 // operacional de perfis: somente materializa os dois fluxos já homologados
@@ -57,7 +61,9 @@ function argumentosDaCentral() {
     process.env.ECOSOL_CENTRAL_CODIGO_FONTE ?? codigoFonteCentralPadrao;
   const raizCentral = resolve(codigoFonte, "..", "..", "..");
   const planilhas =
-    process.env.ECOSOL_PLANILHAS_ATUALIZADAS ?? planilhasAtualizadasPadrao;
+    process.env.ECOSOL_PLANILHAS_VENDAS ??
+    process.env.ECOSOL_PLANILHAS_ATUALIZADAS ??
+    planilhasVendaPadrao;
   return {
     adaptador: join(
       pastaDoProjeto,
@@ -88,9 +94,14 @@ export async function assinaturaDaFonteCentral() {
     .map((arquivo) => join(central.planilhas, arquivo.name))
     .sort((a, b) => a.localeCompare(b, "pt-BR"));
   const fontes = [
+    // O adaptador contém a cadeia de identificação e o tratamento documental
+    // do José; alterá-lo exige preparar novamente o lote, ainda que fontes
+    // externas não tenham mudado.
+    central.adaptador,
     central.motor,
     central.atualizador,
     central.planilhaCarteira,
+    central.cacheMedidores,
     ...planilhas,
   ];
   const metadados = await Promise.all(
@@ -99,7 +110,7 @@ export async function assinaturaDaFonteCentral() {
       return [resolve(arquivo), dados.size, dados.mtimeMs];
     }),
   );
-  return JSON.stringify({ versao: 1, fontes: metadados });
+  return JSON.stringify({ versao: 5, fontes: metadados });
 }
 
 export async function executarSimulacaoCentral({ documentos }) {
@@ -248,13 +259,18 @@ export async function executarProcessamentoCentralHomologacao({
   modo = "financeiro",
 }) {
   const central = argumentosDaCentral();
-  const raiz = resolve(
+  const raizSolicitada = resolve(
     pastaDoProjeto,
     "backend",
     "data",
     "central-homologacao",
     processamentoId,
   );
+  // Uma tentativa interrompida pode preservar somente artefatos locais de
+  // homologação. Nunca os removemos: uma retomada recebe outra raiz isolada.
+  const raiz = existsSync(raizSolicitada)
+    ? `${raizSolicitada}-retomada-${randomUUID()}`
+    : raizSolicitada;
   await mkdir(dirname(raiz), { recursive: true });
   const { stdout } = await executarArquivo(
     process.env.ECOSOL_PYTHON ?? "python",

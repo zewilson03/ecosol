@@ -129,7 +129,111 @@ assert.equal(
 );
 
 let persistido = null;
+let documentosFinanceirosProcessados = [];
 const documental = await prepararLoteCentralDaCaptura({
+  banco,
+  contaId: 7,
+  capturaId: 41,
+  localizar: async () => ({
+    resultados: [
+      {
+        documento: 101,
+        situacao: "segura",
+        ucNova: "408283801242",
+        cliente: "Cliente financeiro",
+        usina: "Abadiânia",
+        planilha: "C:\\homologacao\\abadiania.xlsx",
+        mesFaturamento: "NOV",
+      },
+      {
+        documento: 102,
+        situacao: "identificada",
+        ucNova: "100000000102",
+        cliente: "Cliente sem linha financeira",
+        usina: "Usina sem modalidade",
+        motivoFinanceiro: "planilha_da_usina_nao_localizada",
+      },
+      {
+        documento: 104,
+        situacao: "identificada",
+        ucNova: "32836401204",
+        cliente: "Cliente Royer",
+        usina: "Royer",
+      },
+    ],
+  }),
+  simular: async () => ({
+    resultados: [
+      {
+        documento: 101,
+        situacao: "simulada",
+        ucNova: "408283801242",
+        cliente: "Cliente financeiro",
+        usina: "Abadiânia",
+        planilha: "C:\\homologacao\\abadiania.xlsx",
+        mesFaturamento: "NOV",
+      },
+    ],
+  }),
+  processarFinanceiro: async ({ documentos }) => {
+    documentosFinanceirosProcessados = documentos;
+    return {
+      situacao: "concluido",
+      pdfs: documentos.map((documento) => ({
+        documento,
+        nomeFinal: `${documento}.pdf`,
+        pdf_final: `C:\\homologacao\\financeiro-${documento}.pdf`,
+        pdf_impressao: `C:\\homologacao\\financeiro-${documento}-a4.pdf`,
+        valor_boleto: "3724,71",
+      })),
+      pendencias: [],
+    };
+  },
+  processarDocumental: async ({ documentos }) => {
+    return {
+      situacao: "concluido",
+      pdfs: documentos.map((documento) => ({
+        documento,
+        nomeFinal: `${documento}.pdf`,
+        pdf_final: `C:\\homologacao\\${documento}.pdf`,
+        pdf_impressao: `C:\\homologacao\\${documento}-a4.pdf`,
+      })),
+      pendencias: [],
+    };
+  },
+  obterPreparacao: () => persistido,
+  obterAssinaturaFonte: async () => "fonte-central-a",
+  salvarPreparacao: (item) => {
+    persistido = { chave_idempotencia: item.chaveIdempotencia, resultado: item.resultado };
+  },
+});
+assert.equal(documental.resumo.pdfsProntosParaImpressao, 3);
+assert.equal(documental.resumo.processados, 3);
+assert.equal(documental.itens[0].documental.situacao, "pronto");
+assert.equal(documental.itens[1].situacao, "revisar");
+assert.equal(documental.itens[1].modo, null);
+assert.equal(documental.itens[1].documental.situacao, "pronto");
+assert.equal(documental.itens[3].documental.situacao, "pronto");
+assert.deepEqual(documentosFinanceirosProcessados, [101]);
+assert.equal(documental.itens[0].documental.valorBoleto, "3724,71");
+const reaproveitado = await prepararLoteCentralDaCaptura({
+  banco,
+  contaId: 7,
+  capturaId: 41,
+  localizar: async () => assert.fail("não deve relocalizar preparação idempotente"),
+  simular: async () => assert.fail("não deve ressimular preparação idempotente"),
+  obterPreparacao: () => persistido,
+  obterAssinaturaFonte: async () => "fonte-central-a",
+});
+assert.equal(reaproveitado.resumo.pdfsProntosParaImpressao, 3);
+
+const resultadoInterrompido = structuredClone(persistido.resultado);
+resultadoInterrompido.itens[0].documental = {
+  situacao: "revisar",
+  motivo: "preparacao_documental_indisponivel:diretorio_de_homologacao_ja_existe",
+};
+let retomouPreparacaoDocumental = false;
+await prepararLoteCentralDaCaptura({
   banco,
   contaId: 7,
   capturaId: 41,
@@ -144,8 +248,10 @@ const documental = await prepararLoteCentralDaCaptura({
       },
       {
         documento: 102,
-        situacao: "revisar",
-        motivo: "linha_da_uc_ambigua:2",
+        situacao: "identificada",
+        ucNova: "100000000102",
+        cliente: "Cliente sem linha financeira",
+        usina: "Usina sem modalidade",
       },
       {
         documento: 104,
@@ -167,36 +273,26 @@ const documental = await prepararLoteCentralDaCaptura({
       },
     ],
   }),
-  processarDocumental: async ({ documentos }) => ({
-    situacao: "concluido",
-    pdfs: documentos.map((documento) => ({
-      documento,
-      nomeFinal: `${documento}.pdf`,
-      pdf_final: `C:\\homologacao\\${documento}.pdf`,
-      pdf_impressao: `C:\\homologacao\\${documento}-a4.pdf`,
-    })),
-    pendencias: [],
-  }),
-  obterPreparacao: () => persistido,
-  obterAssinaturaFonte: async () => "fonte-central-a",
-  salvarPreparacao: (item) => {
-    persistido = { chave_idempotencia: item.chaveIdempotencia, resultado: item.resultado };
+  processarDocumental: async ({ documentos }) => {
+    retomouPreparacaoDocumental = true;
+    return {
+      situacao: "concluido",
+      pdfs: documentos.map((documento) => ({
+        documento,
+        nomeFinal: `${documento}.pdf`,
+        pdf_final: `C:\\homologacao\\${documento}.pdf`,
+        pdf_impressao: `C:\\homologacao\\${documento}-a4.pdf`,
+      })),
+      pendencias: [],
+    };
   },
-});
-assert.equal(documental.resumo.pdfsProntosParaImpressao, 2);
-assert.equal(documental.resumo.processados, 2);
-assert.equal(documental.itens[0].documental.situacao, "pronto");
-assert.equal(documental.itens[3].documental.situacao, "pronto");
-const reaproveitado = await prepararLoteCentralDaCaptura({
-  banco,
-  contaId: 7,
-  capturaId: 41,
-  localizar: async () => assert.fail("não deve relocalizar preparação idempotente"),
-  simular: async () => assert.fail("não deve ressimular preparação idempotente"),
-  obterPreparacao: () => persistido,
+  obterPreparacao: () => ({
+    chave_idempotencia: persistido.chave_idempotencia,
+    resultado: resultadoInterrompido,
+  }),
   obterAssinaturaFonte: async () => "fonte-central-a",
 });
-assert.equal(reaproveitado.resumo.pdfsProntosParaImpressao, 2);
+assert.equal(retomouPreparacaoDocumental, true);
 
 let relocalizouComFonteNova = false;
 await prepararLoteCentralDaCaptura({
