@@ -18,6 +18,7 @@ const parametrosDaSenha = {
 };
 const formatoAtual = /^scrypt\$v2\$([a-f0-9]{32})\$([a-f0-9]{128})$/;
 const formatoAntigo = /^([a-f0-9]{32}):([a-f0-9]{128})$/;
+let chamadasDoLimitador = 0;
 
 export function resumoCriptografico(valor) {
   return createHash("sha256").update(valor).digest("hex");
@@ -117,6 +118,9 @@ export function encerrarSessao(requisicao, resposta) {
 export function limitarTentativas(chave, limite = 8) {
   const banco = obterBanco();
   const agora = Date.now();
+  chamadasDoLimitador += 1;
+  if (chamadasDoLimitador % 256 === 0)
+    banco.prepare("DELETE FROM login_attempts WHERE reset_at < ?").run(agora);
   const registro = banco
     .prepare("SELECT attempts, reset_at FROM login_attempts WHERE key = ?")
     .get(chave);

@@ -22,6 +22,7 @@ import {
   cpfValidoParaCadastro,
 } from "./validacaoDeCpf.mjs";
 import { validarContatoCliente } from "./validacaoDeContato.mjs";
+import { senhaInicialForte } from "./politicaSenhaInicial.mjs";
 import { papeisDoAdministrador } from "./bancario/permissoes.mjs";
 
 export const rotas = express.Router();
@@ -298,9 +299,13 @@ rotas.post("/api/acesso/solicitar", async (requisicao, resposta) => {
   const email = campo(requisicao, "email", 180).toLowerCase();
   const finalidade =
     campo(requisicao, "purpose") === "reset" ? "reset" : "activate";
-  const chave = `request:${resumoCriptografico(cpf + email)}`;
+  if (!cpfValido(cpf) || !emailValido(email))
+    return redirecionar(resposta, "/acesso?status=solicitado");
 
-  if (!limitarTentativas(chave, 4) && cpfValido(cpf) && emailValido(email)) {
+  const chave = `request:${resumoCriptografico(cpf + email)}`;
+  const chaveDeRede = `request-ip:${resumoCriptografico(requisicao.ip ?? "desconhecido")}`;
+
+  if (!limitarTentativas(chaveDeRede, 24) && !limitarTentativas(chave, 4)) {
     const cliente = obterBanco()
       .prepare(
         "SELECT id, password_hash FROM customers WHERE cpf = ? AND lower(email) = ?",
@@ -413,17 +418,15 @@ rotas.post("/api/acesso/definir-senha", async (requisicao, resposta) => {
 rotas.post("/api/equipe/login", async (requisicao, resposta) => {
   const email = campo(requisicao, "email", 180).toLowerCase();
   const senha = campoSenha(requisicao, "password");
+  if (!emailValido(email)) return redirecionar(resposta, "/equipe?status=erro");
   const chave = `staff:${resumoCriptografico(email)}`;
-  if (limitarTentativas(chave, 6))
+  const chaveDeRede = `staff-ip:${resumoCriptografico(requisicao.ip ?? "desconhecido")}`;
+  if (limitarTentativas(chaveDeRede, 30) || limitarTentativas(chave, 6))
     return redirecionar(resposta, "/equipe?status=erro");
 
-  const administrador = emailValido(email)
-    ? obterBanco()
-        .prepare(
-          "SELECT id, password_hash FROM staff_users WHERE lower(email) = ?",
-        )
-        .get(email)
-    : null;
+  const administrador = obterBanco()
+    .prepare("SELECT id, password_hash FROM staff_users WHERE lower(email) = ?")
+    .get(email);
 
   if (
     !administrador ||
@@ -440,6 +443,9 @@ rotas.post("/api/equipe/login", async (requisicao, resposta) => {
       .run(hashAtualizado, administrador.id, administrador.password_hash);
   }
   obterBanco().prepare("DELETE FROM login_attempts WHERE key = ?").run(chave);
+  obterBanco()
+    .prepare("DELETE FROM login_attempts WHERE key = ?")
+    .run(chaveDeRede);
   iniciarSessao(resposta, "staff", administrador.id);
   redirecionar(resposta, "/equipe");
 });
@@ -450,8 +456,7 @@ rotas.post("/api/equipe/entrada-inicial", (requisicao, resposta) => {
   if (
     obterBanco().prepare("SELECT 1 FROM staff_users LIMIT 1").get() ||
     limitarTentativas("staff-bootstrap", 6) ||
-    !configurada ||
-    configurada === "troque-esta-senha-antes-de-publicar" ||
+    !senhaInicialForte(configurada) ||
     senha !== configurada
   ) {
     return redirecionar(resposta, "/equipe?status=bootstrap-erro");

@@ -71,7 +71,8 @@ sudo bash infra/producao/scripts/ativar-release.sh /opt/ecosol/releases/COMMIT
 
 `git archive` inclui somente arquivos versionados no commit: banco, `.env.local`,
 certificados e outras sobras locais não entram no release. O validador instala
-exatamente o lockfile, compila a interface e testa a saúde.
+exatamente o lockfile e executa `pnpm quality:check`, com todos os testes, build
+e auditoria de dependências altas.
 O ativador cria primeiro um backup SQLite consistente, troca o link `current`
 atomicamente, reinicia uma única instância e consulta `/api/saude`. Se a saúde
 não responder em até um minuto, restaura o link anterior e reinicia o serviço.
@@ -89,6 +90,29 @@ sudo ss -lntp
 Confirme também login nominal, permissões, listagem de faturas e abertura de um
 PDF. O executor bancário deve continuar desligado. Não imprima o ambiente do
 processo nem use `systemctl show` com propriedades que exponham variáveis.
+
+## Backup agendado e ensaio de restauração
+
+Instale e habilite o timer diário. Ele conserva 30 dias de cópias locais e
+valida integridade e referências antes de publicar cada arquivo:
+
+```bash
+sudo cp infra/producao/systemd/ecosol-backup.* /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now ecosol-backup.timer
+sudo systemctl list-timers ecosol-backup.timer
+```
+
+Uma vez por mês, valide uma cópia sem alterar o banco ativo:
+
+```bash
+sudo bash infra/producao/scripts/validar-restauracao-sqlite.sh \
+  /var/lib/ecosol/backups/ecosol-INSTANTE.db
+```
+
+O agendamento local não substitui a réplica cifrada fora do servidor. Configure
+o destino externo na infraestrutura e alerte quando a última cópia confirmada
+ultrapassar 26 horas.
 
 ## Encerramento e reinício seguro
 
@@ -126,7 +150,8 @@ SQLite, que produz uma cópia consistente mesmo com WAL ativo.
 - a VPS, o domínio, o DNS e o certificado HTTPS ainda dependem das contas da
   Ecosol;
 - o backup criado localmente precisa ser replicado para armazenamento externo;
-- restauração e rollback ainda precisam ser ensaiados em uma VPS descartável;
+- a restauração possui verificação automatizada, mas o procedimento operacional
+  completo ainda precisa ser ensaiado em uma VPS descartável;
 - métricas de disco, memória, erros e validade dos backups ainda precisam de
   alertas externos;
 - a parada coordenada foi implementada e testada localmente; ainda precisa ser

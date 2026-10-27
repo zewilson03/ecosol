@@ -97,6 +97,7 @@ export function criarIntegracaoSicoob({
     clienteHttp: clienteApi,
     gerenciadorOAuth: oauth,
     contrato: contratoCobrancaEfetivo,
+    clientId: configuracao.clientId,
   });
   const contaCorrente = clienteContaCorrente
     ? criarContaCorrenteSicoob({
@@ -112,7 +113,10 @@ export function criarIntegracaoSicoob({
       const resposta = await clienteApi.solicitar({
         metodo: "GET",
         caminho: "/health",
-        cabecalhos: { accept: "application/json" },
+        cabecalhos: {
+          accept: "application/json",
+          client_id: configuracao.clientId,
+        },
         accessToken: token.accessToken,
         tokenType: token.tokenType,
       });

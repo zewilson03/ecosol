@@ -29,13 +29,24 @@ if [[ "$integridade" != "ok" ]]; then
   echo "A cópia não passou no PRAGMA quick_check." >&2
   exit 1
 fi
+readonly chaves_estrangeiras="$(sqlite3 "$temporario" "PRAGMA foreign_key_check;")"
+if [[ -n "$chaves_estrangeiras" ]]; then
+  echo "A cópia contém referências inválidas." >&2
+  exit 1
+fi
 
 chown ecosol:ecosol "$temporario"
 chmod 0600 "$temporario"
 mv -- "$temporario" "$destino"
-sha256sum "$destino" >"$destino.sha256"
+(cd "$pasta_backups" && sha256sum "$(basename "$destino")" >"$(basename "$destino").sha256")
 chown ecosol:ecosol "$destino.sha256"
 chmod 0600 "$destino.sha256"
 trap - EXIT
+
+# Retenção local operacional. A réplica cifrada fora do host continua
+# obrigatória e é responsabilidade da infraestrutura escolhida.
+find "$pasta_backups" -maxdepth 1 -type f \
+  \( -name 'ecosol-*.db' -o -name 'ecosol-*.db.sha256' \) \
+  -mtime +30 -delete
 
 echo "$destino"

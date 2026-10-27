@@ -31,7 +31,13 @@ assert.deepEqual(
 function criarAplicacao(obterBanco, aceitaTrafego = () => true) {
   const aplicacao = express();
   aplicacao.use(protecaoHttp("https://ecosol.example"));
-  aplicacao.use(criarRotasSaude({ banco: obterBanco, aceitaTrafego }));
+  aplicacao.use(
+    criarRotasSaude({
+      banco: obterBanco,
+      aceitaTrafego,
+      protegerProntidao: (_req, _res, proximo) => proximo(),
+    }),
+  );
   return aplicacao;
 }
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export async function consultarServidor<T>(
   endereco: string,
@@ -40,10 +40,12 @@ export function usarConsulta<T>(endereco: string | null) {
   const [erro, definirErro] = useState("");
   const [carregando, definirCarregando] = useState(Boolean(endereco));
   const [revisao, definirRevisao] = useState(0);
+  const enderecoAnterior = useRef<string | null>(null);
   const atualizar = useCallback(() => definirRevisao((valor) => valor + 1), []);
 
   useEffect(() => {
     if (!endereco) {
+      enderecoAnterior.current = null;
       definirDados(null);
       definirErro("");
       definirCarregando(false);
@@ -51,7 +53,10 @@ export function usarConsulta<T>(endereco: string | null) {
     }
 
     const controle = new AbortController();
-    definirDados(null);
+    if (enderecoAnterior.current !== endereco) {
+      enderecoAnterior.current = endereco;
+      definirDados(null);
+    }
     definirCarregando(true);
     definirErro("");
     consultarServidor<T>(endereco, { signal: controle.signal })
@@ -60,7 +65,6 @@ export function usarConsulta<T>(endereco: string | null) {
       })
       .catch((falha) => {
         if (!controle.signal.aborted) {
-          definirDados(null);
           definirErro(falha.message);
         }
       })
@@ -70,7 +74,13 @@ export function usarConsulta<T>(endereco: string | null) {
     return () => controle.abort();
   }, [endereco, revisao]);
 
-  return { dados, erro, carregando, atualizar };
+  return {
+    dados,
+    erro,
+    carregando,
+    revalidando: carregando && dados !== null,
+    atualizar,
+  };
 }
 
 export function alterarDados(endereco: string, dados: object, metodo = "POST") {

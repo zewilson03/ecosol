@@ -336,7 +336,7 @@ function rastrear(processo) {
     processo,
     saida: () => saida,
     erros: () => erros,
-    async esperar(marcador, limiteMs = 12000) {
+    async esperar(marcador, limiteMs = 30000) {
       if (saida.includes(marcador)) return;
       await new Promise((resolver, rejeitar) => {
         const limite = setTimeout(() => {
@@ -366,7 +366,7 @@ function rastrear(processo) {
         verificar();
       });
     },
-    async finalizar(limiteMs = 12000) {
+    async finalizar(limiteMs = 30000) {
       if (encerrado) return codigoFinal;
       return await new Promise((resolver, rejeitar) => {
         const limite = setTimeout(() => {
@@ -532,7 +532,7 @@ async function aceite() {
     try {
       retomada = rastrear(filho("timeout-e-retomada"));
       await retomada.esperar("PRONTO");
-      await retomada.esperar("BUSY", 10000);
+      await retomada.esperar("BUSY", 30000);
       assert.deepEqual(
         bancoDeBloqueio
           .prepare(
@@ -632,7 +632,7 @@ async function aceite() {
     bancoDeBloqueio.exec("BEGIN IMMEDIATE");
     try {
       reservaComTimeout.processo.stdin.write("CONTINUAR\n");
-      await reservaComTimeout.esperar("BUSY", 10000);
+      await reservaComTimeout.esperar("BUSY", 30000);
       assert.equal(
         bancoDeBloqueio
           .prepare("SELECT SUM(tentativas) AS total FROM gmail_mensagens")

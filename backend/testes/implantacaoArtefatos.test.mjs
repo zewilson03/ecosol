@@ -31,8 +31,23 @@ assert.doesNotMatch(ambiente, /Ecosol123|BEGIN (?:RSA )?PRIVATE KEY/);
 const backup = ler("infra/producao/scripts/backup-sqlite.sh");
 assert.match(backup, /\.backup/);
 assert.match(backup, /PRAGMA quick_check/);
+assert.match(backup, /PRAGMA foreign_key_check/);
 assert.match(backup, /sha256sum/);
+assert.match(backup, /basename "\$destino"/);
+assert.match(backup, /cd "\$pasta_backups"/);
+assert.doesNotMatch(backup, /sha256sum "\$destino"/);
 assert.doesNotMatch(backup, /\bcp\s+.*ecosol\.db/);
+
+const restauracao = ler("infra/producao/scripts/validar-restauracao-sqlite.sh");
+assert.match(restauracao, /sha256sum --check/);
+assert.match(restauracao, /PRAGMA quick_check/);
+assert.match(restauracao, /PRAGMA foreign_key_check/);
+assert.match(restauracao, /mktemp/);
+assert.doesNotMatch(restauracao, /\/var\/lib\/ecosol\/ecosol\.db/);
+
+const timerBackup = ler("infra/producao/systemd/ecosol-backup.timer");
+assert.match(timerBackup, /^Persistent=true$/m);
+assert.match(timerBackup, /^OnCalendar=/m);
 
 const ativacao = ler("infra/producao/scripts/ativar-release.sh");
 assert.match(ativacao, /\/api\/saude/);

@@ -234,6 +234,9 @@ let healthSolicitado = 0;
 let boletoIncluido = 0;
 let boletoConsultado = 0;
 const servidor = createServer((req, res) => {
+  if (req.url !== "/token") {
+    assert.equal(req.headers.client_id, "cliente-de-homologacao");
+  }
   if (req.url === "/token" && req.method === "POST") {
     const partes = [];
     req.on("data", (parte) => partes.push(parte));

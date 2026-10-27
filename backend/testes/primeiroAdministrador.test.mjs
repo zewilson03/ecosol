@@ -8,7 +8,7 @@ process.env.ECOSOL_DATA_DIR = mkdtempSync(
   join(tmpdir(), "ecosol-primeiro-admin-"),
 );
 process.env.NODE_ENV = "production";
-process.env.ADMIN_PASSWORD = "Senha inicial de teste";
+process.env.ADMIN_PASSWORD = "Senha inicial de teste 4821";
 
 const { obterBanco } = await import("../servidor/bancoDeDados.mjs");
 const { rotas } = await import("../servidor/rotasDaAplicacao.mjs");

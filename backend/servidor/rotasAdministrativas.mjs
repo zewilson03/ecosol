@@ -99,6 +99,10 @@ rotasAdministrativas.get("/api/admin/usinas", (_requisicao, resposta) => {
 });
 
 rotasAdministrativas.get("/api/admin/faturas", (_requisicao, resposta) => {
+  resposta.set({
+    Deprecation: "true",
+    Link: '</api/admin/faturamento/documentos>; rel="successor-version"',
+  });
   resposta.json(
     obterBanco()
       .prepare(

@@ -9,7 +9,7 @@ import express from "express";
 // Todos os registros deste teste ficam em um banco temporário.
 process.env.ECOSOL_DATA_DIR = mkdtempSync(join(tmpdir(), "ecosol-permissoes-"));
 process.env.NODE_ENV = "development";
-process.env.ADMIN_PASSWORD = "Senha inicial de teste";
+process.env.ADMIN_PASSWORD = "Senha inicial de teste 4821";
 
 const antigo = new DatabaseSync(join(process.env.ECOSOL_DATA_DIR, "ecosol.db"));
 antigo.exec(

@@ -16,6 +16,8 @@ import { rotasSaude } from "./saude.mjs";
 import { criarAgendadorGmail } from "./gmail/agendador.mjs";
 import { criarEncerramentoOrdenado } from "./encerramento.mjs";
 import { marcarAplicacaoEmEncerramento } from "./estadoOperacional.mjs";
+import { observabilidadeHttp } from "./observabilidadeHttp.mjs";
+import { configurarProxyConfiavel } from "./proxyConfiavel.mjs";
 
 const pastaDoBackend = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const pastaDoProjeto = resolve(pastaDoBackend, "..");
@@ -26,6 +28,8 @@ const aplicacao = express();
 const { porta, host, appUrl } = obterConfiguracaoRede();
 
 aplicacao.disable("x-powered-by");
+configurarProxyConfiavel(aplicacao);
+aplicacao.use(observabilidadeHttp());
 aplicacao.use(protecaoHttp(appUrl));
 aplicacao.use(express.urlencoded({ extended: false, limit: "20kb" }));
 aplicacao.use(

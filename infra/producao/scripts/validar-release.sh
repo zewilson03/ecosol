@@ -26,8 +26,7 @@ fi
 
 cd "$release"
 pnpm install --frozen-lockfile
-pnpm run build
+pnpm run quality:check
 test -r frontend/dist/index.html
-node backend/testes/saudeProducao.test.mjs
 
 echo "Release validado: $release"

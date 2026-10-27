@@ -6,6 +6,7 @@ import { prepararFaturamento } from "./faturamento/esquema.mjs";
 import { prepararGmail } from "./gmail/esquema.mjs";
 import { prepararBancario } from "./bancario/esquema.mjs";
 import { prepararPagamentosECompras } from "./financeiro/pagamentos.mjs";
+import { registrarBaselineDoEsquema } from "./persistencia/migracoes.mjs";
 
 let banco;
 
@@ -18,6 +19,7 @@ export function obterBanco() {
   banco = new DatabaseSync(join(pasta, "ecosol.db"));
   try {
     banco.exec("PRAGMA busy_timeout=5000");
+    banco.exec("PRAGMA foreign_keys=ON");
 
     // A criação é segura para um banco já existente: as tabelas são preservadas.
     banco.exec(`
@@ -77,6 +79,8 @@ export function obterBanco() {
       attempts INTEGER NOT NULL,
       reset_at INTEGER NOT NULL
     );
+    CREATE INDEX IF NOT EXISTS login_attempts_expiracao
+      ON login_attempts(reset_at);
     CREATE TABLE IF NOT EXISTS auditoria_exportacoes_clientes (
       id INTEGER PRIMARY KEY,
       responsavel_id INTEGER NOT NULL REFERENCES staff_users(id),
@@ -180,6 +184,7 @@ export function obterBanco() {
     prepararGmail(banco);
     prepararBancario(banco);
     prepararPagamentosECompras(banco);
+    registrarBaselineDoEsquema(banco);
     return banco;
   } catch (erro) {
     const conexaoIncompleta = banco;
