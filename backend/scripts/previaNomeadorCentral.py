@@ -11,6 +11,7 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 import shutil
 import sqlite3
 import sys
@@ -25,6 +26,7 @@ import pdfplumber
 from pypdf import PdfReader, PdfWriter
 
 _FONTES_IDENTIFICACAO_CENTRAL = {}
+_INDICE_LINHAS_PLANILHA = {}
 
 # A ponte Node interpreta o JSON estruturado como UTF-8. Em consoles Windows
 # configurados em cp1252, nomes de clientes acentuados corrompiam os caminhos
@@ -315,20 +317,42 @@ def resolver_contexto_pelas_fontes_da_central(args, app, identificado_pdf: dict)
 
 
 def resolver_contexto_integrado(args, app, contexto: dict, identificado_pdf: dict) -> dict:
-    """Prefere vínculo inequívoco do José; usa a fonte original como fallback."""
+    """Prefere a fonte inequívoca da Central; mantém José como fallback.
+
+    O nome e o carimbo do processamento original são montados a partir do
+    cadastro ``uc por usina.xlsx``. Usar primeiro o cadastro resumido do José
+    alterava abreviações de cliente/usina e produzia um nome diferente, embora
+    a UC fosse a mesma. A fonte da Central só substitui quando a sua própria
+    regra de unicidade a considerou segura.
+    """
+    central = resolver_contexto_pelas_fontes_da_central(args, app, identificado_pdf)
+    if central and central["ucNova"] and central["cliente"] and central["usina"]:
+        return {
+            **contexto,
+            **central,
+            # O JSON do Gmail preserva a competência da captura; a Central fornece
+            # a identidade, não substitui esse metadado.
+            "dados": contexto["dados"],
+        }
     if contexto["unidadeId"] and contexto["ucNova"] and contexto["cliente"] and contexto["usina"]:
         contexto["origemIdentificacao"] = "jose"
         return contexto
-    central = resolver_contexto_pelas_fontes_da_central(args, app, identificado_pdf)
-    if not central or not central["ucNova"] or not central["cliente"] or not central["usina"]:
-        return contexto
-    return {
-        **contexto,
-        **central,
-        # O JSON do Gmail preserva a competência da captura; a Central fornece
-        # a identidade, não substitui esse metadado.
-        "dados": contexto["dados"],
-    }
+    return contexto
+
+
+def uc_antiga_para_documento(app, contexto: dict) -> str:
+    """Preserva o fallback documental já visível na saída da Central.
+
+    A ausência de uma UC histórica impede localizar uma linha financeira, mas
+    não invalida uma fatura cuja UC atual, cliente e usina foram identificados
+    de forma única. A Central nomeia esses casos como ``SEM_UC_ANTIGA``;
+    reutilizamos o mesmo marcador somente no PDF documental.
+    """
+    for valor in contexto.get("ucsAntigas") or []:
+        uc = app.limpar_numero(valor)
+        if uc:
+            return uc
+    return "SEM_UC_ANTIGA"
 
 
 def codigo_competencia(dados: dict, atualizador, mes_faturamento: str = "") -> str:
@@ -391,10 +415,23 @@ def candidatas_da_usina(args, atualizador, usina: str):
     usina_normalizada = atualizador.normalize_usina_name(usina)
     if not usina_normalizada:
         raise RuntimeError("usina_do_documento_indisponivel")
-    return tuple(
-        planilha for planilha in listar_planilhas_restritas(args.pasta_vendas)
-        if usina_normalizada in atualizador.normalize_usina_name(planilha.stem)
+    normalizar_compacto = lambda valor: re.sub(
+        r"[^A-Z0-9]", "", atualizador.normalize_usina_name(valor)
     )
+    usina_compacta = normalizar_compacto(usina)
+    planilhas = listar_planilhas_restritas(args.pasta_vendas)
+    por_nome = tuple(
+        planilha for planilha in listar_planilhas_restritas(args.pasta_vendas)
+        if (
+            usina_normalizada in atualizador.normalize_usina_name(planilha.stem)
+            or usina_compacta in normalizar_compacto(planilha.stem)
+        )
+    )
+    # A Central original percorre as planilhas e associa pela UC; por isso
+    # rótulos operacionais como ECOSOL não impedem encontrar uma UC que está
+    # numa planilha Abadiânia ou São Francisco. O fallback é deliberadamente
+    # global, mas a função chamadora exige uma única linha encontrada.
+    return por_nome or planilhas
 
 
 def localizar_linha_planilha(
@@ -405,60 +442,86 @@ def localizar_linha_planilha(
     candidatas = candidatas_da_usina(args, atualizador, usina)
     if not candidatas:
         raise RuntimeError("planilha_da_usina_nao_localizada")
-    if len(candidatas) != 1:
-        raise RuntimeError(f"planilha_da_usina_ambigua:{len(candidatas)}")
-
-    planilha = candidatas[0]
     competencia = codigo_competencia(dados, atualizador, mes_faturamento)
-    # A busca aleatória por UC usada pela Central exige worksheet normal. Esta
-    # integração não chama save: o arquivo compartilhado permanece só entrada.
-    workbook = atualizador.load_workbook(planilha, read_only=False, data_only=False)
-    try:
-        aba = atualizador.select_latest_month_sheet(workbook, expected_month=competencia)
-        worksheet = workbook[aba]
-        primeira_linha = atualizador.find_target_table_start(worksheet)
-        if primeira_linha is None:
-            raise RuntimeError("tabela_de_venda_nao_localizada")
-        classica = atualizador.is_classic_rateio_sheet(worksheet, primeira_linha)
-        ucs_antigas_normalizadas = {
-            atualizador.normalize_uc(uc) for uc in ucs_antigas
-            if atualizador.normalize_uc(uc)
+    ucs_antigas_normalizadas = {
+        atualizador.normalize_uc(uc) for uc in ucs_antigas
+        if atualizador.normalize_uc(uc)
+    }
+    uc_atual = atualizador.normalize_uc(uc_nova)
+    localizacoes = []
+    for planilha in candidatas:
+        # Para rótulos como ECOSOL a Central percorre toda a carteira. O
+        # índice abaixo conserva exatamente as colunas C/D e a regra de
+        # unicidade original, mas abre cada planilha uma única vez por
+        # competência dentro da execução do lote.
+        chave_indice = (str(planilha.resolve()).lower(), competencia)
+        indice = _INDICE_LINHAS_PLANILHA.get(chave_indice)
+        if indice is None:
+            workbook = atualizador.load_workbook(planilha, read_only=False, data_only=False)
+            try:
+                try:
+                    aba = atualizador.select_latest_month_sheet(workbook, expected_month=competencia)
+                except ValueError as erro_aba:
+                    if "aba mensal" in str(erro_aba).lower():
+                        _INDICE_LINHAS_PLANILHA[chave_indice] = False
+                        continue
+                    raise
+                worksheet = workbook[aba]
+                primeira_linha = atualizador.find_target_table_start(worksheet)
+                if primeira_linha is None:
+                    _INDICE_LINHAS_PLANILHA[chave_indice] = False
+                    continue
+                por_antiga, por_nova = {}, {}
+                for linha_atual in range(primeira_linha, worksheet.max_row + 1):
+                    antiga = atualizador.normalize_uc(worksheet.cell(linha_atual, 3).value)
+                    nova = atualizador.normalize_uc(worksheet.cell(linha_atual, 4).value)
+                    if antiga:
+                        por_antiga.setdefault(antiga, []).append(linha_atual)
+                    if nova:
+                        por_nova.setdefault(nova, []).append(linha_atual)
+                indice = {
+                    "aba": aba,
+                    "classica": atualizador.is_classic_rateio_sheet(worksheet, primeira_linha),
+                    "porAntiga": por_antiga,
+                    "porNova": por_nova,
+                }
+                _INDICE_LINHAS_PLANILHA[chave_indice] = indice
+            finally:
+                workbook.close()
+        if not indice:
+            continue
+        linhas_nova = indice["porNova"].get(uc_atual, []) if uc_atual else []
+        linhas_antiga = {
+            linha for uc in ucs_antigas_normalizadas
+            for linha in indice["porAntiga"].get(uc, [])
         }
-        uc_atual = atualizador.normalize_uc(uc_nova)
-        linhas_da_tabela = list(range(primeira_linha, worksheet.max_row + 1))
-
-        # Mantém a mesma cadeia de identificação de find_invoice() da Central:
-        # par antigo/nova, UC nova isolada e, por último, UC antiga isolada.
-        # A planilha já foi restringida pela usina no nome do arquivo. Não se
-        # compara a coluna A aqui: a Central não exige que o código abreviado
-        # da linha (por exemplo, ABD) seja igual ao nome cadastral da usina.
         tentativas = (
-            lambda linha: (
-                atualizador.normalize_uc(worksheet.cell(linha, 3).value) in ucs_antigas_normalizadas
-                and atualizador.normalize_uc(worksheet.cell(linha, 4).value) == uc_atual
-            ),
-            lambda linha: bool(uc_atual) and atualizador.normalize_uc(worksheet.cell(linha, 4).value) == uc_atual,
-            lambda linha: (
-                atualizador.normalize_uc(worksheet.cell(linha, 3).value) in ucs_antigas_normalizadas
-            ),
+            sorted(set(linhas_nova).intersection(linhas_antiga)),
+            linhas_nova,
+            sorted(linhas_antiga),
         )
         linha = None
-        for corresponde in tentativas:
-            linhas = [linha for linha in linhas_da_tabela if corresponde(linha)]
+        for linhas in tentativas:
             if len(linhas) == 1:
                 linha = linhas[0]
                 break
             if len(linhas) > 1:
                 raise RuntimeError(f"linha_da_uc_ambigua:{len(linhas)}")
-        if linha is None:
-            raise RuntimeError("linha_da_uc_ambigua:0")
-        return {
-            "planilha": str(planilha), "aba": aba, "linha": linha,
-            "classica": classica, "colunaBoleto": 17 if classica else 12,
-            "ucAntigaPlanilha": atualizador.normalize_uc(worksheet.cell(linha, 3).value),
-        }
-    finally:
-        workbook.close()
+        if linha is not None:
+            uc_antiga_planilha = next(
+                (uc for uc, linhas in indice["porAntiga"].items() if linha in linhas), ""
+            )
+            localizacoes.append({
+                "planilha": str(planilha), "aba": indice["aba"], "linha": linha,
+                "classica": indice["classica"],
+                "colunaBoleto": 17 if indice["classica"] else 12,
+                "ucAntigaPlanilha": uc_antiga_planilha,
+            })
+    if len(localizacoes) == 1:
+        return localizacoes[0]
+    if not localizacoes:
+        raise RuntimeError("linha_da_uc_ambigua:0")
+    raise RuntimeError(f"planilha_da_uc_ambigua:{len(localizacoes)}")
 
 
 def localizar_valor_boleto(args, atualizador, dados: dict, uc_nova: str, mes_faturamento: str):
@@ -610,15 +673,18 @@ def simular_documento(args, app, atualizador, documento: int):
         contexto = resolver_contexto_integrado(args, app, contexto, identificado_pdf)
         if not contexto["ucNova"] or not contexto["cliente"] or not contexto["usina"]:
             raise RuntimeError("vinculo_cadastral_incompleto")
-        if not contexto["ucsAntigas"]:
-            raise RuntimeError("uc_antiga_nao_referenciada")
-
         localizacao = localizar_linha_planilha(
             args, atualizador, contexto["dados"], uc_pdf, contexto["ucsAntigas"],
             contexto["usina"], mes,
         )
+        # A Central aceita UCs que ainda não possuem número histórico na
+        # planilha: o marcador é documental, não uma condição financeira. A
+        # linha já foi confirmada de forma única pela UC atual acima.
+        uc_antiga_documento = (
+            localizacao["ucAntigaPlanilha"] or uc_antiga_para_documento(app, contexto)
+        )
         temporaria, metadados = preparar_fatura_temporaria_da_central(
-            app, pdf_original, localizacao["ucAntigaPlanilha"], contexto["cliente"], contexto["usina"],
+            app, pdf_original, uc_antiga_documento, contexto["cliente"], contexto["usina"],
         )
         if metadados["ucNova"] != uc_pdf or metadados["mes"] != mes:
             raise RuntimeError("identificacao_temporaria_divergente")
@@ -678,7 +744,7 @@ def simular_documento(args, app, atualizador, documento: int):
             "situacao": "revisar" if motivos else "simulada",
             "motivos": motivos,
             "planilha": localizacao["planilha"], "aba": localizacao["aba"],
-            "linha": linha, "ucAntiga": localizacao["ucAntigaPlanilha"], "ucNova": uc_pdf,
+            "linha": linha, "ucAntiga": uc_antiga_documento, "ucNova": uc_pdf,
             "mesFaturamento": mes,
             "celula": f"{'Q' if classica else 'L'}{linha}",
             "cliente": contexto["cliente"], "usina": contexto["usina"],
@@ -753,8 +819,6 @@ def localizar_documentos(args):
             contexto = resolver_contexto_integrado(args, app, contexto, identificado_pdf)
             if not contexto["ucNova"] or not contexto["cliente"] or not contexto["usina"]:
                 raise RuntimeError("vinculo_cadastral_incompleto")
-            if not contexto["ucsAntigas"]:
-                raise RuntimeError("uc_antiga_nao_referenciada")
             base = {
                 "documento": documento, "ucNova": contexto["ucNova"],
                 "ucPdf": uc_pdf,
@@ -931,6 +995,14 @@ def processar_isolado(args):
     usinas = {s["usina"] for s in simulacoes}
     if len(planilhas) != 1 or len(meses) != 1 or len(usinas) != 1:
         raise RuntimeError("lote_central_exige_mes_planilha_e_usina_unicos")
+    documentos_por_uc = {}
+    simulacoes_por_uc = {}
+    for simulacao in simulacoes:
+        uc_nova = simulacao["ucNova"]
+        if uc_nova in documentos_por_uc:
+            raise RuntimeError("uc_duplicada_no_lote_financeiro")
+        documentos_por_uc[uc_nova] = simulacao["documento"]
+        simulacoes_por_uc[uc_nova] = simulacao
 
     raiz = Path(args.diretorio_saida).resolve()
     if raiz.exists():
@@ -938,8 +1010,13 @@ def processar_isolado(args):
     entrada = raiz / "entrada"
     artefatos = raiz / "artefatos"
     impressao = raiz / "impressao"
+    carimbadas = raiz / "pdfs_carimbados"
     entrada.mkdir(parents=True)
     impressao.mkdir(parents=True)
+    # ``process_workbook`` recebe este diretório como override e, no caminho
+    # de saída longa da Central, pressupõe que ele já exista. Criá-lo na área
+    # isolada evita a interrupção antes do carimbo sem tocar na fonte oficial.
+    carimbadas.mkdir(parents=True)
     origem_planilha = Path(next(iter(planilhas)))
     copia_planilha = raiz / "planilha_entrada" / origem_planilha.name
     copia_planilha.parent.mkdir(parents=True)
@@ -947,24 +1024,27 @@ def processar_isolado(args):
 
     for simulacao in simulacoes:
         pdf, _, _ = ler_pdf_do_gmail(args.banco, simulacao["documento"])
-        base = app.limpar_nome_arquivo(
-            f"Fatura EQT - {simulacao['mesFaturamento']} - {simulacao['usina']} - "
-            f"{simulacao['cliente']} - {simulacao['ucAntiga']} - {simulacao['ucNova']}"
-        )
         temporaria, identificacao = preparar_fatura_temporaria_da_central(
             app, pdf, simulacao["ucAntiga"], simulacao["cliente"], simulacao["usina"],
         )
         try:
             if identificacao["ucNova"] != simulacao["ucNova"] or identificacao["mes"] != simulacao["mesFaturamento"]:
                 raise RuntimeError("identificacao_temporaria_divergente")
-            shutil.copy2(temporaria, entrada / f"{base}__DOC_{simulacao['documento']}.pdf")
+            # O conteúdo (inclusive o carimbo-base) é a fonte de identificação
+            # da Central. O nome de entrada não é; mantê-lo curto evita que o
+            # caminho intermediário ultrapasse 260 caracteres antes de a regra
+            # original ``criar_nome_saida_seguro`` gerar o nome final.
+            shutil.copy2(
+                temporaria,
+                entrada / f"Fatura EQT - {simulacao['mesFaturamento']} - DOC_{simulacao['documento']}.pdf",
+            )
         finally:
             temporaria.unlink(missing_ok=True)
 
     logs = []
     resultado = atualizador.process_workbook(
         copia_planilha, entrada, atualizador.DEFAULT_TARIFA_TOTAL_KWH, logs.append,
-        stamped_root_override=raiz / "pdfs_carimbados",
+        stamped_root_override=carimbadas,
         artifacts_dir=artefatos,
         updated_workbooks_dir=raiz / "planilha_preenchida",
         expected_usina=next(iter(usinas)), target_month=next(iter(meses)),
@@ -993,10 +1073,18 @@ def processar_isolado(args):
     pasta_finais.mkdir(parents=True)
     for item in resultado.traceability:
         origem = Path(item["pdf_final"])
+        documento = documentos_por_uc.get(item.get("uc_nova"))
+        if documento is None:
+            raise RuntimeError("rastreabilidade_financeira_sem_documento")
+        simulacao = simulacoes_por_uc[item["uc_nova"]]
         base = app.limpar_nome_arquivo(
-            f"Fatura EQT - {next(s['mesFaturamento'] for s in simulacoes if s['ucNova'] == item['uc_nova'])} - "
-            f"{item['usina_planilha']} - {item['cliente']} - {item['uc_antiga']} - {item['uc_nova']}"
+            f"Fatura EQT - {simulacao['mesFaturamento']} - {simulacao['usina']} - "
+            f"{simulacao['cliente']} - {simulacao['ucAntiga']} - {simulacao['ucNova']}"
         )
+        # A própria função da Central preserva UCs e aplica o mesmo hash quando
+        # o nome excede o limite do caminho. O resultado de process_workbook é
+        # somente a origem carimbada; a nomeação final ocorre aqui com a regra
+        # original, sem reaproveitar o sufixo técnico temporário ``__DOC_*``.
         final = pasta_finais / app.criar_nome_saida_seguro(base, str(pasta_finais))
         shutil.copy2(origem, final)
         preparado = app.preparar_pdf_a4_para_impressao(str(final))
@@ -1005,7 +1093,10 @@ def processar_isolado(args):
             shutil.copy2(preparado, destino_impressao)
         finally:
             Path(preparado).unlink(missing_ok=True)
-        finais.append({**item, "pdf_final": str(final), "pdf_impressao": str(destino_impressao)})
+        finais.append({
+            **item, "documento": documento, "nomeFinal": final.name,
+            "pdf_final": str(final), "pdf_impressao": str(destino_impressao),
+        })
     return {
         "situacao": "concluido", "documentos": documentos,
         "planilhaFonte": str(origem_planilha), "planilhaPreenchida": str(resultado.output_path),
@@ -1039,9 +1130,7 @@ def processar_documental_isolado(args):
             contexto = resolver_contexto_integrado(args, app, contexto, identificado_pdf)
             if not contexto["ucNova"] or not contexto["cliente"] or not contexto["usina"]:
                 raise RuntimeError("vinculo_cadastral_incompleto")
-            if not contexto["ucsAntigas"]:
-                raise RuntimeError("uc_antiga_nao_referenciada")
-            uc_antiga = contexto["ucsAntigas"][0]
+            uc_antiga = uc_antiga_para_documento(app, contexto)
             temporaria, identificado = preparar_fatura_temporaria_da_central(
                 app, pdf, uc_antiga, contexto["cliente"], contexto["usina"],
             )

@@ -468,9 +468,9 @@ export function criarRepositorioGmail(banco) {
              (captura_id,chave_idempotencia,estado,resultado,criado_em,atualizado_em)
              SELECT captura_id,chave_idempotencia,estado,resultado,criado_em,atualizado_em
                FROM gmail_capturas_periodo_preparacoes_central
-              WHERE captura_id=? AND chave_idempotencia<>?`,
+              WHERE captura_id=? AND (chave_idempotencia<>? OR resultado<>?)`,
           )
-          .run(capturaId, chave);
+          .run(capturaId, chave, conteudo);
         banco
           .prepare(
             `INSERT INTO gmail_capturas_periodo_preparacoes_central

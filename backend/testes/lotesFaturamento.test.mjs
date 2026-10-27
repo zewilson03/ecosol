@@ -85,6 +85,33 @@ try {
   assert.equal(gmail.recebido, 1); // A fila e o recebimento não contam duas vezes.
   assert.equal(gmail.duplicadas, 1);
   assert.equal(gmail.valor_centavos, 0);
+  const captura = {
+    id: Number(
+      banco
+        .prepare(
+          `INSERT INTO gmail_capturas_periodo
+          (conta_id,inicio_local,fim_local,fuso,estado,iniciado_em,concluido_em)
+          VALUES (?,? ,?,'America/Sao_Paulo','concluida',1,1)`,
+        )
+        .run(conta.id, "2026-10-26T08:00", "2026-10-27T08:00")
+        .lastInsertRowid,
+    ),
+  };
+  banco
+    .prepare(
+      `INSERT INTO gmail_capturas_periodo_mensagens
+       (captura_id,message_id,anexos_esperados) VALUES (?, 'mensagem', 1)`,
+    )
+    .run(captura.id);
+  gmail = listarLotes(banco, { avancado: true, avaliar }).find(
+    (l) => l.id === `gmail-captura-${captura.id}`,
+  );
+  assert.equal(gmail.lote, `gmail-${conta.id}`);
+  assert.equal(
+    gmail.rotulo,
+    "Gmail · 27/10/2026 · 26/10/2026 08:00–27/10/2026 08:00",
+  );
+  assert.equal(gmail.recebido, 1);
   console.log(
     "OK: lotes manuais/Gmail, erros, duplicatas, cadastro incompleto e contagem única.",
   );

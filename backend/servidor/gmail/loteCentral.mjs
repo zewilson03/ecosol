@@ -46,6 +46,17 @@ function revisar(documento, motivos, simulacao = null) {
   };
 }
 
+function preparacaoDocumentalInterrompida(resultado) {
+  return Array.isArray(resultado?.itens) &&
+    resultado.itens.some(
+      (item) =>
+        item?.documental?.situacao === "revisar" &&
+        String(item.documental.motivo ?? "").includes(
+          "diretorio_de_homologacao_ja_existe",
+        ),
+    );
+}
+
 // Não grava a prévia. O chamador pode repetir a operação com segurança e só
 // recebe documentos que pertencem à captura persistida do período informado.
 export async function prepararLoteCentralDaCaptura({
@@ -55,6 +66,7 @@ export async function prepararLoteCentralDaCaptura({
   localizar,
   simular,
   processarDocumental = null,
+  processarFinanceiro = null,
   obterPreparacao = null,
   salvarPreparacao = null,
   obterAssinaturaFonte = async () => "fonte_central_nao_versionada",
@@ -78,7 +90,10 @@ export async function prepararLoteCentralDaCaptura({
     )
     .digest("hex");
   const anterior = obterPreparacao?.({ capturaId });
-  if (anterior?.chave_idempotencia === chaveIdempotencia)
+  if (
+    anterior?.chave_idempotencia === chaveIdempotencia &&
+    !preparacaoDocumentalInterrompida(anterior.resultado)
+  )
     return anterior.resultado;
   const elegiveisParaSimulacao = documentos.filter(
     (item) =>
@@ -184,16 +199,78 @@ export async function prepararLoteCentralDaCaptura({
       simulacao,
     };
   });
+  const financeirosPreparados = itens.filter(
+    (item) =>
+      item.modo === "financeiro" &&
+      item.situacao === "preparado" &&
+      item.simulacao?.situacao === "simulada",
+  );
   const documentais = itens
     .filter(
       (item) =>
         ["segura", "identificada", "simulada"].includes(item.simulacao?.situacao) &&
         item.simulacao?.cliente &&
         item.simulacao?.usina &&
-        item.simulacao?.ucNova,
+        item.simulacao?.ucNova &&
+        item.modo !== "financeiro",
     )
     .map((item) => item.id);
   const documentaisPorId = new Map();
+  if (processarFinanceiro && financeirosPreparados.length) {
+    const gruposFinanceiros = new Map();
+    for (const item of financeirosPreparados) {
+      const { planilha, mesFaturamento, usina } = item.simulacao;
+      if (!planilha || !mesFaturamento || !usina) {
+        documentaisPorId.set(item.id, {
+          situacao: "revisar",
+          motivo: "dados_financeiros_da_central_incompletos",
+        });
+        continue;
+      }
+      const chave = JSON.stringify([planilha, mesFaturamento, usina]);
+      gruposFinanceiros.set(chave, [...(gruposFinanceiros.get(chave) ?? []), item]);
+    }
+    let sequenciaFinanceira = 0;
+    for (const grupo of gruposFinanceiros.values()) {
+      sequenciaFinanceira += 1;
+      const documentosDoGrupo = grupo.map((item) => item.id);
+      try {
+        const resultado = await processarFinanceiro({
+          documentos: documentosDoGrupo,
+          chaveIdempotencia,
+          sequencia: sequenciaFinanceira,
+        });
+        const pdfsPorDocumento = new Map(
+          (resultado?.pdfs ?? [])
+            .filter((pdf) => Number.isSafeInteger(pdf?.documento))
+            .map((pdf) => [pdf.documento, pdf]),
+        );
+        for (const item of grupo) {
+          const pdf = pdfsPorDocumento.get(item.id);
+          if (!pdf) {
+            documentaisPorId.set(item.id, {
+              situacao: "revisar",
+              motivo: "processamento_financeiro_central_incompleto",
+            });
+            continue;
+          }
+          documentaisPorId.set(item.id, {
+            situacao: "pronto",
+            pdfFinal: pdf.pdf_final,
+            pdfImpressao: pdf.pdf_impressao,
+            nomeFinal: pdf.nomeFinal,
+            valorBoleto: pdf.valor_boleto ?? item.simulacao.valorBoleto,
+          });
+        }
+      } catch (erro) {
+        for (const item of grupo)
+          documentaisPorId.set(item.id, {
+            situacao: "revisar",
+            motivo: `processamento_financeiro_central_indisponivel:${motivo(erro?.message)}`,
+          });
+      }
+    }
+  }
   if (processarDocumental && documentais.length) {
     for (let inicio = 0; inicio < documentais.length; inicio += 10) {
       const grupo = documentais.slice(inicio, inicio + 10);

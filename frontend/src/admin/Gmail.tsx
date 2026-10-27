@@ -155,6 +155,15 @@ function instante(valor: number | null) {
 }
 
 const base = "/api/admin/gmail/contas";
+function motivoDaFalhaDeCaptura(codigo?: string | null) {
+  if (codigo === "google_limite")
+    return "O Gmail aplicou um limite temporário de consultas.";
+  if (codigo === "google_timeout")
+    return "A consulta ao Gmail excedeu o tempo limite.";
+  if (codigo === "google_rede")
+    return "Não foi possível conectar ao Gmail.";
+  return codigo ? "A captura foi interrompida antes de concluir." : null;
+}
 function moeda(valor?: string) {
   return valor === undefined ? "não encontrado" : `R$ ${valor}`;
 }
@@ -166,14 +175,29 @@ function motivoCurto(motivos: string[]) {
     return "Vínculo cadastral incompleto";
   if (motivo.startsWith("linha_da_uc_ambigua"))
     return "Linha da UC não confirmada";
+  if (motivo.startsWith("uc_antiga_nao_referenciada"))
+    return "UC histórica não localizada; financeiro em revisão";
+  if (motivo.startsWith("planilha_da_usina_nao_localizada"))
+    return "Planilha ou linha financeira não localizada";
   if (motivo.startsWith("planilha_da_usina_ambigua"))
     return "Planilha da usina requer revisão";
   if (motivo.startsWith("modalidade_operacional_nao_confirmada"))
     return "Modalidade operacional não confirmada";
   if (motivo.startsWith("simulacao_central")) return "Simulação requer revisão";
+  if (motivo.startsWith("dados_financeiros_pdf_incompletos"))
+    return "Dados financeiros do PDF estão incompletos";
+  if (motivo.startsWith("preparacao_documental_indisponivel"))
+    return "Preparação local foi interrompida; tente preparar novamente";
   if (motivo.startsWith("anexo_nao_disponivel"))
     return "PDF indisponível nesta captura";
   return "Revisar dados da fatura";
+}
+function aptoParaAvaliacaoFinanceira(item: ItemPreparacaoCentral) {
+  return (
+    item.modo === "financeiro" &&
+    item.situacao === "preparado" &&
+    item.documental?.situacao === "pronto"
+  );
 }
 const avisosDeRetorno: Record<RetornoOAuth, { texto: string; erro: boolean }> =
   {
@@ -495,6 +519,10 @@ function AcompanhamentoGmail({
   const [filtroSituacao, definirFiltroSituacao] = useState("todos");
   const [filtroUsina, definirFiltroUsina] = useState("todas");
   const [paginaPreparacao, definirPaginaPreparacao] = useState(1);
+  const retomadaDisponivel =
+    capturaPeriodo?.estado === "falha" &&
+    (!capturaPeriodo.proxima_tentativa_em ||
+      capturaPeriodo.proxima_tentativa_em <= Date.now());
   const [erro, definirErro] = useState("");
   const [maisPendencias, definirMaisPendencias] = useState<PendenciasGmail>({
     mensagens: [],
@@ -865,7 +893,18 @@ function AcompanhamentoGmail({
               >
                 Ontem 08:00 → hoje 08:00
               </button>
-              {previaPeriodo ? (
+              {capturaPeriodo?.estado === "falha" ? (
+                <button
+                  className="admin-botao"
+                  type="button"
+                  onClick={capturarPeriodo}
+                  disabled={!ativo || iniciando || !retomadaDisponivel}
+                >
+                  {retomadaDisponivel
+                    ? "Retomar captura"
+                    : "Aguardando nova tentativa"}
+                </button>
+              ) : previaPeriodo ? (
                 <button
                   className="admin-botao"
                   type="button"
@@ -906,6 +945,15 @@ function AcompanhamentoGmail({
                 <span>Recebidos {capturaPeriodo.anexos}</span>
                 <span>Capturados {capturaPeriodo.capturados}</span>
                 <span>Triagem {capturaPeriodo.triagem}</span>
+                {capturaPeriodo.estado === "falha" && (
+                  <span>
+                    {motivoDaFalhaDeCaptura(capturaPeriodo.erro_codigo)}
+                    {capturaPeriodo.proxima_tentativa_em &&
+                    !retomadaDisponivel
+                      ? ` Nova tentativa disponível após ${instante(capturaPeriodo.proxima_tentativa_em)}.`
+                      : " A retomada reutilizará o mesmo período e não duplicará documentos."}
+                  </span>
+                )}
                 {capturaPeriodo.estado === "concluida" && (
                   <button
                     className="admin-botao secundario"
@@ -944,9 +992,14 @@ function AcompanhamentoGmail({
                 {preparacaoCentral && (
                   <div className="gmail-resumo-captura">
                     <span>
-                      Preparados {preparacaoCentral.resumo.preparados}
+                      PDFs preparados {preparacaoCentral.resumo.documentosDocumentaisProntos}
                     </span>
-                    <span>REVISAR {preparacaoCentral.resumo.revisar}</span>
+                    <span>
+                      Revisão documental {preparacaoCentral.resumo.revisaoDocumental}
+                    </span>
+                    <span>
+                      Revisão financeira {preparacaoCentral.resumo.revisaoFinanceira}
+                    </span>
                     <span>
                       Falhas técnicas {preparacaoCentral.resumo.falhas}
                     </span>
@@ -998,6 +1051,11 @@ function AcompanhamentoGmail({
                     Revisão financeira <strong>{preparacaoCentral.resumo.revisaoFinanceira}</strong>
                   </span>
                 </div>
+                <p className="admin-aviso">
+                  A conferência documental ocorre neste lote: abra o PDF
+                  tratado e a prévia A4 aqui. Apenas documentos financeiros
+                  aptos seguem para a avaliação de cobrança em Faturas.
+                </p>
                 <div className="gmail-filtros">
                   <label>
                     Buscar cliente ou UC
@@ -1142,12 +1200,20 @@ function AcompanhamentoGmail({
                             </a>
                           </>
                         )}
-                        <Link
-                          className="admin-botao secundario"
-                          to={`/admin/faturas?etapa=conferir&documento=${item.id}`}
-                        >
-                          Conferir
-                        </Link>
+                        {aptoParaAvaliacaoFinanceira(item) ? (
+                          <Link
+                            className="admin-botao secundario"
+                            to={`/admin/faturas?etapa=conferir&documento=${item.id}`}
+                          >
+                            Avaliar cobrança
+                          </Link>
+                        ) : (
+                          <small>
+                            {item.documental?.situacao === "pronto"
+                              ? "Conferência neste lote"
+                              : "Aguardando revisão"}
+                          </small>
+                        )}
                       </span>
                     </article>
                   ))}
@@ -1427,9 +1493,17 @@ function AcompanhamentoGmail({
                           <article className="gmail-triagem-item" key={item.id}>
                             <span>
                               <strong>{item.nome}</strong> ·{" "}
-                              {item.situacao === "preparado"
-                                ? `PREPARADO (${item.modo})`
-                                : `REVISAR: ${item.motivos.join(", ")}`}
+                              {item.documental?.situacao === "pronto"
+                                ? item.modo === "documental"
+                                  ? "PDF PRONTO · SEM BOLETO"
+                                  : item.situacao === "preparado"
+                                    ? "PDF PRONTO · FINANCEIRO APTO PARA AVALIAÇÃO"
+                                    : `PDF PRONTO · FINANCEIRO EM REVISÃO: ${motivoCurto(item.motivos)}`
+                                : `REVISAR DOCUMENTO: ${motivoCurto(
+                                    item.documental?.motivo
+                                      ? [item.documental.motivo]
+                                      : item.motivos,
+                                  )}`}
                               {item.simulacao && (
                                 <>
                                   <br />
@@ -1462,12 +1536,20 @@ function AcompanhamentoGmail({
                                 </>
                               )}
                             </span>
-                            <Link
-                              className="admin-botao secundario"
-                              to={`/admin/faturas?etapa=conferir&documento=${item.id}`}
-                            >
-                              Ver documento
-                            </Link>
+                            {aptoParaAvaliacaoFinanceira(item) ? (
+                              <Link
+                                className="admin-botao secundario"
+                                to={`/admin/faturas?etapa=conferir&documento=${item.id}`}
+                              >
+                                Avaliar cobrança
+                              </Link>
+                            ) : (
+                              <small>
+                                {item.documental?.situacao === "pronto"
+                                  ? "Conferência neste lote"
+                                  : "Aguardando revisão"}
+                              </small>
+                            )}
                           </article>
                         ))}
                       </div>
