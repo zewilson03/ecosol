@@ -7,6 +7,7 @@ import {
   sincronizarVinculoDaGeradora,
 } from "./preenchimentoPorGeradora.mjs";
 import { registrarHistorico, registrarRecebimentoPdf } from "./registros.mjs";
+import { registrarEnderecoDaFatura } from "./enderecosFaturas.mjs";
 import { falhar, texto } from "./regras.mjs";
 
 const LIMITE_PDF = 10 * 1024 * 1024;
@@ -129,6 +130,7 @@ export async function receberPdf({ arquivo, nome, lote, ator, origem }) {
           extracao.finalidade?.finalidade ?? "cobranca",
         ).lastInsertRowid,
     );
+    registrarEnderecoDaFatura(banco, documentoId, extracao);
     registrarHistorico({
       responsavel,
       administradorId,

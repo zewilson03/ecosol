@@ -9,6 +9,7 @@ backend/data/**/*.db-wal
 backend/data/**/*.db-shm
 backend/data/consultas/
 backend/data/pilotos/
+backend/data/backups/
 backend/.env.local
 *.tsbuildinfo
 __pycache__/

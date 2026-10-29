@@ -15,6 +15,7 @@ const normalizarUc = (valor: string) =>
 
 export default function CadastroIntegradoCliente({
   nomeInicial = "",
+  documentoInicial = "",
   clienteInicialId = null,
   ucInicial = "",
   usinaInicialId = null,
@@ -22,6 +23,7 @@ export default function CadastroIntegradoCliente({
   aoSalvar,
 }: {
   nomeInicial?: string;
+  documentoInicial?: string;
   clienteInicialId?: number | null;
   ucInicial?: string;
   usinaInicialId?: number | null;
@@ -34,7 +36,7 @@ export default function CadastroIntegradoCliente({
   const unidades = usarConsulta<Unidade[]>("/api/admin/faturamento/unidades");
   const [nome, setNome] = useState(nomeInicial);
   const [clienteId, setClienteId] = useState<number | null>(clienteInicialId);
-  const [cpf, setCpf] = useState("");
+  const [cpf, setCpf] = useState(documentoInicial);
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [uc, setUc] = useState(ucInicial);
@@ -75,6 +77,21 @@ export default function CadastroIntegradoCliente({
         )
         .slice(0, 8)
     : [];
+  useEffect(() => {
+    if (!documentoInicial || clienteId !== null || !clientes.dados) return;
+    const cliente = clientes.dados.clientes.find(
+      (item) => item.cpf.replace(/\D/g, "") === documentoInicial,
+    );
+    if (!cliente) return;
+    setClienteId(cliente.id);
+    setNome(cliente.name);
+    setCpf(cliente.cpf);
+    setEmail(cliente.email);
+    setPhone(cliente.phone);
+    setUnidadeNome(cliente.name);
+    setUnidadeDocumento(cliente.cpf);
+    setUnidadeEmail(cliente.email);
+  }, [documentoInicial, clienteId, clientes.dados]);
   useEffect(() => {
     if (!selecionado) return;
     setNome((atual) => atual || selecionado.name);
@@ -241,11 +258,11 @@ export default function CadastroIntegradoCliente({
           </p>
         )}
         <label>
-          CPF do cliente
+          CPF ou CNPJ do cliente
           <input
             value={selecionado?.cpf ?? cpf}
             readOnly={!!selecionado}
-            maxLength={14}
+            maxLength={18}
             required
             inputMode="numeric"
             onChange={(evento) => {

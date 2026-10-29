@@ -131,7 +131,6 @@ export default function EstruturaAdministrativa() {
     location.pathname !== "/admin/bancario"
   )
     return <Navigate to="/admin/bancario" replace />;
-  const papeisBancarios = sessao.papeis_bancarios ?? [];
   const lateralExpandida = !lateralRecolhida || lateralTemporaria;
   const itens = administrador.guardiao_recuperacao
     ? [{ rota: "bancario", nome: "Recuperação de acesso" }]
@@ -145,9 +144,7 @@ export default function EstruturaAdministrativa() {
               { rota: "pagamentos", nome: "Pagamentos" },
             ]
           : []),
-        ...(papeisBancarios.length
-          ? [{ rota: "bancario", nome: "Banco · homologação" }]
-          : []),
+        { rota: "bancario", nome: "Boletos e banco" },
         ...(administrador.nivel >= 3
           ? [{ rota: "gmail", nome: "Integração Gmail" }]
           : []),

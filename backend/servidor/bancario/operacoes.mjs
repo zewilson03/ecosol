@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { obterBanco } from "../bancoDeDados.mjs";
+import { extrairConsumoTotalDaFatura } from "../faturamento/extracao.mjs";
 import {
   calcularEncargosAtraso,
   hojeEmSaoPaulo,
@@ -7,6 +8,7 @@ import {
 } from "../financeiro/encargosAtraso.mjs";
 import { conferirCredencialConfirmacao } from "./credencialConfirmacao.mjs";
 import { temPapelCritico } from "./permissoes.mjs";
+import { montarDemonstrativoBoleto } from "./demonstrativoBoleto.mjs";
 
 const STATUS_FATURA_APROVADA = "Aprovada — aguardando emissão";
 
@@ -285,6 +287,36 @@ function linhaCompleta(banco, operacaoId) {
     .get(operacaoId);
   if (!operacao) falhar("Operação bancária não encontrada.", 404);
   const snapshot = JSON.parse(operacao.snapshot);
+  let consumoTotalExtraido = null;
+  if (operacao.tipo === "cobranca") {
+    const fatura = banco
+      .prepare(
+        "SELECT hash,versao,extracao,texto FROM faturamento_documentos WHERE id=?",
+      )
+      .get(snapshot.origem?.documento_id);
+    if (
+      fatura?.hash === snapshot.origem?.documento_hash &&
+      fatura.versao === snapshot.origem?.documento_versao
+    ) {
+      try {
+        consumoTotalExtraido =
+          JSON.parse(fatura.extracao).dados?.consumo_total ??
+          extrairConsumoTotalDaFatura(fatura.texto)?.valor ??
+          null;
+      } catch {
+        consumoTotalExtraido = null;
+      }
+    }
+  }
+  let demonstrativo = null;
+  if (operacao.tipo === "cobranca") {
+    try {
+      demonstrativo = montarDemonstrativoBoleto(snapshot, consumoTotalExtraido);
+    } catch {
+      // A consulta bancária continua disponível; PDF e envio pela nova tela
+      // ficam indisponíveis até a memória aprovada ser conferida.
+    }
+  }
   if (snapshot.cliente?.documento) {
     const documento = String(snapshot.cliente.documento).replace(/\D/g, "");
     snapshot.cliente.documento = `${"*".repeat(Math.max(0, documento.length - 4))}${documento.slice(-4)}`;
@@ -292,6 +324,16 @@ function linhaCompleta(banco, operacaoId) {
   return {
     ...operacao,
     snapshot,
+    demonstrativo,
+    pdf_disponivel:
+      operacao.tipo === "cobranca" &&
+      Boolean(
+        banco
+          .prepare(
+            "SELECT 1 FROM bancario_artefatos_cobranca WHERE operacao_id=? AND pdf IS NOT NULL",
+          )
+          .get(operacao.id),
+      ),
     intencao:
       banco
         .prepare(
@@ -653,7 +695,10 @@ export function liberarNovaEmissaoAposFalha(operacaoId, administrador) {
     if (operacao.tipo !== "cobranca")
       falhar("Somente cobranças podem ser liberadas para nova emissão.", 409);
     if (operacao.estado !== "falhou")
-      falhar("Somente uma cobrança com falha confirmada pode ser reemitida.", 409);
+      falhar(
+        "Somente uma cobrança com falha confirmada pode ser reemitida.",
+        409,
+      );
     if (operacao.provedor_id)
       falhar(
         "A cobrança possui identificador bancário e precisa ser conciliada antes de qualquer nova emissão.",
@@ -674,10 +719,7 @@ export function liberarNovaEmissaoAposFalha(operacaoId, administrador) {
       )
       .get(operacao.id, operacao.versao);
     if (!intencao || intencao.estado !== "falhou")
-      falhar(
-        "A falha da emissão ainda não foi encerrada com segurança.",
-        409,
-      );
+      falhar("A falha da emissão ainda não foi encerrada com segurança.", 409);
     const tentativas = banco
       .prepare(
         `SELECT resultado FROM bancario_tentativas

@@ -49,6 +49,14 @@ export type Documento = {
   dados: Record<string, string>;
   extracao: {
     dados?: Record<string, string>;
+    endereco_fatura?: {
+      documento_titular: string;
+      logradouro: string;
+      bairro: string;
+      cep: string;
+      cidade: string;
+      uf: string;
+    } | null;
     avisos: string[];
     evidencias: Record<string, string>;
     paginas?: number;
@@ -60,6 +68,11 @@ export type Documento = {
       pendencias: string[];
     };
   };
+  endereco_vinculo?: {
+    situacao: string;
+    unidade_id: number | null;
+    cliente_id: number | null;
+  } | null;
   memoria: Memoria | null;
   usina_geradora?: {
     numero: string | null;

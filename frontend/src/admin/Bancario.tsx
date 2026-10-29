@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import type { Sessao } from "../dadosDaAplicacao";
 import {
   CabecalhoDoModulo,
@@ -122,6 +123,9 @@ export default function Bancario() {
   const executor = usarConsulta<Executor>(
     gestor ? "/api/admin/bancario/executor" : null,
   );
+  const estado = usarConsulta<
+    Pick<Executor, "ambiente" | "modo_configurado" | "pausado">
+  >(podeConsultar ? "/api/admin/bancario/estado" : null);
   const [selecionado, setSelecionado] = useState<string | null>(null);
   const detalhe = usarConsulta<Detalhe>(
     selecionado ? `/api/admin/bancario/operacoes/${selecionado}` : null,
@@ -168,9 +172,15 @@ export default function Bancario() {
   return (
     <>
       <CabecalhoDoModulo
-        titulo="Banco · homologação"
-        descricao="Prepare, aprove e acompanhe cobranças em ambiente seguro, sem comunicação real com o Sicoob."
+        titulo="Boletos e banco"
+        descricao="Prepare cobranças, acompanhe a fila e consulte o estado da integração bancária."
       >
+        <Link
+          className="admin-botao secundario"
+          to="/admin/faturas?etapa=emitir"
+        >
+          Ir para emissão
+        </Link>
         <button
           className="admin-botao secundario"
           onClick={operacoes.atualizar}
@@ -181,8 +191,21 @@ export default function Bancario() {
       </CabecalhoDoModulo>
 
       <div className="bancario-faixa-seguranca">
-        <strong>Ambiente de homologação</strong>
-        <span>Nenhum boleto real é emitido por esta tela.</span>
+        <strong>
+          {estado.dados?.ambiente === "producao"
+            ? "Ambiente de produção"
+            : estado.dados?.ambiente === "homologacao"
+              ? "Ambiente de homologação"
+              : "Verificando ambiente"}
+        </strong>
+        <span>
+          {estado.dados?.modo_configurado === "real" &&
+          estado.dados.ambiente === "producao"
+            ? estado.dados.pausado
+              ? "Emissão real configurada; executor pausado."
+              : "Emissão real ativa. Confira a prévia antes de enviar."
+            : "A emissão real não está ativa nesta tela."}
+        </span>
       </div>
       {mensagem && (
         <p className="admin-aviso sucesso" role="status">
@@ -354,7 +377,7 @@ export default function Bancario() {
               )
             }
           >
-            {executor.dados.pausado ? "Retomar simulador" : "Pausar simulador"}
+            {executor.dados.pausado ? "Retomar executor" : "Pausar executor"}
           </button>
         </section>
       )}
@@ -551,11 +574,15 @@ export default function Bancario() {
                                     `/api/admin/bancario/operacoes/${operacao.id}/enfileirar`,
                                     { method: "POST" },
                                   ),
-                                "Operação colocada na fila simulada.",
+                                estado.dados?.modo_configurado === "real"
+                                  ? "Operação colocada na fila bancária."
+                                  : "Operação colocada na fila simulada.",
                               )
                             }
                           >
-                            Enviar à fila simulada
+                            {estado.dados?.modo_configurado === "real"
+                              ? "Enviar à fila bancária"
+                              : "Enviar à fila simulada"}
                           </button>
                         )}
                       {operador &&

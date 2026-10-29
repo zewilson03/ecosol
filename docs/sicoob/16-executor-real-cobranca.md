@@ -35,3 +35,19 @@ A implementação não confirma por si só o vínculo do Client ID ao beneficiá
 ao produto contratado. Antes de retirar a pausa, deve ser executado um único
 piloto autorizado, seguido de consulta e conciliação manual. Falha inconclusiva
 deve ser consultada; nunca se repete a emissão para tentar garantir o resultado.
+
+## Revisão de 28/10/2026
+
+`test:bancario`, `test:implantacao` e `build` passaram localmente. Isso valida o
+comportamento testado com provedores simulados e a composição do adaptador,
+mas não confirma acesso bancário de produção. O arquivo de configuração local
+tem apenas chaves de homologação; não foi ativado o modo real nem feita chamada
+de emissão nesta revisão. Permanecem necessários a configuração de produção
+separada, a confirmação do convênio, um piloto único autorizado e a consulta
+confirmatória antes de ampliar o uso.
+
+A [coleção oficial da Cobrança Bancária V3](https://d1zet1fng6kfaw.cloudfront.net/postman-collections/386bf6bc7598c289e2011e2f31c0d31b-API-Cobranca-Bancaria-Sicoob-V3-3.postman_collection)
+estava acessível em 28/10/2026 e lista inclusão, consulta, segunda via,
+alteração e baixa. A busca pública complementar não trouxe um contrato Sicoob
+equivalente; a coleção oficial permanece a referência. A disponibilidade da
+coleção não comprova permissões efetivas do convênio Ecosol.

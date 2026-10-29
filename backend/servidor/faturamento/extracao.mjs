@@ -20,6 +20,94 @@ const meses = [
   "DEZ",
 ];
 
+const estados =
+  "AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO";
+
+// Soma parcelas compensada e não compensada quando cada quantidade é inequívoca.
+export function extrairConsumoTotalDaFatura(texto) {
+  const linhas = texto
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .split(/\r?\n/);
+  function quantidade(tipo) {
+    const encontrados = [];
+    for (let i = 0; i < linhas.length; i++) {
+      const linha = linhas[i].replace(/\uFFFD/g, "A");
+      if (!tipo.test(linha.trim())) continue;
+      const proxima = linhas[i + 1] ?? "";
+      const trecho = /\bKWH\b/.test(linha)
+        ? linha
+        : /^\s*KWH\b/.test(proxima)
+          ? proxima
+          : "";
+      const achado = trecho.match(/\bKWH\s+([\d.]+,\d{2})\b/);
+      if (achado) encontrados.push(achado[1]);
+    }
+    const distintas = [...new Set(encontrados)];
+    return distintas.length === 0
+      ? undefined
+      : distintas.length === 1
+        ? distintas[0]
+        : null;
+  }
+  const scee = quantidade(/^CONSUMO SCEE\b/);
+  const naoCompensado = quantidade(/^CONSUMO NAO COMPENSADO\b/);
+  if (!scee || naoCompensado === null) return null;
+  return {
+    valor: new D(br(scee)).plus(new D(br(naoCompensado ?? "0,00"))).toFixed(2),
+    evidencia: `CONSUMO SCEE ${scee} kWh + NÃO COMPENSADO ${naoCompensado ?? "0,00"} kWh`,
+  };
+}
+
+export function extrairEnderecoDaFatura(texto) {
+  const linhas = texto.split(/\r?\n/);
+  const normalizar = (valor) =>
+    valor
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toUpperCase()
+      .trim();
+  const inicio = linhas.findIndex((linha) =>
+    /^(?:CNPJ\s*\/\s*CPF|CPF\s*\/\s*CNPJ)\s*:/i.test(normalizar(linha)),
+  );
+  if (inicio < 0) return null;
+  const documento = normalizar(linhas[inicio]).match(
+    /\b(?:\d{3}\.\d{3}\.\d{3}-\d{2}|\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2})\b/,
+  )?.[0];
+  const logradouro = linhas[inicio + 1]?.trim();
+  const bairro = linhas[inicio + 2]?.trim();
+  const cepLinha = linhas
+    .slice(inicio + 3, inicio + 6)
+    .find((linha) => /^CEP\s*:/i.test(normalizar(linha)));
+  const local =
+    cepLinha &&
+    normalizar(cepLinha).match(
+      new RegExp(
+        `^CEP\\s*:\\s*(\\d{5})[-.\\s]?(\\d{3})\\s+(.{2,60}?)\\s+(${estados})\\b`,
+      ),
+    );
+  if (
+    !documento ||
+    !logradouro ||
+    !bairro ||
+    !local ||
+    logradouro.length > 160 ||
+    bairro.length > 120 ||
+    /^(?:CEP|CNPJ|CPF)\s*:/i.test(logradouro) ||
+    /^(?:CEP|CNPJ|CPF)\s*:/i.test(bairro)
+  )
+    return null;
+  return {
+    documento_titular: documento.replace(/\D/g, ""),
+    logradouro,
+    bairro,
+    cep: `${local[1]}${local[2]}`,
+    cidade: local[3].trim(),
+    uf: local[4],
+  };
+}
+
 // O título do quadro verde nem sempre está na camada de texto do PDF.
 // A posição do número, junto à linha RAMAL, identifica a UC de cobrança;
 // os números da seção SCEE ficam em outra região e não são candidatos.
@@ -64,6 +152,9 @@ export function extrairCampos(texto, { ucQuadro = null } = {}) {
       evidencias[campo] = linha.trim();
     }
   }
+  const consumoTotal = extrairConsumoTotalDaFatura(texto);
+  if (consumoTotal)
+    guardar("consumo_total", consumoTotal.valor, consumoTotal.evidencia);
   const ucCanonica = (valor) =>
     valor.replace(/\D/g, "").replace(/^0+(?=\d)/, "");
   const ucExplicita = normal.match(/NUMERO DA UC\s*\n?\s*([\d.\-]+)/);
@@ -373,6 +464,7 @@ export function extrairCampos(texto, { ucQuadro = null } = {}) {
     evidencias,
     avisos,
     qualidade,
+    endereco_fatura: extrairEnderecoDaFatura(texto),
     sinalizadores: {
       ...(mensagensSceeVazias
         ? {

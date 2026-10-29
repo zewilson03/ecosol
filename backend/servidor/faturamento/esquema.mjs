@@ -104,6 +104,21 @@ export function prepararFaturamento(banco) {
     CREATE UNIQUE INDEX IF NOT EXISTS faturamento_unidade_competencia
       ON faturamento_documentos(unidade_id, competencia)
       WHERE unidade_id IS NOT NULL AND competencia IS NOT NULL;
+    CREATE TABLE IF NOT EXISTS faturamento_enderecos_faturas (
+      documento_id INTEGER PRIMARY KEY REFERENCES faturamento_documentos(id) ON DELETE CASCADE,
+      uc TEXT NOT NULL,
+      documento_titular TEXT NOT NULL,
+      endereco_json TEXT NOT NULL,
+      unidade_id INTEGER REFERENCES faturamento_unidades(id) ON DELETE RESTRICT,
+      cliente_id INTEGER REFERENCES customers(id) ON DELETE RESTRICT,
+      situacao TEXT NOT NULL CHECK(situacao IN
+        ('pendente_cadastro','documento_divergente','endereco_divergente','vinculado')),
+      criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      atualizado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS faturamento_enderecos_faturas_uc_pendente
+      ON faturamento_enderecos_faturas(uc,situacao)
+      WHERE situacao='pendente_cadastro';
     CREATE TABLE IF NOT EXISTS faturamento_historico (
       id INTEGER PRIMARY KEY, documento_id INTEGER, unidade_id INTEGER,
       responsavel TEXT NOT NULL, administrador_id INTEGER, acao TEXT NOT NULL,

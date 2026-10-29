@@ -20,10 +20,17 @@ export function origemConfiavel(req) {
       enderecoEsperado.protocol !== "https:"
     )
       return false;
-    return (
-      req.headers.origin &&
-      new URL(req.headers.origin).origin === enderecoEsperado.origin &&
-      req.headers["sec-fetch-site"] !== "cross-site"
+    if (req.headers["sec-fetch-site"] === "cross-site") return false;
+    if (req.headers.origin && req.headers.origin !== "null")
+      return new URL(req.headers.origin).origin === enderecoEsperado.origin;
+    // Alguns navegadores omitem Origin/Fetch Metadata nas chamadas locais.
+    // Nessa situação, Host e Referer devem apontar para a origem configurada.
+    if (req.headers.host?.toLowerCase() !== enderecoEsperado.host.toLowerCase())
+      return false;
+    if (req.headers["sec-fetch-site"] === "same-origin") return true;
+    return Boolean(
+      req.headers.referer &&
+      new URL(req.headers.referer).origin === enderecoEsperado.origin,
     );
   } catch {
     return false;

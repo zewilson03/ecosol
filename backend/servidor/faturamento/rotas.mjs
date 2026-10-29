@@ -10,9 +10,10 @@ import {
   modoTemporarioDeHomologacaoCentral,
 } from "../centralFaturas.mjs";
 import { exigirNivel } from "../permissoesDaEquipe.mjs";
-import { apenasDigitos, cpfValidoParaCadastro } from "../validacaoDeCpf.mjs";
+import { apenasDigitos } from "../validacaoDeCpf.mjs";
 import { validarContatoCliente } from "../validacaoDeContato.mjs";
 import { lerPdf } from "./extracao.mjs";
+import { vincularEnderecosPendentesDaUc } from "./enderecosFaturas.mjs";
 import { identificarUsinaPorGeracao } from "./identificadoresUsinas.mjs";
 import { receberPdf } from "./receberPdf.mjs";
 import { criarRotasLeituraFaturamento } from "./rotasLeitura.mjs";
@@ -42,6 +43,7 @@ import {
   competencia,
   dataValida,
   decimal,
+  documentoValido,
   falhar,
   normalizarUc,
   texto,
@@ -93,10 +95,16 @@ function documento(numero) {
   if (!d) falhar("Fatura não encontrada.", 404);
   const dados = JSON.parse(d.dados);
   const extracao = JSON.parse(d.extracao);
+  const enderecoVinculo = banco
+    .prepare(
+      "SELECT situacao,unidade_id,cliente_id FROM faturamento_enderecos_faturas WHERE documento_id=?",
+    )
+    .get(d.id);
   return {
     ...d,
     dados,
     extracao,
+    endereco_vinculo: enderecoVinculo ?? null,
     memoria: d.memoria ? JSON.parse(d.memoria) : null,
     usina_geradora: identificarUsinaPorGeracao(
       banco,
@@ -229,12 +237,16 @@ router.post("/cadastro-integrado", exigirNivel(2), (req, res) => {
   if (clienteExistenteId === null) {
     const nome = texto(entrada.nome, "o nome do cliente", 120);
     const cpfInformado = String(entrada.cpf ?? "").trim();
-    if (!cpfValidoParaCadastro(cpfInformado))
-      falhar("Informe um CPF válido para o cliente.");
+    let documentoCliente;
+    try {
+      documentoCliente = documentoValido(cpfInformado);
+    } catch {
+      falhar("Informe um CPF ou CNPJ válido para o cliente.");
+    }
     const contato = validarContatoCliente(entrada.email, entrada.phone);
     if (!contato)
       falhar("Informe um e-mail ou telefone válido para o cliente.");
-    novoCliente = { nome, cpf: apenasDigitos(cpfInformado), ...contato };
+    novoCliente = { nome, cpf: documentoCliente, ...contato };
   }
   const resultado = transacao(() => {
     const banco = obterBanco();
@@ -349,12 +361,14 @@ router.post("/cadastro-integrado", exigirNivel(2), (req, res) => {
         unidadeExistente.cliente_id === clienteId &&
         temDesconto &&
         !vincularUsina
-      )
+      ) {
+        vincularEnderecosPendentesDaUc(banco, uc);
         return {
           cliente_id: clienteId,
           unidade_id: unidadeExistente.id,
           estado: "ja_vinculada",
         };
+      }
       if (
         unidadeExistente.cliente_id === null &&
         entrada.confirmar_vinculo !== true
@@ -420,6 +434,7 @@ router.post("/cadastro-integrado", exigirNivel(2), (req, res) => {
         null,
         unidadeExistente.id,
       );
+      vincularEnderecosPendentesDaUc(banco, uc);
       return {
         cliente_id: clienteId,
         unidade_id: unidadeExistente.id,
@@ -480,6 +495,7 @@ router.post("/cadastro-integrado", exigirNivel(2), (req, res) => {
       null,
       unidadeId,
     );
+    vincularEnderecosPendentesDaUc(banco, uc);
     return { cliente_id: clienteId, unidade_id: unidadeId, estado: "criada" };
   });
   res.status(resultado.estado === "ja_vinculada" ? 200 : 201).json(resultado);
@@ -775,6 +791,7 @@ router.post("/unidades", exigirNivel(2), (req, res) => {
       null,
       numero,
     );
+    if (clienteId !== null) vincularEnderecosPendentesDaUc(banco, u.uc);
     return numero;
   });
   res.status(201).json({ id: numero });
@@ -865,6 +882,7 @@ router.patch("/unidades/:id", exigirNivel(2), (req, res) => {
       null,
       numero,
     );
+    if (clienteId !== null) vincularEnderecosPendentesDaUc(banco, u.uc);
   });
   res.json({ sucesso: true });
 });

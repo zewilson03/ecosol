@@ -33,6 +33,25 @@ com o executor bancário desligado.
 - O banco e os segredos permanecem locais; ainda não há restauração comprovada
   em servidor independente.
 
+## Verificação local em 28/10/2026
+
+- O modo real `sicoob` do executor já foi implementado com habilitação explícita
+  de produção; a fila persistida continua sendo um portão separado. A suíte
+  bancária, as suítes de implantação, permissões e faturamento, e o build
+  passaram localmente nesta data.
+- A configuração local disponível contém somente chaves `SICOOB_HOMOLOGACAO_*`.
+  Nenhuma configuração `SICOOB_PRODUCAO_*` foi identificada. Por isso não houve
+  tentativa de emissão, pagamento ou consulta bancária ao vivo nesta revisão.
+- A presença local de `numeroCliente` não comprova o vínculo entre aplicação,
+  beneficiário e convênio, nem a autorização operacional de produção.
+- Os scripts Linux de implantação e backup passaram em verificação sintática;
+  ainda não foram executados em VPS. A restauração externa, domínio HTTPS,
+  monitoramento e teste ponta a ponta continuam sem evidência operacional.
+- `GET http://127.0.0.1:3000/api/saude` respondeu HTTP 200 localmente. Isso não
+  identifica a versão em execução nem valida login, permissões ou o fluxo em HTTPS.
+- O trabalho de cadastro de clientes e usinas está com Matheus em outra frente;
+  esta verificação não altera esses módulos nem antecipa a integração de dados.
+
 ## Decisão de arquitetura
 
 ### Opção recomendada: VPS única no Amazon Lightsail
@@ -136,7 +155,7 @@ ensaio e produção.
 - [ ] Autorização de produção e escopos `boletos_inclusao` e
       `boletos_consulta` ativos para a aplicação.
 - [ ] PFX de produção instalado sem entrar no repositório ou no backup comum.
-- [ ] Modo real do executor implementado, testado e negado por padrão.
+- [x] Modo real do executor implementado, testado localmente e negado por padrão.
 - [ ] Executor inicia pausado e exige liberação nominal.
 - [ ] OAuth, mTLS e `/health` do Sicoob validados pelo backend de produção.
 - [ ] Uma cobrança autorizada é revisada por nome, documento, UC, valor e

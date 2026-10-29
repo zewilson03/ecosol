@@ -13,6 +13,10 @@ export async function consultarServidor<T>(
   if (!tipo.includes("application/json")) {
     if (resposta.status === 401 || resposta.redirected)
       throw new Error("Sua sessão expirou. Entre novamente no sistema.");
+    if (resposta.status === 403)
+      throw new Error(
+        "O servidor recusou esta solicitação (403). Verifique o endereço de acesso e entre novamente se necessário.",
+      );
     throw new Error(
       "O servidor precisa ser atualizado. Recarregue a página; se o problema continuar, reinicie o sistema Ecosol.",
     );

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { lerPdf } from "./extracao.mjs";
 import { falhar } from "./regras.mjs";
 import { normalizarDadosFinanceiros } from "./normalizacaoFinanceira.mjs";
+import { registrarEnderecoDaFatura } from "./enderecosFaturas.mjs";
 
 function elegivel(documento) {
   return (
@@ -144,6 +145,7 @@ export async function reanalisarFatura({
           }),
         );
     }
+    registrarEnderecoDaFatura(banco, documentoId, novaExtracao);
     banco.exec("COMMIT");
     return {
       id: documentoId,

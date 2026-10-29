@@ -132,9 +132,18 @@ export default function Clientes() {
     typeof location.state.ucInicial === "string"
       ? location.state.ucInicial.slice(0, 30)
       : "";
+  const documentoInicial =
+    location.state &&
+    typeof location.state === "object" &&
+    "documentoInicial" in location.state &&
+    typeof location.state.documentoInicial === "string"
+      ? location.state.documentoInicial.replace(/\D/g, "").slice(0, 14)
+      : "";
   const administrador = usarAdministrador();
   const [secao, definirSecao] = useState<SecaoDosCadastros>(
-    nomeInicialCliente || clienteParaVincular ? "clientes" : "unidades",
+    nomeInicialCliente || clienteParaVincular || ucInicial
+      ? "clientes"
+      : "unidades",
   );
   const consulta = usarConsulta<DadosDaEquipe>(
     secao === "unidades" ? null : `/api/equipe/dados?secao=${secao}`,
@@ -164,7 +173,7 @@ export default function Clientes() {
   );
   const [busca, definirBusca] = useState("");
   const [formulario, definirFormulario] = useState(
-    Boolean(nomeInicialCliente || clienteParaVincular),
+    Boolean(nomeInicialCliente || clienteParaVincular || ucInicial),
   );
   const [novoAcesso, definirNovoAcesso] = useState(false);
   const [clienteParaExcluir, definirClienteParaExcluir] = useState<
@@ -364,6 +373,7 @@ export default function Clientes() {
           {administrador.nivel >= 2 ? (
             <CadastroIntegradoCliente
               nomeInicial={nomeInicialCliente}
+              documentoInicial={documentoInicial}
               clienteInicialId={clienteParaVincular}
               ucInicial={ucInicial}
               aoSalvar={(texto) => {

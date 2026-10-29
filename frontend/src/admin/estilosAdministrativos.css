@@ -2548,7 +2548,7 @@
 .faturamento-etapas {
   position: relative;
   gap: 0;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   margin: 18px 0;
   border: 1px solid rgba(19, 91, 112, 0.13);
   border-radius: 18px;
@@ -3325,6 +3325,33 @@
   margin-top: 5px;
   color: #8a5a1d;
 }
+.faturamento-endereco-fatura {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px 24px;
+  margin-top: 14px;
+  padding: 14px 16px;
+  border: 1px solid #dce9ec;
+  border-radius: 14px;
+  background: #f7fbfb;
+  font-size: 13px;
+}
+.faturamento-endereco-fatura p {
+  margin: 4px 0 0;
+  line-height: 1.5;
+}
+.faturamento-endereco-fatura small {
+  display: block;
+  margin-top: 5px;
+  color: #705424;
+}
+.faturamento-endereco-acao {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+}
 .faturamento-nota-conferencia {
   margin: 12px 0 0;
   padding: 9px 11px;
@@ -3514,6 +3541,15 @@
 }
 
 @media (max-width: 1180px) {
+  .faturamento-etapas {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .faturamento-etapas li:nth-child(3n) {
+    border-right: 0;
+  }
+  .faturamento-etapas li:nth-child(-n + 3) {
+    border-bottom: 1px solid rgba(19, 91, 112, 0.1);
+  }
   .faturamento-bancada {
     grid-template-columns: minmax(270px, 0.68fr) minmax(450px, 1.3fr);
   }

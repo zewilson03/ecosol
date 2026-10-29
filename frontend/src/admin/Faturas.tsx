@@ -5,6 +5,7 @@ import { Link, useSearchParams } from "react-router-dom";
 const PreparacaoFaturas = lazy(() => import("./PreparacaoFaturas"));
 const Calculos = lazy(() => import("./Calculos"));
 const LotesFaturamento = lazy(() => import("./LotesFaturamento"));
+const EmissaoBoletos = lazy(() => import("./EmissaoBoletos"));
 
 export default function Faturas() {
   const [parametros] = useSearchParams();
@@ -14,6 +15,7 @@ export default function Faturas() {
     "conferir",
     "calcular",
     "aprovar",
+    "emitir",
     "lotes",
   ].includes(solicitada ?? "")
     ? solicitada!
@@ -41,6 +43,7 @@ export default function Faturas() {
     { id: "conferir", nome: "Conferir dados" },
     { id: "calcular", nome: "Calcular" },
     { id: "aprovar", nome: "Aprovar" },
+    { id: "emitir", nome: "Emitir" },
   ];
 
   return (
@@ -75,6 +78,8 @@ export default function Faturas() {
           <LotesFaturamento />
         ) : etapa === "calcular" || etapa === "aprovar" ? (
           <Calculos incorporado modo={etapa} />
+        ) : etapa === "emitir" ? (
+          <EmissaoBoletos />
         ) : (
           <PreparacaoFaturas />
         )}

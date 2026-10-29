@@ -4,6 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import express from "express";
+import { PDFDocument } from "pdf-lib";
 
 process.env.ECOSOL_DATA_DIR = mkdtempSync(join(tmpdir(), "ecosol-operacoes-"));
 process.env.NODE_ENV = "test";
@@ -22,8 +23,7 @@ const {
   hashCanonico,
   jsonCanonico,
   liberarNovaEmissaoAposFalha,
-} =
-  await import("../servidor/bancario/operacoes.mjs");
+} = await import("../servidor/bancario/operacoes.mjs");
 const { rotasAdministrativas } =
   await import("../servidor/rotasAdministrativas.mjs");
 
@@ -87,7 +87,12 @@ const unidadeId = Number(
     ).lastInsertRowid,
 );
 
-function criarFatura(sufixo, totalCentavos = 12345, vencimento = "2026-11-20") {
+function criarFatura(
+  sufixo,
+  totalCentavos = 12345,
+  vencimento = "2026-11-20",
+  componentes = {},
+) {
   const pdf = Buffer.from(`%PDF-1.4 teste ${sufixo}`);
   const hash = createHash("sha256").update(pdf).digest("hex");
   const memoria = {
@@ -95,6 +100,7 @@ function criarFatura(sufixo, totalCentavos = 12345, vencimento = "2026-11-20") {
     total_centavos: totalCentavos,
     vencimento_ecosol: vencimento,
     unidade: { id: unidadeId, uc: "123456789" },
+    ...componentes,
   };
   return Number(
     banco
@@ -230,6 +236,20 @@ try {
   );
   assert.equal(criada.status, 201);
   const cobranca = await criada.json();
+  assert.equal(
+    (await chamar("/api/admin/bancario/estado", colaborador)).status,
+    200,
+  );
+  assert.equal((await chamar("/api/admin/bancario/estado", null)).status, 401);
+  assert.equal(
+    (
+      await chamar(
+        `/api/admin/bancario/operacoes/${cobranca.operacao.id}/demonstrativo.pdf`,
+        colaborador,
+      )
+    ).status,
+    404,
+  );
   assert.equal(cobranca.operacao.estado, "aprovada");
   assert.equal(cobranca.operacao.aprovador_id, null);
   assert.equal(
@@ -246,11 +266,105 @@ try {
   assert.equal(repetida.status, 200);
   assert.equal((await repetida.json()).operacao.id, cobranca.operacao.id);
 
+  // Alguns navegadores omitem Origin em chamadas locais, mas enviam metadados
+  // de mesma origem. A preparação precisa funcionar sem abrir acesso externo.
+  const semOrigin = await fetch(
+    `${base}/api/admin/bancario/operacoes/cobrancas`,
+    {
+      method: "POST",
+      headers: {
+        Cookie: colaborador.cookie,
+        "Content-Type": "application/json",
+        "Sec-Fetch-Site": "same-origin",
+      },
+      body: JSON.stringify({ documento_id: faturaId }),
+    },
+  );
+  assert.equal(semOrigin.status, 200);
+  assert.equal((await semOrigin.json()).operacao.id, cobranca.operacao.id);
+  const origemOpaca = await fetch(
+    `${base}/api/admin/bancario/operacoes/cobrancas`,
+    {
+      method: "POST",
+      headers: {
+        Cookie: colaborador.cookie,
+        Origin: "null",
+        "Content-Type": "application/json",
+        "Sec-Fetch-Site": "same-origin",
+      },
+      body: JSON.stringify({ documento_id: faturaId }),
+    },
+  );
+  assert.equal(origemOpaca.status, 200);
+  const comReferenciaLocal = await fetch(
+    `${base}/api/admin/bancario/operacoes/cobrancas`,
+    {
+      method: "POST",
+      headers: {
+        Cookie: colaborador.cookie,
+        Referer: `${base}/admin/faturas`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ documento_id: faturaId }),
+    },
+  );
+  assert.equal(comReferenciaLocal.status, 200);
+  assert.equal((await comReferenciaLocal.json()).operacao.id, cobranca.operacao.id);
+  const semProvaDeOrigem = await fetch(
+    `${base}/api/admin/bancario/operacoes/cobrancas`,
+    {
+      method: "POST",
+      headers: {
+        Cookie: colaborador.cookie,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ documento_id: faturaId }),
+    },
+  );
+  assert.equal(semProvaDeOrigem.status, 403);
+  assert.equal(
+    (await semProvaDeOrigem.json()).codigo,
+    "ORIGEM_NAO_CONFIAVEL",
+  );
+  const { origemConfiavel } = await import(
+    "../servidor/bancario/confirmacaoSensivel.mjs"
+  );
+  assert.equal(
+    origemConfiavel({
+      headers: {
+        host: "outro.example",
+        referer: `${base}/admin/faturas`,
+        "sec-fetch-site": "same-origin",
+      },
+    }),
+    false,
+  );
+  assert.equal(
+    origemConfiavel({
+      headers: { host: new URL(base).host, referer: "https://outro.example" },
+    }),
+    false,
+  );
+  const externo = await fetch(
+    `${base}/api/admin/bancario/operacoes/cobrancas`,
+    {
+      method: "POST",
+      headers: {
+        Cookie: colaborador.cookie,
+        Origin: "https://outro.example",
+        "Content-Type": "application/json",
+        "Sec-Fetch-Site": "cross-site",
+      },
+      body: JSON.stringify({ documento_id: faturaId }),
+    },
+  );
+  assert.equal(externo.status, 403);
+
   const faturaFalhaSeguraId = criarFatura("falha-segura");
-  const operacaoFalhaSegura = criarOperacaoDeCobranca(
-    faturaFalhaSeguraId,
-    { id: colaborador.id, nome: "colaborador" },
-  ).operacao;
+  const operacaoFalhaSegura = criarOperacaoDeCobranca(faturaFalhaSeguraId, {
+    id: colaborador.id,
+    nome: "colaborador",
+  }).operacao;
   const idempotenciaAnterior = operacaoFalhaSegura.idempotencia;
   enfileirarOperacao(operacaoFalhaSegura.id, {
     id: colaborador.id,
@@ -586,6 +700,70 @@ try {
         .run(proprietario.id, pagamentoSemProprietario),
     /Pagamento exige aprovação atual do Proprietário/,
   );
+
+  const demonstrativoId = criarFatura("09", 12000, "2026-11-20", {
+    entradas: { injecao: "100", desconto: "20", modalidade: "GDII" },
+    tarifa_completa: "1.000000",
+    equatorial_centavos: 5000,
+    ajuste_centavos: 1000,
+  });
+  const preparoDemo = await chamar(
+    "/api/admin/bancario/operacoes/cobrancas",
+    colaborador,
+    "POST",
+    { documento_id: demonstrativoId },
+  );
+  assert.equal(preparoDemo.status, 201);
+  const operacaoDemo = (await preparoDemo.json()).operacao;
+  const rotaPdf = `/api/admin/bancario/operacoes/${operacaoDemo.id}/demonstrativo.pdf`;
+  const previaPdf = await chamar(rotaPdf, colaborador);
+  assert.equal(previaPdf.status, 200);
+  assert.match(previaPdf.headers.get("content-type"), /application\/pdf/);
+  assert.equal(
+    (await PDFDocument.load(await previaPdf.arrayBuffer())).getPageCount(),
+    2,
+  );
+  assert.equal((await chamar(`${rotaPdf}?final=1`, colaborador)).status, 409);
+  assert.equal(
+    (
+      await chamar(
+        `/api/admin/bancario/operacoes/${operacaoDemo.id}/enfileirar`,
+        colaborador,
+        "POST",
+      )
+    ).status,
+    200,
+  );
+  const bancoPdf = await PDFDocument.create();
+  bancoPdf.addPage([595, 842]);
+  const bytesBanco = Buffer.from(await bancoPdf.save());
+  banco
+    .prepare(
+      `INSERT INTO bancario_artefatos_cobranca
+       (operacao_id,nosso_numero,pdf,pdf_sha256) VALUES(?,?,?,?)`,
+    )
+    .run(
+      operacaoDemo.id,
+      "123456",
+      bytesBanco,
+      createHash("sha256").update(bytesBanco).digest("hex"),
+    );
+  banco
+    .prepare("UPDATE bancario_operacoes SET estado='registrada' WHERE id=?")
+    .run(operacaoDemo.id);
+  const finalPdf = await chamar(`${rotaPdf}?final=1`, colaborador);
+  assert.equal(finalPdf.status, 200);
+  assert.equal(
+    (await PDFDocument.load(await finalPdf.arrayBuffer())).getPageCount(),
+    2,
+  );
+  assert.equal((await chamar(rotaPdf, null)).status, 401);
+  banco
+    .prepare(
+      "UPDATE bancario_artefatos_cobranca SET pdf_sha256=? WHERE operacao_id=?",
+    )
+    .run("0".repeat(64), operacaoDemo.id);
+  assert.equal((await chamar(`${rotaPdf}?final=1`, colaborador)).status, 409);
 
   console.log(
     "OK: cobranças não exigem senha; pagamentos exigem Proprietário e a senha financeira gerida pelo Proprietário 1.",

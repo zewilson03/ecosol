@@ -690,7 +690,9 @@ export default function PreparacaoFaturas() {
     navegar("/admin/clientes", {
       state: {
         nomeInicialCliente: buscaCliente.trim().slice(0, 120),
-        ucInicial: dados.uc || selecionado?.extracao.dados?.uc || "",
+        ucInicial: selecionado?.extracao.dados?.uc || dados.uc || "",
+        documentoInicial:
+          selecionado?.extracao.endereco_fatura?.documento_titular || "",
       },
     });
   }
@@ -731,6 +733,17 @@ export default function PreparacaoFaturas() {
     );
   }
   const uc = (dados.uc ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+  const ucDoPdf = selecionado?.extracao.dados?.uc || dados.uc || "";
+  const unidadeDaUcDoPdf = selecionado
+    ? unidadeDaFatura(
+        { uc: ucDoPdf },
+        ucDoPdf,
+        selecionado.nome,
+        unidades.dados ?? [],
+      )
+    : null;
+  const cadastroDaUcPendente =
+    Boolean(ucDoPdf) && Boolean(unidades.dados) && !unidadeDaUcDoPdf?.cliente_id;
   const unidade =
     selecionado?.memoria && !alterado
       ? selecionado.memoria.unidade
@@ -1624,6 +1637,61 @@ export default function PreparacaoFaturas() {
                       )}
                     </div>
                   </fieldset>
+                  {(selecionado.extracao.endereco_fatura ||
+                    cadastroDaUcPendente) && (
+                    <div className="faturamento-endereco-fatura">
+                      {selecionado.extracao.endereco_fatura && (
+                        <div>
+                          <strong>Endereço lido da fatura</strong>
+                          <p>
+                            {selecionado.extracao.endereco_fatura.logradouro} ·{" "}
+                            {selecionado.extracao.endereco_fatura.bairro} ·{" "}
+                            {selecionado.extracao.endereco_fatura.cidade}/
+                            {selecionado.extracao.endereco_fatura.uf} · CEP{" "}
+                            {selecionado.extracao.endereco_fatura.cep}
+                          </p>
+                          {selecionado.endereco_vinculo?.situacao ===
+                            "documento_divergente" && (
+                            <small role="alert">
+                              Documento do titular difere do cliente desta UC.
+                              Confira antes de vincular o endereço.
+                            </small>
+                          )}
+                          {selecionado.endereco_vinculo?.situacao ===
+                            "endereco_divergente" && (
+                            <small role="alert">
+                              Endereço diferente do registrado em outra fatura
+                              desta UC. Confira a mudança.
+                            </small>
+                          )}
+                          {selecionado.endereco_vinculo?.situacao ===
+                            "vinculado" && (
+                            <small>
+                              Endereço vinculado ao cliente desta UC.
+                            </small>
+                          )}
+                        </div>
+                      )}
+                      {cadastroDaUcPendente && (
+                        <div className="faturamento-endereco-acao">
+                          <strong>UC {ucDoPdf} sem cadastro completo</strong>
+                          {nivel >= 2 ? (
+                            <button
+                              type="button"
+                              className="admin-botao secundario"
+                              onClick={abrirCadastroComNome}
+                            >
+                              Cadastrar cliente e UC
+                            </button>
+                          ) : (
+                            <small>
+                              Solicite o cadastro à equipe autorizada.
+                            </small>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </section>
                 <section
                   id="conferencia-equatorial"

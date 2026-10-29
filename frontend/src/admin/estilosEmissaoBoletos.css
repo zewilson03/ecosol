@@ -1,0 +1,214 @@
+.emissao-pagina {
+  display: grid;
+  gap: 18px;
+}
+.emissao-topo {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.emissao-topo h2 {
+  margin: 5px 0;
+}
+.emissao-topo p {
+  margin: 0;
+  color: #58727b;
+}
+.emissao-ambiente {
+  padding: 11px 15px;
+  border-radius: 12px;
+  background: #e9f2f3;
+  color: #24505a;
+  font-size: 13px;
+}
+.emissao-grade {
+  display: grid;
+  grid-template-columns: minmax(270px, 0.7fr) minmax(420px, 1.3fr);
+  align-items: start;
+  gap: 18px;
+}
+.emissao-fila {
+  display: grid;
+  gap: 16px;
+}
+.emissao-fila h3 {
+  margin: 0 0 14px;
+}
+.emissao-item,
+.emissao-operacao {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 0;
+  border-top: 1px solid #e4ebed;
+}
+.emissao-item span,
+.emissao-operacao span {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+}
+.emissao-item small,
+.emissao-operacao small {
+  color: #68818a;
+}
+.emissao-operacao {
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
+  background: transparent;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+.emissao-operacao.ativa {
+  color: #06706c;
+}
+.emissao-previa {
+  min-height: 360px;
+}
+.emissao-documento-topo {
+  padding: 20px;
+  border-radius: 14px;
+  background: linear-gradient(125deg, #173e46, #176865);
+  color: #fff;
+}
+.emissao-documento-topo span {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  font-weight: 700;
+}
+.emissao-documento-topo h3 {
+  margin: 12px 0 5px;
+  font-size: 22px;
+}
+.emissao-documento-topo p {
+  margin: 0;
+  color: #d8eeec;
+  font-size: 13px;
+}
+.emissao-passos,
+.emissao-grafico {
+  padding: 17px 2px;
+  border-bottom: 1px solid #e2ebed;
+}
+.emissao-passos h4,
+.emissao-grafico h4 {
+  margin: 0 0 14px;
+  font-size: 15px;
+}
+.emissao-passos p {
+  margin: 9px 0;
+  line-height: 1.5;
+  font-size: 13px;
+}
+.emissao-total {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #eef7f5;
+  color: #0b615c;
+}
+.emissao-grafico {
+  display: grid;
+  gap: 12px;
+}
+.emissao-grafico > strong {
+  color: #0d7068;
+}
+.emissao-grafico small {
+  color: #607a83;
+  line-height: 1.5;
+}
+.emissao-barra-linha > div:first-child,
+.emissao-energia > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+}
+.emissao-barra-trilha {
+  height: 10px;
+  margin-top: 7px;
+  border-radius: 99px;
+  background: #e3ecef;
+  overflow: hidden;
+}
+.emissao-barra-trilha span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #edbc52;
+}
+.emissao-barra-trilha .equatorial {
+  background: #99b0bc;
+}
+.emissao-barra-trilha .referencia {
+  background: #4d93ac;
+}
+.emissao-barra-trilha .ecosol {
+  background: #14786f;
+}
+.emissao-acoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-top: 16px;
+}
+.emissao-modal-fundo {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgb(15 38 45 / 62%);
+}
+.emissao-modal {
+  display: grid;
+  grid-template-rows: auto minmax(200px, 1fr) auto;
+  gap: 12px;
+  width: min(100%, 920px);
+  height: min(92vh, 920px);
+  padding: 16px;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 24px 80px rgb(0 0 0 / 18%);
+}
+.emissao-modal header,
+.emissao-modal footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.emissao-modal h3 { margin: 0 0 4px; }
+.emissao-modal p { margin: 0; color: #58727b; font-size: 13px; }
+.emissao-modal iframe {
+  width: 100%;
+  height: 100%;
+  border: 1px solid #dce8ea;
+  border-radius: 8px;
+}
+@media (max-width: 950px) {
+  .emissao-grade {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 580px) {
+  .emissao-item {
+    align-items: start;
+    flex-direction: column;
+  }
+  .emissao-previa {
+    padding: 14px;
+  }
+}

@@ -33,6 +33,15 @@ const banco = {
               desconto: "20",
             },
           ];
+        if (sql.includes("FROM faturamento_enderecos_faturas"))
+          return [
+            {
+              documento_id: 3,
+              situacao: "vinculado",
+              unidade_id: 7,
+              cliente_id: 5,
+            },
+          ];
         if (sql.includes("usinas_modalidades"))
           return [{ usina_id: 3, inicio: "2026-01", modalidade: "GDII" }];
         if (sql.includes("FROM faturamento_documentos"))
@@ -84,9 +93,14 @@ assert.deepEqual(unidades[0].saida_carteira, {
 const pagina = criarRepositorioLeituraFaturamento(banco).listarDocumentosResumo(
   { limite: 2 },
 );
-assert.equal(consultas.length, 8);
+assert.equal(consultas.length, 9);
 assert.equal(pagina.itens.length, 2);
 assert.equal(pagina.proximoCursor, 2);
+assert.deepEqual(pagina.itens[0].endereco_vinculo, {
+  situacao: "vinculado",
+  unidade_id: 7,
+  cliente_id: 5,
+});
 assert.deepEqual(pagina.itens[0].usina_geradora, {
   numero: "123",
   situacao: "identificada",

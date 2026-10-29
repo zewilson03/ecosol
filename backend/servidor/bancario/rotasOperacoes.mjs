@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { createHash } from "node:crypto";
 import {
   confirmarIdentidadeBancaria,
   exigirConfirmacaoBancaria,
@@ -31,6 +32,8 @@ import {
 import { avaliarProntidaoSicoob } from "./prontidaoSicoob.mjs";
 import { obterObservabilidadeBancaria } from "./observabilidadeBancaria.mjs";
 import { executarConciliacaoManual } from "./conciliacaoManual.mjs";
+import { obterBanco } from "../bancoDeDados.mjs";
+import { gerarPdfBoletoEcosol } from "./pdfBoletoEcosol.mjs";
 
 export const rotasOperacoesBancarias = Router();
 
@@ -84,7 +87,38 @@ function exigirContaNominalDaEquipe(req, res, next) {
 }
 
 function exigirOrigemConfiavel(req, res, next) {
-  return origemConfiavel(req) ? next() : res.sendStatus(403);
+  if (origemConfiavel(req)) return next();
+  const origem = req.headers.origin;
+  const site = req.headers["sec-fetch-site"];
+  const esperada = new URL(
+    process.env.APP_URL ?? `http://localhost:${process.env.PORT ?? 3000}`,
+  );
+  const coincide = (valor) => {
+    try {
+      return Boolean(valor && new URL(valor).origin === esperada.origin);
+    } catch {
+      return false;
+    }
+  };
+  console.warn(
+    JSON.stringify({
+      evento: "origem_bancaria_rejeitada",
+      request_id: req.idRequisicao ?? null,
+      origem: origem === undefined ? "ausente" : origem === "null" ? "opaca" : "informada",
+      site: ["same-origin", "same-site", "cross-site", "none"].includes(site)
+        ? site
+        : "ausente",
+      referencia: req.headers.referer ? "informada" : "ausente",
+      origem_compativel: coincide(origem),
+      host_compativel:
+        req.headers.host?.toLowerCase() === esperada.host.toLowerCase(),
+      referencia_compativel: coincide(req.headers.referer),
+    }),
+  );
+  return res.status(403).json({
+    erro: "Requisição recusada por origem não confiável. Confira o endereço de acesso e consulte o diagnóstico no terminal do servidor.",
+    codigo: "ORIGEM_NAO_CONFIAVEL",
+  });
 }
 
 function exigirProprietario(req, res, next) {
@@ -102,6 +136,19 @@ function podeConsultarTodasAsOperacoes(administradorId) {
     "aprovador_financeiro",
   ].some((papel) => temPapelBancario(administradorId, papel));
 }
+
+rotasOperacoesBancarias.get(
+  "/api/admin/bancario/estado",
+  exigirContaNominalDaEquipe,
+  (_req, res) => {
+    const { ambiente, modo_configurado, pausado } = estadoDoExecutor();
+    res.set("Cache-Control", "no-store").json({
+      ambiente,
+      modo_configurado,
+      pausado,
+    });
+  },
+);
 
 rotasOperacoesBancarias.get(
   "/api/admin/bancario/executor",
@@ -160,6 +207,58 @@ rotasOperacoesBancarias.get(
     ),
 );
 
+rotasOperacoesBancarias.get(
+  "/api/admin/bancario/operacoes/:id/demonstrativo.pdf",
+  exigirContaNominalDaEquipe,
+  async (req, res) => {
+    const operacao = obterOperacao(
+      String(req.params.id),
+      req.administrador.id,
+      podeConsultarTodasAsOperacoes(req.administrador.id),
+    );
+    if (operacao.tipo !== "cobranca" || !operacao.demonstrativo)
+      return res.status(404).json({ erro: "Demonstrativo não encontrado." });
+    const final = req.query.final === "1";
+    let pdfBanco = null;
+    if (final) {
+      if (!["registrada", "liquidada"].includes(operacao.estado))
+        return res
+          .status(409)
+          .json({ erro: "O boleto ainda não foi registrado pelo banco." });
+      const artefato = obterBanco()
+        .prepare(
+          "SELECT pdf,pdf_sha256 FROM bancario_artefatos_cobranca WHERE operacao_id=?",
+        )
+        .get(operacao.id);
+      pdfBanco = artefato?.pdf;
+      if (!pdfBanco)
+        return res.status(409).json({
+          erro: "O Sicoob ainda não forneceu o PDF do boleto. Consulte o boleto original no banco.",
+        });
+      if (
+        !artefato.pdf_sha256 ||
+        createHash("sha256").update(pdfBanco).digest("hex") !==
+          artefato.pdf_sha256
+      )
+        return res.status(409).json({
+          erro: "O PDF bancário não passou na verificação de integridade.",
+        });
+    }
+    const pdf = await gerarPdfBoletoEcosol({
+      operacao,
+      demonstrativo: operacao.demonstrativo,
+      pdfBanco,
+    });
+    res
+      .set({
+        "Cache-Control": "no-store",
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `inline; filename="ecosol-${final ? "boleto" : "previa"}-${operacao.id}.pdf"`,
+      })
+      .send(pdf);
+  },
+);
+
 rotasOperacoesBancarias.post(
   "/api/admin/bancario/operacoes/:id/conciliar",
   exigirPapelBancario("administrador_integracao"),
@@ -214,10 +313,7 @@ rotasOperacoesBancarias.post(
   exigirOrigemConfiavel,
   (req, res) =>
     res.json(
-      liberarNovaEmissaoAposFalha(
-        String(req.params.id),
-        req.administrador,
-      ),
+      liberarNovaEmissaoAposFalha(String(req.params.id), req.administrador),
     ),
 );
 

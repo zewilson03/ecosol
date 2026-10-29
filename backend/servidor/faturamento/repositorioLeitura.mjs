@@ -53,6 +53,15 @@ export function criarRepositorioLeituraFaturamento(banco) {
       "numero",
     );
 
+    const enderecos = new Map(
+      banco
+        .prepare(
+          "SELECT documento_id,situacao,unidade_id,cliente_id FROM faturamento_enderecos_faturas",
+        )
+        .all()
+        .map(({ documento_id, ...vinculo }) => [documento_id, vinculo]),
+    );
+
     const itens = pagina.map((documento) => {
       const dados = JSON.parse(documento.dados);
       const extracao = JSON.parse(documento.extracao);
@@ -69,6 +78,7 @@ export function criarRepositorioLeituraFaturamento(banco) {
         ...documento,
         dados,
         extracao,
+        endereco_vinculo: enderecos.get(documento.id) ?? null,
         memoria: documento.memoria ? JSON.parse(documento.memoria) : null,
         usina_geradora: {
           numero: numero || null,

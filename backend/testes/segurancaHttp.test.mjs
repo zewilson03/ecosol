@@ -62,6 +62,20 @@ const filho = spawnSync(
 );
 assert.equal(filho.status, 0, filho.stderr);
 
+// Um servidor local sem NODE_ENV explícito deve fixar desenvolvimento antes
+// de iniciar o Vite; a compilação em watch não pode mudar a política bancária.
+writeFileSync(join(pasta, ".env.local"), "");
+writeFileSync(
+  join(pasta, "servidor/iniciarDesenvolvimento.mjs"),
+  'import "./configuracao.mjs"; if (process.env.NODE_ENV !== "development") process.exit(1);',
+);
+const filhoLocal = spawnSync(
+  process.execPath,
+  [join(pasta, "servidor/iniciarDesenvolvimento.mjs")],
+  { env: ambiente, encoding: "utf8" },
+);
+assert.equal(filhoLocal.status, 0, filhoLocal.stderr);
+
 process.env.ECOSOL_DATA_DIR = pasta;
 process.env.NODE_ENV = "development";
 const { rotas } = await import("../servidor/rotasDaAplicacao.mjs");
